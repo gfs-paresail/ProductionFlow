@@ -15,9 +15,8 @@
     })();
   </script>
   <link rel="stylesheet" href="style.css?v=6.5">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 </head>
 <body class="view-mode-default">
   <div id="app" class="app-container">
@@ -1499,6 +1498,10 @@
               <span>사용자·권한 관리</span>
               <span class="auth-nav-badge" id="settings-auth-pending-badge" style="display:none;">0</span>
             </button>
+            <button type="button" class="settings-nav-btn" data-pane="settings-pane-data-admin" id="btn-settings-nav-data-admin" style="display:none;">
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+              <span>데이터 관리 · 초기화</span>
+            </button>
 
             <div class="settings-nav-footer" style="display:flex; flex-direction:column; gap:8px;">
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
@@ -2022,6 +2025,219 @@
                 </div>
               </div>
             </div>
+
+            <!-- 8. 데이터 관리 · 초기화 패널 (관리자 전용) -->
+            <div class="settings-sub-pane" id="settings-pane-data-admin">
+              <div class="settings-cards-grid" style="grid-template-columns: 1fr;">
+                <!-- 카드 1: 화면별 데이터 현황 · 초기화 & 기간 지정 삭제 -->
+                <div class="settings-card settings-card-wide">
+                  <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <div class="card-title-wrap">
+                      <div class="card-icon-box" style="background:#fee2e2; color:#dc2626;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                      </div>
+                      <div>
+                        <h3 class="card-title">화면별 데이터 현황 · 초기화 & 기간 삭제 (관리자 전용)</h3>
+                        <p class="card-subtitle">로컬 저장소와 Firestore DB를 동시에 정리합니다. 삭제 전 자동 백업을 권장합니다.</p>
+                      </div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                      <label style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                        <input type="checkbox" id="chk-admin-auto-backup" checked>
+                        삭제 전 자동 JSON 백업
+                      </label>
+                      <button type="button" class="btn btn-sm btn-outline" id="btn-admin-full-backup">전체 백업(JSON)</button>
+                      <button type="button" class="btn btn-sm btn-outline" id="btn-admin-refresh-stats">현황 새로고침</button>
+                    </div>
+                  </div>
+                  <div class="settings-card-body" style="display:flex; flex-direction:column; gap:14px;">
+                    <!-- 모듈별 현황 테이블 -->
+                    <div class="master-list-container" style="max-height: 290px;">
+                      <table class="master-table">
+                        <thead>
+                          <tr>
+                            <th style="min-width:140px;">화면 / 데이터</th>
+                            <th style="min-width:110px; text-align:center;">현재 저장량</th>
+                            <th>설명</th>
+                            <th style="width:110px; text-align:center;">전체 초기화</th>
+                          </tr>
+                        </thead>
+                        <tbody id="admin-data-stats-tbody"></tbody>
+                      </table>
+                    </div>
+
+                    <!-- 기간 지정 삭제 바 -->
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px; border:1px solid var(--border-light); border-radius:8px; background:var(--bg-subtle, #f8fafc);">
+                      <strong style="font-size:13px; color:var(--text-primary);">기간 지정 삭제</strong>
+                      <select id="admin-range-module" class="form-select" style="width:auto; min-width:165px;">
+                        <option value="cert">검정현황 (작성일 기준)</option>
+                        <option value="quality">품질검사 (검사일/작성일 기준)</option>
+                        <option value="insp_v2">일정계획 (주차 시작일 기준)</option>
+                        <option value="daily_v2">생산일보 (작업일 기준)</option>
+                        <option value="attendance">근태관리 (근태일 기준)</option>
+                        <option value="all_dated">날짜 기반 5개 화면 전체</option>
+                      </select>
+                      <input type="date" id="admin-range-start" class="form-input" style="width:auto;">
+                      <span style="font-size:12px; color:var(--text-secondary);">~</span>
+                      <input type="date" id="admin-range-end" class="form-input" style="width:auto;">
+                      <label style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                        <input type="checkbox" id="chk-admin-sync-quality" checked>
+                        검정현황 삭제 시 연동된 품질검사도 함께 삭제
+                      </label>
+                      <span id="admin-range-preview-badge" class="badge" style="background:#e2e8f0; color:#334155; font-size:12px; padding:4px 10px;">대상: 0건</span>
+                      <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-admin-delete-range" style="margin-left:auto;">기간 데이터 삭제</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 카드 2: 검정현황 잠금 항목 강제 수정 / 삭제 -->
+                <div class="settings-card settings-card-wide">
+                  <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <div class="card-title-wrap">
+                      <div class="card-icon-box" style="background:#fef3c7; color:#d97706;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+                      </div>
+                      <div>
+                        <h3 class="card-title">검정현황 잠금 항목 관리 (일정완료·품검요청 포함 수정/삭제)</h3>
+                        <p class="card-subtitle">일반 화면에서 잠겨있는 완료 항목도 조회·상태 변경·수정·강제 삭제할 수 있습니다.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-card-body" style="display:flex; flex-direction:column; gap:10px;">
+                    <!-- 필터 & 일괄 작업 바 -->
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                      <select id="admin-cert-status-filter" class="form-select" style="width:auto;">
+                        <option value="ALL">전체 상태</option>
+                        <option value="일정완료">일정완료(잠금)</option>
+                        <option value="품검요청">품검요청(잠금)</option>
+                        <option value="등록완료">등록완료</option>
+                        <option value="불합격">불합격</option>
+                      </select>
+                      <input type="date" id="admin-cert-date-start" class="form-input" style="width:auto;" title="작성일 시작">
+                      <span style="font-size:12px; color:var(--text-secondary);">~</span>
+                      <input type="date" id="admin-cert-date-end" class="form-input" style="width:auto;" title="작성일 종료">
+                      <input type="text" id="admin-cert-search" class="form-input" style="width:200px;" placeholder="품목코드/품명/로트/부서 검색">
+                      <button type="button" class="btn btn-sm btn-outline" id="btn-admin-cert-reset-filter">필터 초기화</button>
+
+                      <div style="margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        <select id="admin-cert-bulk-status" class="form-select" style="width:auto;">
+                          <option value="등록완료">등록완료로 되돌리기</option>
+                          <option value="품검요청">품검요청으로 변경</option>
+                          <option value="일정완료">일정완료로 변경</option>
+                          <option value="불합격">불합격으로 변경</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline" id="btn-admin-cert-bulk-status">선택 상태변경</button>
+                        <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-admin-cert-bulk-delete">선택 강제삭제</button>
+                      </div>
+                    </div>
+
+                    <div class="master-list-container" style="max-height: 360px;">
+                      <table class="master-table">
+                        <thead>
+                          <tr>
+                            <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-admin-cert-all"></th>
+                            <th style="width:95px; text-align:center;">상태</th>
+                            <th style="width:96px; text-align:center;">작성일</th>
+                            <th style="width:82px; text-align:center;">요청부서</th>
+                            <th style="width:105px; text-align:center;">품목코드</th>
+                            <th style="min-width:150px;">품명</th>
+                            <th style="width:72px; text-align:right;">수량</th>
+                            <th style="width:100px; text-align:center;">로트번호</th>
+                            <th style="width:80px; text-align:center;">작업반</th>
+                            <th style="width:110px; text-align:center;">관리</th>
+                          </tr>
+                        </thead>
+                        <tbody id="admin-cert-tbody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 카드 3: 최근 데이터 관리 이력 -->
+                <div class="settings-card settings-card-wide">
+                  <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <div class="card-title-wrap">
+                      <div class="card-icon-box" style="background:#ede9fe; color:#6d28d9;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                      </div>
+                      <div>
+                        <h3 class="card-title">최근 데이터 관리 이력 (감사 로그)</h3>
+                        <p class="card-subtitle">관리자의 초기화·기간 삭제·강제 수정 내역이 최근 50건까지 기록됩니다.</p>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-ghost text-danger" id="btn-admin-clear-audit">이력 비우기</button>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="master-list-container" style="max-height: 220px;">
+                      <table class="master-table">
+                        <thead>
+                          <tr>
+                            <th style="width:150px;">일시</th>
+                            <th style="width:110px;">작업자</th>
+                            <th style="width:110px;">작업 유형</th>
+                            <th style="width:120px;">대상 화면</th>
+                            <th>상세 내용</th>
+                          </tr>
+                        </thead>
+                        <tbody id="admin-audit-tbody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 관리자 검정현황 항목 수정 모달 -->
+        <div class="cert-modal-overlay" id="admin-cert-edit-modal" style="display: none;">
+          <div class="cert-modal-box" style="width: 560px; max-width: 95vw;">
+            <div class="cert-modal-head">
+              <h3>검정현황 항목 수정 (관리자)</h3>
+              <button type="button" class="btn-close-modal" id="btn-close-admin-cert-edit">×</button>
+            </div>
+            <form id="form-admin-cert-edit" style="padding: 16px; display:flex; flex-direction:column; gap:12px;">
+              <input type="hidden" id="admin-edit-cert-id">
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-status">상태</label>
+                  <select id="admin-edit-cert-status" class="form-select">
+                    <option value="등록완료">등록완료</option>
+                    <option value="품검요청">품검요청</option>
+                    <option value="일정완료">일정완료</option>
+                    <option value="불합격">불합격</option>
+                  </select>
+                </div>
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-writeDate">작성일</label>
+                  <input type="date" id="admin-edit-cert-writeDate" class="form-input">
+                </div>
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-dept">요청부서</label>
+                  <input type="text" id="admin-edit-cert-dept" class="form-input">
+                </div>
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-qty">수량</label>
+                  <input type="number" id="admin-edit-cert-qty" class="form-input" min="0">
+                </div>
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-lot">로트번호</label>
+                  <input type="text" id="admin-edit-cert-lot" class="form-input">
+                </div>
+                <div class="cert-add-field">
+                  <label for="admin-edit-cert-group">작업반</label>
+                  <input type="text" id="admin-edit-cert-group" class="form-input">
+                </div>
+              </div>
+              <div class="cert-add-field">
+                <label for="admin-edit-cert-note">비고</label>
+                <input type="text" id="admin-edit-cert-note" class="form-input">
+              </div>
+              <div style="display:flex; justify-content:flex-end; gap:8px; padding-top:10px; border-top:1px solid var(--border-light);">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-admin-cert-edit">취소</button>
+                <button type="submit" class="btn btn-sm btn-primary">저장</button>
+              </div>
+            </form>
           </div>
         </div>
 

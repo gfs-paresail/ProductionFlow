@@ -82,7 +82,8 @@
     AUTH_SAVED_ID: 'pms_auth_saved_id_v1',
     REPORT_TEMPLATES: 'pms_report_templates_v1',
     REPORT_PRINTED: 'pms_report_printed_v1',
-    REPORT_DEFAULT_POS: 'pms_report_default_pos_v1'
+    REPORT_DEFAULT_POS: 'pms_report_default_pos_v1',
+    ADMIN_AUDIT_LOGS: 'pms_admin_audit_logs_v1'
   };
 
   const DEFAULT_WORK_GROUPS = [
@@ -592,7 +593,8 @@
   // =========================================================================
   // 과거 구버전 기본 품목인지 확인 (스포트형 감지기 더미 데이터 여부)
   function isLegacyDefaultCommonItems(items) {
-    if (!Array.isArray(items) || items.length === 0) return true;
+    if (!Array.isArray(items)) return true;
+    if (items.length === 0) return false;
     return items.some(it => it.name && (it.name.includes('스포트형') || it.name.includes('복합형 감지기')));
   }
 
@@ -5023,7 +5025,7 @@
             <strong>로트: ${c.lotNo || '(미입력)'}</strong>
             <span style="font-size:11.5px; color:#64748b; margin-left:6px;">[${c.status || '등록완료'}] · 주차 ${c.weekDate || '-'}</span>
           </div>
-          <div style="font-family:'JetBrains Mono',monospace; font-weight:700; color:#1e293b;">
+          <div style="font-variant-numeric:tabular-nums; font-weight:700; color:#1e293b;">
             ${curQty.toLocaleString()} → <span style="color:#2563eb;">${(curQty + addQty).toLocaleString()}</span>
           </div>
         `;
@@ -9412,7 +9414,7 @@
                   ${rptBtnHtml}
                 </div>
               </td>
-              <td rowspan="3" class="insp-merged-cell text-center" style="font-family:'JetBrains Mono',monospace;">${cRow.lotNo || '-'}</td>
+              <td rowspan="3" class="insp-merged-cell text-center" style="font-variant-numeric:tabular-nums;">${cRow.lotNo || '-'}</td>
               <td rowspan="3" class="insp-merged-cell num-cell text-center font-bold" style="color:var(--text-main);">${targetQty.toLocaleString()}</td>
             ` : '';
 
@@ -9914,7 +9916,7 @@
             <tr>
               <td class="text-center" style="color:#64748b;">${idx + 1}</td>
               <td class="prod-name-cell font-bold ${row.isLoss ? 'prod-loss-name' : 'text-slate-800'}">${dispName}</td>
-              <td class="text-center" style="font-family:'JetBrains Mono',monospace;">${row.lotNo || '-'}</td>
+              <td class="text-center" style="font-variant-numeric:tabular-nums;">${row.lotNo || '-'}</td>
               <td class="text-center"><span class="prod-proc-pill ${row._procCls}">${row._procLabel}</span></td>
               <td><input type="text" class="cell-input text-center prod-v2-note-input" data-entry-id="${row.id}" value="${row.note || ''}" placeholder="${row.isLoss ? '유실내용' : '작업내용'}"></td>
               <td class="num-cell text-center" style="color:var(--text-muted);">${row.targetQty ? parseSafeInt(row.targetQty).toLocaleString() : '-'}</td>
@@ -13870,6 +13872,7 @@
     const alertEl = document.getElementById('header-auth-alert');
     const navBadge = document.getElementById('settings-auth-pending-badge');
     const navUsersBtn = document.getElementById('btn-settings-nav-users');
+    const navDataAdminBtn = document.getElementById('btn-settings-nav-data-admin');
     const headerLogoutBtn = document.getElementById('btn-header-logout');
 
     if (!u) {
@@ -13878,6 +13881,7 @@
       if (alertEl) alertEl.style.display = 'none';
       if (navBadge) navBadge.style.display = 'none';
       if (navUsersBtn) navUsersBtn.style.display = 'none';
+      if (navDataAdminBtn) navDataAdminBtn.style.display = 'none';
       if (headerLogoutBtn) headerLogoutBtn.style.display = 'none';
       return;
     }
@@ -13895,6 +13899,7 @@
     const pendingCount = (state.authUsers || []).filter(x => x.status === 'pending' || x.resetRequested).length;
     if (u.canApprove) {
       if (navUsersBtn) navUsersBtn.style.display = 'flex';
+      if (navDataAdminBtn) navDataAdminBtn.style.display = 'flex';
       if (alertEl) {
         alertEl.style.display = pendingCount > 0 ? 'inline-flex' : 'none';
         alertEl.textContent = String(pendingCount);
@@ -13905,6 +13910,7 @@
       }
     } else {
       if (navUsersBtn) navUsersBtn.style.display = 'none';
+      if (navDataAdminBtn) navDataAdminBtn.style.display = 'none';
       if (alertEl) alertEl.style.display = 'none';
       if (navBadge) navBadge.style.display = 'none';
     }
@@ -15359,6 +15365,637 @@
   }
 
   // =========================================================================
+  // 15-B. 관리자 전용 데이터 관리 · 초기화 · 검정현황 잠금 해제 관리
+  // =========================================================================
+  function initAdminDataManagement() {
+    const escHtml = (v) => String(v == null ? '' : v)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const getLocalPrefixKeys = (prefix) => {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) keys.push(k);
+      }
+      return keys.sort();
+    };
+
+    const getAuditLogs = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.ADMIN_AUDIT_LOGS);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    };
+
+    const saveAuditLogs = async (logs) => {
+      const trimmed = (Array.isArray(logs) ? logs : []).slice(0, 50);
+      try {
+        localStorage.setItem(STORAGE_KEYS.ADMIN_AUDIT_LOGS, JSON.stringify(trimmed));
+      } catch (e) { /* ignore */ }
+      if (isFirestoreActive && db) {
+        try {
+          await db.collection('pms_metadata').doc('admin_audit_logs').set({ logs: trimmed });
+        } catch (e) { /* ignore */ }
+      }
+      renderAdminAuditTable();
+    };
+
+    const appendAdminAuditLog = async (actionType, targetLabel, detail) => {
+      const userLabel = state.currentUser ? `${state.currentUser.name}(${state.currentUser.id})` : '관리자';
+      const now = new Date();
+      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const logs = getAuditLogs();
+      logs.unshift({ ts, user: userLabel, actionType, targetLabel, detail });
+      await saveAuditLogs(logs);
+    };
+
+    const syncAuditLogsFromDb = async () => {
+      if (!isFirestoreActive || !db) return;
+      try {
+        const doc = await db.collection('pms_metadata').doc('admin_audit_logs').get();
+        if (doc.exists && Array.isArray(doc.data()?.logs)) {
+          localStorage.setItem(STORAGE_KEYS.ADMIN_AUDIT_LOGS, JSON.stringify(doc.data().logs.slice(0, 50)));
+          renderAdminAuditTable();
+        }
+      } catch (e) { /* ignore */ }
+    };
+
+    const downloadAdminFullBackupJson = () => {
+      const inspV2Map = {};
+      getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX).forEach(k => {
+        try { inspV2Map[k.slice(STORAGE_KEYS.INSP_V2_PREFIX.length)] = JSON.parse(localStorage.getItem(k)); } catch (e) { /* ignore */ }
+      });
+      const dailyV2Map = {};
+      getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX).forEach(k => {
+        try { dailyV2Map[k.slice(STORAGE_KEYS.DAILY_V2_PREFIX.length)] = JSON.parse(localStorage.getItem(k)); } catch (e) { /* ignore */ }
+      });
+      const backup = {
+        version: '4.2-full',
+        exportedAt: new Date().toISOString(),
+        commonItems: state.commonItems || [],
+        etcItems: state.etcItems || [],
+        workers: state.workers || [],
+        workGroups: state.workGroups || [],
+        departments: state.departments || [],
+        certMasterItems: state.certMasterItems || [],
+        certSavedRows: state.certSavedRows || [],
+        certDraftRows: state.certDraftRows || [],
+        qualityRows: state.qualityRows || [],
+        planData: state.planData || null,
+        receiverPlanRows: state.receiverPlanRows || [],
+        attendanceTypes: state.attendanceTypes || [],
+        attendanceRecords: state.attendanceRecords || [],
+        attendanceHolidays: state.attendanceHolidays || {},
+        inspV2Map,
+        dailyV2Map
+      };
+      downloadFile(JSON.stringify(backup, null, 2), `PMS_전체백업_${getTodayDateString()}.json`, 'application/json');
+    };
+
+    const maybeAutoBackup = () => {
+      const chk = document.getElementById('chk-admin-auto-backup');
+      if (chk && chk.checked) {
+        downloadAdminFullBackupJson();
+      }
+    };
+
+    const getQualityRowDate = (q) => String(q?.inspectDate || q?.writeDate || q?.date || '').slice(0, 10);
+    const isDateInRange = (dStr, start, end) => {
+      if (!dStr || !/^\d{4}-\d{2}-\d{2}$/.test(dStr)) return false;
+      if (start && dStr < start) return false;
+      if (end && dStr > end) return false;
+      return true;
+    };
+
+    const deleteFirestoreCollectionDocs = async (colName, docIds) => {
+      if (!isFirestoreActive || !db) return;
+      const targets = Array.isArray(docIds) ? docIds : null;
+      try {
+        if (targets) {
+          await Promise.all(targets.map(id => db.collection(colName).doc(id).delete().catch(() => {})));
+        } else {
+          const snap = await db.collection(colName).get();
+          await Promise.all(snap.docs.map(d => d.ref.delete().catch(() => {})));
+        }
+      } catch (e) { /* ignore */ }
+    };
+
+    const deleteMetadataPrefixDocs = async (prefix, docIds) => {
+      if (!isFirestoreActive || !db) return;
+      try {
+        if (Array.isArray(docIds)) {
+          await Promise.all(docIds.map(id => db.collection('pms_metadata').doc(`${prefix}${id}`).delete().catch(() => {})));
+        } else {
+          const snap = await db.collection('pms_metadata').get();
+          const jobs = [];
+          snap.forEach(d => {
+            if (d.id.startsWith(prefix)) jobs.push(d.ref.delete().catch(() => {}));
+          });
+          await Promise.all(jobs);
+        }
+      } catch (e) { /* ignore */ }
+    };
+
+    const renderAdminDataStats = () => {
+      const tbody = document.getElementById('admin-data-stats-tbody');
+      if (!tbody) return;
+      const inspCount = getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX).length;
+      const dailyCount = getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX).length;
+      const planCount = Array.isArray(state.planData?.rows) ? state.planData.rows.length : 0;
+      const rpCount = Array.isArray(state.receiverPlanRows) ? state.receiverPlanRows.length : 0;
+      const attCount = Array.isArray(state.attendanceRecords) ? state.attendanceRecords.length : 0;
+      const certCount = Array.isArray(state.certSavedRows) ? state.certSavedRows.length : 0;
+      const qualCount = Array.isArray(state.qualityRows) ? state.qualityRows.length : 0;
+      const masterCount = (state.workers?.length || 0) + (state.commonItems?.length || 0) + (state.etcItems?.length || 0);
+
+      const rows = [
+        { key: 'cert', name: '검정현황', count: `${certCount}건`, desc: '저장된 검정 내역 (일정완료·품검요청 잠금 포함) 및 작성중 목록' },
+        { key: 'quality', name: '품질검사', count: `${qualCount}건`, desc: '품질검사 대기·진행·완료 내역' },
+        { key: 'insp_v2', name: '일정계획', count: `${inspCount}주`, desc: '주차별 생산 일정계획 데이터' },
+        { key: 'daily_v2', name: '생산일보', count: `${dailyCount}일`, desc: '일자별 생산일보 실적·작업자·유실공수 데이터' },
+        { key: 'plan', name: '생산계획', count: `${planCount}행`, desc: '연간/월간/주차별 생산계획 그리드' },
+        { key: 'receiver', name: '수주현황 (수신기)', count: `${rpCount}건`, desc: '수신기 수주 및 납품 일정 내역' },
+        { key: 'attendance', name: '근태관리', count: `${attCount}건`, desc: '작업자 근태 기록 및 휴일 지정 내역' },
+        { key: 'master_samples', name: '기본 마스터 샘플', count: `${masterCount}건`, desc: '작업자·공통품목·기타작업 목록 (비워도 기본 샘플 재삽입 안 됨)' }
+      ];
+
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td><strong>${escHtml(r.name)}</strong></td>
+          <td style="text-align:center;"><span class="badge" style="background:#f1f5f9; color:#334155;">${escHtml(r.count)}</span></td>
+          <td style="font-size:12px; color:var(--text-secondary);">${escHtml(r.desc)}</td>
+          <td style="text-align:center;">
+            <button type="button" class="btn btn-xs btn-outline text-danger btn-admin-reset-mod" data-mod="${r.key}" data-name="${escHtml(r.name)}">초기화</button>
+          </td>
+        </tr>
+      `).join('');
+    };
+
+    const resetAdminModuleData = async (modKey, modName) => {
+      if (!state.currentUser?.canApprove) {
+        alert('관리자 권한이 필요합니다.');
+        return;
+      }
+      if (!confirm(`[${modName}] 데이터를 모두 초기화하시겠습니까?\n(로컬 저장소와 Firestore DB에서 모두 삭제됩니다.)`)) return;
+      if (!confirm(`정말로 [${modName}] 전체 데이터를 삭제합니다. 계속할까요?`)) return;
+
+      maybeAutoBackup();
+
+      if (modKey === 'cert') {
+        const syncQual = document.getElementById('chk-admin-sync-quality')?.checked;
+        const prevCount = (state.certSavedRows || []).length;
+        state.certSavedRows = [];
+        state.certDraftRows = [createNewDraftRow()];
+        if (syncQual) {
+          state.qualityRows = [];
+        }
+        saveLocalCertData();
+        await saveCertDataToDb(true);
+        if (syncQual) await saveQualityRowsToDb();
+        renderCertSavedTable();
+        renderCertDraftTable();
+        renderQualityTable();
+        if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+        await appendAdminAuditLog('전체 초기화', '검정현황', `저장내역 ${prevCount}건 초기화${syncQual ? ' (품질검사 연동 포함)' : ''}`);
+      } else if (modKey === 'quality') {
+        const prevCount = (state.qualityRows || []).length;
+        state.qualityRows = [];
+        saveLocalCertData();
+        await saveQualityRowsToDb();
+        renderQualityTable();
+        await appendAdminAuditLog('전체 초기화', '품질검사', `${prevCount}건 초기화`);
+      } else if (modKey === 'insp_v2') {
+        const keys = getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX);
+        keys.forEach(k => localStorage.removeItem(k));
+        state.inspV2Data = { startDate: state.inspectionStartDate || getTodayDateString(), dayCount: 10, items: {} };
+        await deleteFirestoreCollectionDocs('pms_insp_v2');
+        await deleteMetadataPrefixDocs('insp_v2__');
+        if (typeof renderInspectionV2 === 'function') renderInspectionV2();
+        await appendAdminAuditLog('전체 초기화', '일정계획', `${keys.length}개 주차 데이터 초기화`);
+      } else if (modKey === 'daily_v2') {
+        const keys = getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX);
+        keys.forEach(k => localStorage.removeItem(k));
+        state.dailyV2Data = { lines: {} };
+        await deleteFirestoreCollectionDocs('pms_daily_v2');
+        await deleteMetadataPrefixDocs('daily_v2__');
+        if (typeof renderDailyV2 === 'function') renderDailyV2();
+        await appendAdminAuditLog('전체 초기화', '생산일보', `${keys.length}일 데이터 초기화`);
+      } else if (modKey === 'plan') {
+        const prevCount = Array.isArray(state.planData?.rows) ? state.planData.rows.length : 0;
+        state.planData = getDefaultPlanData();
+        state.planData.rows = [];
+        await savePlanToDb();
+        renderPlanModule();
+        await appendAdminAuditLog('전체 초기화', '생산계획', `${prevCount}행 초기화`);
+      } else if (modKey === 'receiver') {
+        const prevCount = (state.receiverPlanRows || []).length;
+        state.receiverPlanRows = [];
+        await saveReceiverPlanToDb(true);
+        if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+        await appendAdminAuditLog('전체 초기화', '수주현황', `${prevCount}건 초기화`);
+      } else if (modKey === 'attendance') {
+        const prevCount = (state.attendanceRecords || []).length;
+        state.attendanceRecords = [];
+        state.attendanceHolidays = {};
+        saveLocalAttendanceData();
+        await saveAttendanceToDb(true);
+        renderAttendanceModule();
+        await appendAdminAuditLog('전체 초기화', '근태관리', `${prevCount}건 초기화`);
+      } else if (modKey === 'master_samples') {
+        const prevCount = (state.workers?.length || 0) + (state.commonItems?.length || 0) + (state.etcItems?.length || 0);
+        state.workers = [];
+        state.commonItems = [];
+        state.etcItems = [];
+        saveLocalMasterData();
+        await saveMasterToDb(true);
+        renderMasterData();
+        renderAll();
+        await appendAdminAuditLog('전체 초기화', '기본 마스터 샘플', `작업자·품목·기타작업 ${prevCount}건 비움`);
+      }
+
+      renderAdminDataStats();
+      renderAdminCertTable();
+      showToast(`[${modName}] 초기화가 완료되었습니다.`);
+    };
+
+    const countRangeTargets = () => {
+      const mod = document.getElementById('admin-range-module')?.value || 'cert';
+      const start = document.getElementById('admin-range-start')?.value || '';
+      const end = document.getElementById('admin-range-end')?.value || '';
+      const badge = document.getElementById('admin-range-preview-badge');
+      if (!badge) return 0;
+
+      if (!start && !end) {
+        badge.textContent = '기간을 선택하세요';
+        return 0;
+      }
+
+      let count = 0;
+      const countCert = () => (state.certSavedRows || []).filter(r => isDateInRange(String(r.writeDate || '').slice(0, 10), start, end)).length;
+      const countQual = () => (state.qualityRows || []).filter(q => isDateInRange(getQualityRowDate(q), start, end)).length;
+      const countInsp = () => getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX)
+        .filter(k => isDateInRange(k.slice(STORAGE_KEYS.INSP_V2_PREFIX.length), start, end)).length;
+      const countDaily = () => getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX)
+        .filter(k => isDateInRange(k.slice(STORAGE_KEYS.DAILY_V2_PREFIX.length), start, end)).length;
+      const countAtt = () => (state.attendanceRecords || []).filter(r => isDateInRange(String(r.date || '').slice(0, 10), start, end)).length;
+
+      if (mod === 'cert') count = countCert();
+      else if (mod === 'quality') count = countQual();
+      else if (mod === 'insp_v2') count = countInsp();
+      else if (mod === 'daily_v2') count = countDaily();
+      else if (mod === 'attendance') count = countAtt();
+      else if (mod === 'all_dated') count = countCert() + countQual() + countInsp() + countDaily() + countAtt();
+
+      badge.textContent = `대상: ${count}건`;
+      return count;
+    };
+
+    const deleteAdminRangeData = async () => {
+      if (!state.currentUser?.canApprove) {
+        alert('관리자 권한이 필요합니다.');
+        return;
+      }
+      const mod = document.getElementById('admin-range-module')?.value || 'cert';
+      const start = document.getElementById('admin-range-start')?.value || '';
+      const end = document.getElementById('admin-range-end')?.value || '';
+      if (!start && !end) {
+        alert('시작일 또는 종료일을 입력해 주세요.');
+        return;
+      }
+      if (start && end && start > end) {
+        alert('시작일이 종료일보다 늦을 수 없습니다.');
+        return;
+      }
+      const total = countRangeTargets();
+      if (total === 0) {
+        alert('선택한 기간에 해당하는 삭제 대상 데이터가 없습니다.');
+        return;
+      }
+      const modLabel = document.getElementById('admin-range-module')?.selectedOptions?.[0]?.textContent || mod;
+      if (!confirm(`[${modLabel}]\n기간(${start || '처음'} ~ ${end || '끝'}) 데이터 ${total}건을 삭제하시겠습니까?`)) return;
+
+      maybeAutoBackup();
+      const syncQual = document.getElementById('chk-admin-sync-quality')?.checked;
+      const deletedDetails = [];
+
+      if (mod === 'cert' || mod === 'all_dated') {
+        const delIds = (state.certSavedRows || [])
+          .filter(r => isDateInRange(String(r.writeDate || '').slice(0, 10), start, end))
+          .map(r => r.id);
+        if (delIds.length > 0) {
+          state.certSavedRows = (state.certSavedRows || []).filter(r => !delIds.includes(r.id));
+          if (syncQual) {
+            state.qualityRows = (state.qualityRows || []).filter(q => !delIds.includes(q.certRowId || q.id));
+          }
+          saveLocalCertData();
+          await saveCertDataToDb(true);
+          if (syncQual) await saveQualityRowsToDb();
+          renderCertSavedTable();
+          renderQualityTable();
+          if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+          deletedDetails.push(`검정현황 ${delIds.length}건`);
+        }
+      }
+
+      if (mod === 'quality' || mod === 'all_dated') {
+        const before = (state.qualityRows || []).length;
+        state.qualityRows = (state.qualityRows || []).filter(q => !isDateInRange(getQualityRowDate(q), start, end));
+        const removed = before - state.qualityRows.length;
+        if (removed > 0) {
+          saveLocalCertData();
+          await saveQualityRowsToDb();
+          renderQualityTable();
+          deletedDetails.push(`품질검사 ${removed}건`);
+        }
+      }
+
+      if (mod === 'insp_v2' || mod === 'all_dated') {
+        const targetWeeks = getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX)
+          .map(k => k.slice(STORAGE_KEYS.INSP_V2_PREFIX.length))
+          .filter(d => isDateInRange(d, start, end));
+        if (targetWeeks.length > 0) {
+          targetWeeks.forEach(w => localStorage.removeItem(STORAGE_KEYS.INSP_V2_PREFIX + w));
+          await deleteFirestoreCollectionDocs('pms_insp_v2', targetWeeks);
+          await deleteMetadataPrefixDocs('insp_v2__', targetWeeks);
+          if (state.inspectionTargetDate && targetWeeks.includes(state.inspectionTargetDate)) {
+            loadLocalInspectionV2(state.inspectionTargetDate);
+            if (typeof renderInspectionV2 === 'function') renderInspectionV2();
+          }
+          deletedDetails.push(`일정계획 ${targetWeeks.length}주`);
+        }
+      }
+
+      if (mod === 'daily_v2' || mod === 'all_dated') {
+        const targetDays = getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX)
+          .map(k => k.slice(STORAGE_KEYS.DAILY_V2_PREFIX.length))
+          .filter(d => isDateInRange(d, start, end));
+        if (targetDays.length > 0) {
+          targetDays.forEach(d => localStorage.removeItem(STORAGE_KEYS.DAILY_V2_PREFIX + d));
+          await deleteFirestoreCollectionDocs('pms_daily_v2', targetDays);
+          await deleteMetadataPrefixDocs('daily_v2__', targetDays);
+          if (state.productionDate && targetDays.includes(state.productionDate)) {
+            loadLocalDailyV2(state.productionDate);
+            if (typeof renderDailyV2 === 'function') renderDailyV2();
+          }
+          deletedDetails.push(`생산일보 ${targetDays.length}일`);
+        }
+      }
+
+      if (mod === 'attendance' || mod === 'all_dated') {
+        const before = (state.attendanceRecords || []).length;
+        state.attendanceRecords = (state.attendanceRecords || []).filter(r => !isDateInRange(String(r.date || '').slice(0, 10), start, end));
+        const removed = before - state.attendanceRecords.length;
+        if (removed > 0) {
+          saveLocalAttendanceData();
+          await saveAttendanceToDb(true);
+          renderAttendanceModule();
+          deletedDetails.push(`근태관리 ${removed}건`);
+        }
+      }
+
+      await appendAdminAuditLog('기간 삭제', modLabel, `${start || '처음'} ~ ${end || '끝'} (${deletedDetails.join(', ')})`);
+      countRangeTargets();
+      renderAdminDataStats();
+      renderAdminCertTable();
+      showToast('선택한 기간의 데이터가 삭제되었습니다.');
+    };
+
+    const getFilteredAdminCertRows = () => {
+      const statusFilter = document.getElementById('admin-cert-status-filter')?.value || 'ALL';
+      const start = document.getElementById('admin-cert-date-start')?.value || '';
+      const end = document.getElementById('admin-cert-date-end')?.value || '';
+      const q = (document.getElementById('admin-cert-search')?.value || '').trim().toLowerCase();
+
+      return (state.certSavedRows || []).filter(r => {
+        const st = r.status || '등록완료';
+        if (statusFilter !== 'ALL' && st !== statusFilter) return false;
+        const wd = String(r.writeDate || '').slice(0, 10);
+        if (start && (!wd || wd < start)) return false;
+        if (end && (!wd || wd > end)) return false;
+        if (q) {
+          const hay = [r.code, r.name, getDisplayNameByCode(r.code, r.name), r.spec, r.lotNo, r.requestDept, r.group]
+            .map(v => String(v || '').toLowerCase()).join(' ');
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    };
+
+    const renderAdminCertTable = () => {
+      const tbody = document.getElementById('admin-cert-tbody');
+      if (!tbody) return;
+      const rows = getFilteredAdminCertRows();
+      const chkAll = document.getElementById('chk-admin-cert-all');
+      if (chkAll) chkAll.checked = false;
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-secondary);">조건에 해당하는 검정현황 데이터가 없습니다.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows.map(r => {
+        const st = r.status || '등록완료';
+        const isLocked = st === '일정완료' || st === '품검요청';
+        const badgeStyle = st === '일정완료'
+          ? 'background:#dcfce7; color:#15803d;'
+          : st === '품검요청'
+            ? 'background:#fef3c7; color:#b45309;'
+            : st === '불합격'
+              ? 'background:#fee2e2; color:#b91c1c;'
+              : 'background:#e0f2fe; color:#0369a1;';
+        return `
+          <tr data-id="${escHtml(r.id)}">
+            <td style="text-align:center;"><input type="checkbox" class="chk-admin-cert-row" data-id="${escHtml(r.id)}"></td>
+            <td style="text-align:center;"><span class="badge" style="${badgeStyle}">${isLocked ? '🔒 ' : ''}${escHtml(st)}</span></td>
+            <td style="text-align:center;">${escHtml(r.writeDate || '-')}</td>
+            <td style="text-align:center;">${escHtml(r.requestDept || '-')}</td>
+            <td style="text-align:center;">${escHtml(r.code || '-')}</td>
+            <td>${escHtml(getDisplayNameByCode(r.code, r.name) || '-')}</td>
+            <td style="text-align:right;">${Number(r.qty || 0).toLocaleString()}</td>
+            <td style="text-align:center;">${escHtml(r.lotNo || '-')}</td>
+            <td style="text-align:center;">${escHtml(r.group || '-')}</td>
+            <td style="text-align:center;">
+              <button type="button" class="btn btn-xs btn-outline btn-admin-cert-edit" data-id="${escHtml(r.id)}">수정</button>
+              <button type="button" class="btn btn-xs btn-outline text-danger btn-admin-cert-del" data-id="${escHtml(r.id)}">삭제</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    };
+
+    const renderAdminAuditTable = () => {
+      const tbody = document.getElementById('admin-audit-tbody');
+      if (!tbody) return;
+      const logs = getAuditLogs();
+      if (logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:18px; color:var(--text-secondary);">기록된 관리 이력이 없습니다.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = logs.map(l => `
+        <tr>
+          <td style="font-size:12px;">${escHtml(l.ts)}</td>
+          <td style="font-size:12px;">${escHtml(l.user)}</td>
+          <td style="font-size:12px;"><span class="badge" style="background:#f1f5f9; color:#334155;">${escHtml(l.actionType)}</span></td>
+          <td style="font-size:12px;">${escHtml(l.targetLabel)}</td>
+          <td style="font-size:12px; color:var(--text-secondary);">${escHtml(l.detail)}</td>
+        </tr>
+      `).join('');
+    };
+
+    const forceDeleteCertRowsByIds = async (ids, label) => {
+      if (!ids || ids.length === 0) return;
+      if (!confirm(`${label} ${ids.length}건을 강제 삭제하시겠습니까?\n(일정완료·품검요청 잠금 항목도 즉시 삭제됩니다.)`)) return;
+      maybeAutoBackup();
+      const syncQual = document.getElementById('chk-admin-sync-quality')?.checked;
+      state.certSavedRows = (state.certSavedRows || []).filter(r => !ids.includes(r.id));
+      if (syncQual) {
+        state.qualityRows = (state.qualityRows || []).filter(q => !ids.includes(q.certRowId || q.id));
+      }
+      saveLocalCertData();
+      await saveCertDataToDb(true);
+      if (syncQual) await saveQualityRowsToDb();
+      renderCertSavedTable();
+      renderQualityTable();
+      if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+      await appendAdminAuditLog('강제 삭제', '검정현황', `${ids.length}건 삭제${syncQual ? ' (품질검사 연동 포함)' : ''}`);
+      renderAdminDataStats();
+      renderAdminCertTable();
+      showToast(`${ids.length}건이 강제 삭제되었습니다.`);
+    };
+
+    // 이벤트 연결
+    document.getElementById('btn-settings-nav-data-admin')?.addEventListener('click', () => {
+      syncAuditLogsFromDb();
+      renderAdminDataStats();
+      countRangeTargets();
+      renderAdminCertTable();
+      renderAdminAuditTable();
+    });
+
+    document.getElementById('btn-admin-refresh-stats')?.addEventListener('click', () => {
+      renderAdminDataStats();
+      countRangeTargets();
+      renderAdminCertTable();
+      renderAdminAuditTable();
+      showToast('현황을 새로고침했습니다.');
+    });
+
+    document.getElementById('btn-admin-full-backup')?.addEventListener('click', downloadAdminFullBackupJson);
+
+    document.getElementById('admin-data-stats-tbody')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-admin-reset-mod');
+      if (!btn) return;
+      resetAdminModuleData(btn.dataset.mod, btn.dataset.name);
+    });
+
+    ['admin-range-module', 'admin-range-start', 'admin-range-end'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', countRangeTargets);
+    });
+    document.getElementById('btn-admin-delete-range')?.addEventListener('click', deleteAdminRangeData);
+
+    ['admin-cert-status-filter', 'admin-cert-date-start', 'admin-cert-date-end'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', renderAdminCertTable);
+    });
+    document.getElementById('admin-cert-search')?.addEventListener('input', renderAdminCertTable);
+    document.getElementById('btn-admin-cert-reset-filter')?.addEventListener('click', () => {
+      const s = document.getElementById('admin-cert-status-filter'); if (s) s.value = 'ALL';
+      const ds = document.getElementById('admin-cert-date-start'); if (ds) ds.value = '';
+      const de = document.getElementById('admin-cert-date-end'); if (de) de.value = '';
+      const q = document.getElementById('admin-cert-search'); if (q) q.value = '';
+      renderAdminCertTable();
+    });
+
+    document.getElementById('chk-admin-cert-all')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      document.querySelectorAll('#admin-cert-tbody .chk-admin-cert-row').forEach(cb => { cb.checked = checked; });
+    });
+
+    document.getElementById('btn-admin-cert-bulk-status')?.addEventListener('click', async () => {
+      const ids = Array.from(document.querySelectorAll('#admin-cert-tbody .chk-admin-cert-row:checked')).map(cb => cb.dataset.id);
+      if (ids.length === 0) { alert('상태를 변경할 항목을 1건 이상 선택해 주세요.'); return; }
+      const newStatus = document.getElementById('admin-cert-bulk-status')?.value || '등록완료';
+      if (!confirm(`선택한 ${ids.length}건의 상태를 [${newStatus}](으)로 변경하시겠습니까?`)) return;
+      (state.certSavedRows || []).forEach(r => {
+        if (ids.includes(r.id)) r.status = newStatus;
+      });
+      saveLocalCertData();
+      await saveCertDataToDb(true);
+      renderCertSavedTable();
+      await appendAdminAuditLog('상태 변경', '검정현황', `${ids.length}건 → ${newStatus}`);
+      renderAdminCertTable();
+      showToast(`${ids.length}건의 상태가 [${newStatus}](으)로 변경되었습니다.`);
+    });
+
+    document.getElementById('btn-admin-cert-bulk-delete')?.addEventListener('click', () => {
+      const ids = Array.from(document.querySelectorAll('#admin-cert-tbody .chk-admin-cert-row:checked')).map(cb => cb.dataset.id);
+      if (ids.length === 0) { alert('삭제할 항목을 1건 이상 선택해 주세요.'); return; }
+      forceDeleteCertRowsByIds(ids, '선택한 검정현황');
+    });
+
+    const editModal = document.getElementById('admin-cert-edit-modal');
+    const closeEditModal = () => { if (editModal) editModal.style.display = 'none'; };
+    document.getElementById('btn-close-admin-cert-edit')?.addEventListener('click', closeEditModal);
+    document.getElementById('btn-cancel-admin-cert-edit')?.addEventListener('click', closeEditModal);
+
+    document.getElementById('admin-cert-tbody')?.addEventListener('click', (e) => {
+      const delBtn = e.target.closest('.btn-admin-cert-del');
+      if (delBtn) {
+        forceDeleteCertRowsByIds([delBtn.dataset.id], '해당 검정현황');
+        return;
+      }
+      const editBtn = e.target.closest('.btn-admin-cert-edit');
+      if (editBtn) {
+        const row = (state.certSavedRows || []).find(r => r.id === editBtn.dataset.id);
+        if (!row || !editModal) return;
+        document.getElementById('admin-edit-cert-id').value = row.id;
+        document.getElementById('admin-edit-cert-status').value = row.status || '등록완료';
+        document.getElementById('admin-edit-cert-writeDate').value = String(row.writeDate || '').slice(0, 10);
+        document.getElementById('admin-edit-cert-dept').value = row.requestDept || '';
+        document.getElementById('admin-edit-cert-qty').value = row.qty ?? '';
+        document.getElementById('admin-edit-cert-lot').value = row.lotNo || '';
+        document.getElementById('admin-edit-cert-group').value = row.group || '';
+        document.getElementById('admin-edit-cert-note').value = row.note || '';
+        editModal.style.display = 'flex';
+      }
+    });
+
+    document.getElementById('form-admin-cert-edit')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = document.getElementById('admin-edit-cert-id').value;
+      const row = (state.certSavedRows || []).find(r => r.id === id);
+      if (!row) return;
+      row.status = document.getElementById('admin-edit-cert-status').value;
+      row.writeDate = document.getElementById('admin-edit-cert-writeDate').value;
+      row.requestDept = document.getElementById('admin-edit-cert-dept').value.trim();
+      row.qty = Number(document.getElementById('admin-edit-cert-qty').value || 0);
+      row.lotNo = document.getElementById('admin-edit-cert-lot').value.trim();
+      row.group = document.getElementById('admin-edit-cert-group').value.trim();
+      row.note = document.getElementById('admin-edit-cert-note').value.trim();
+
+      saveLocalCertData();
+      await saveCertDataToDb(true);
+      renderCertSavedTable();
+      closeEditModal();
+      await appendAdminAuditLog('항목 수정', '검정현황', `${row.code || ''} ${row.name || ''} (${row.status})`);
+      renderAdminCertTable();
+      showToast('검정현황 항목이 수정되었습니다.');
+    });
+
+    document.getElementById('btn-admin-clear-audit')?.addEventListener('click', async () => {
+      if (!confirm('관리 이력 로그를 모두 비우시겠습니까?')) return;
+      await saveAuditLogs([]);
+      showToast('관리 이력이 비워졌습니다.');
+    });
+  }
+
+  // =========================================================================
   // 16. DOM 준비 완료 및 시스템 기동
   // =========================================================================
   function initBottomStatusBar() {
@@ -15429,6 +16066,7 @@
     initWorkGroupModalEvents();
     initAuthModule();
     initReportTemplateModule();
+    initAdminDataManagement();
     initBottomStatusBar();
     initGlobalCustomDropdowns();
     startClock();
