@@ -292,6 +292,18 @@
     })(),
     prodLineFilter: 'ALL',
     prodMergeMode: 'merged', // 'merged' | 'split'
+    dailyProcLinks: (() => {
+      try {
+        const raw = localStorage.getItem('pms_daily_proc_link_v1');
+        if (raw) return JSON.parse(raw);
+      } catch (e) {}
+      return {
+        '감지기반': [['assembly'], ['inspect'], ['pack']],
+        '유도등반': [['assembly'], ['inspect'], ['pack']],
+        '수신기반': [['assembly'], ['inspect'], ['pack']]
+      };
+    })(),
+    dailyProcLinkSelected: { '감지기반': [], '유도등반': [], '수신기반': [] },
     dailyV2Data: { supportByLine: { '감지기반': [], '유도등반': [], '수신기반': [] }, entries: [] },
     whMonth: getTodayDateString().slice(0, 7),
     whLineFilter: 'ALL',
@@ -304,7 +316,12 @@
     authUsers: [],
     currentUser: null,
 
-    // 근태관리 상태
+    // 근태관리 & 캘린더 상태
+    calendarMode: 'attendance', // 'attendance' | 'schedule'
+    calSchedLineFilter: 'ALL',  // 'ALL' | '감지기반' | '유도등반' | '수신기반'
+    calSchedStatusFilter: 'ALL', // 'ALL' | '등록완료' | '검정신청' | '품검요청' | '일정완료'
+    calSchedExpandedWeekIdx: null,
+    calSchedSelectedDate: null,
     attendanceMonth: getTodayDateString().slice(0, 7),
     attendanceTypes: [],
     attendanceRecords: [],
@@ -1582,7 +1599,110 @@
     });
   }
 
+  function findMissingDailyReportDates() {
+    const todayStr = getTodayDateString();
+    const monthStart = todayStr.slice(0, 7) + '-01';
+    const yesterday = addDaysStr(todayStr, -1);
+    if (yesterday < monthStart) return [];
+
+    const schedDateMap = typeof collectScheduleCalendarData === 'function'
+      ? collectScheduleCalendarData()
+      : new Map();
+    const prodLines = ['감지기반', '유도등반', '수신기반'];
+    const dowLabels = ['일', '월', '화', '수', '목', '금', '토'];
+    const results = [];
+
+    let cur = monthStart;
+    while (cur <= yesterday) {
+      const dayStatus = typeof getAttendanceDayStatus === 'function'
+        ? getAttendanceDayStatus(cur)
+        : { isOffDay: false, dow: new Date(cur + 'T00:00:00').getDay() };
+
+      const planItems = schedDateMap.get(cur) || [];
+      if (!dayStatus.isOffDay && planItems.length > 0) {
+        let entries = [];
+        if (state.productionDate === cur && state.dailyV2Data && Array.isArray(state.dailyV2Data.entries)) {
+          entries = state.dailyV2Data.entries;
+        } else {
+          try {
+            const rawD = localStorage.getItem(STORAGE_KEYS.DAILY_V2_PREFIX + cur);
+            if (rawD) entries = JSON.parse(rawD).entries || [];
+          } catch (e) { /* ignore */ }
+        }
+
+        const missingLines = prodLines.filter(ln => {
+          const lineEntries = entries.filter(ent => ent && String(ent.line || '').trim() === ln);
+          if (lineEntries.length === 0) return true;
+          return !lineEntries.some(ent => {
+            if (parseSafeInt(ent.qty) > 0) return true;
+            if (ent.workerHours && Object.values(ent.workerHours).some(v => parseFloat(v) > 0)) return true;
+            if (ent.isLoss && parseFloat(ent.lossHours || ent.hours || 0) > 0) return true;
+            if (String(ent.note || ent.itemName || '').trim()) return true;
+            return false;
+          });
+        });
+
+        if (missingLines.length > 0) {
+          results.push({
+            dateStr: cur,
+            dowLabel: dowLabels[dayStatus.dow] || '',
+            missingLines,
+            isAllMissing: missingLines.length === prodLines.length
+          });
+        }
+      }
+      cur = addDaysStr(cur, 1);
+    }
+
+    // 최근 날짜가 위로 오도록 역순 정렬
+    results.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+    return results;
+  }
+
+  function renderProdMissingDropdown() {
+    const btn = document.getElementById('btn-prod-missing-days');
+    const labelEl = document.getElementById('prod-missing-label');
+    const popEl = document.getElementById('prod-missing-popover');
+    if (!btn || !labelEl || !popEl) return;
+
+    const missingList = findMissingDailyReportDates();
+    const count = missingList.length;
+
+    btn.classList.toggle('has-missing', count > 0);
+    btn.classList.toggle('all-clear', count === 0);
+    labelEl.textContent = count > 0 ? `미작성 ${count}일` : '미작성 없음';
+
+    let html = `
+      <div class="prod-missing-pop-head">
+        <span>이번 달 미작성 일자</span>
+        <span class="prod-missing-pop-sub">1일 ~ 어제 (계획 있는 날)</span>
+      </div>
+      <div class="prod-missing-pop-list">
+    `;
+    if (count === 0) {
+      html += `<div class="prod-missing-empty">누락된 일보가 없습니다.</div>`;
+    } else {
+      html += missingList.map(item => {
+        const shortDate = item.dateStr.slice(5);
+        const lineText = item.isAllMissing
+          ? '전체 반 미작성'
+          : `${item.missingLines.map(l => l.replace('반', '')).join(', ')} 미작성`;
+        const isCurrent = state.productionDate === item.dateStr;
+        return `
+          <button type="button" class="prod-missing-item ${isCurrent ? 'is-current' : ''}" data-missing-date="${item.dateStr}">
+            <span class="prod-missing-item-date">${shortDate} (${item.dowLabel})</span>
+            <span class="prod-missing-item-lines">${lineText}</span>
+          </button>
+        `;
+      }).join('');
+    }
+    html += `</div>`;
+    popEl.innerHTML = html;
+  }
+
   function renderProductionTable() {
+    if (typeof updateNavTabBadges === 'function') updateNavTabBadges();
+    if (typeof renderProdMissingDropdown === 'function') renderProdMissingDropdown();
     if (typeof renderProductionV2 === 'function') {
       renderProductionV2();
       return;
@@ -2246,6 +2366,11 @@
       }
 
       state.currentTab = tabId;
+      try {
+        localStorage.setItem('pms_last_active_tab', tabId);
+        localStorage.setItem('pms_last_cal_mode', state.calendarMode || 'attendance');
+        localStorage.setItem('pms_last_daily_mode', (state.activeLines && state.activeLines.daily) || 'daily');
+      } catch (e) { /* ignore */ }
       markAsDirty(false);
 
       // 4) 탭별 데이터 렌더링 (예외 발생 시에도 화면 전환 상태는 유지)
@@ -2348,11 +2473,19 @@
           updateInspectionLineBanner(lineKey, lineName);
         } else if (parentTabId === 'tab-production') {
           state.activeLines.daily = lineKey;
+          try { localStorage.setItem('pms_last_daily_mode', lineKey); } catch (e) {}
           const chip = document.getElementById('chip-daily-line');
           if (chip) chip.textContent = lineName;
           updateProductionLineBanner(lineKey, lineName);
         } else if (parentTabId === 'tab-plan' || parentTabId === 'tab-receiver-plan') {
           const chip = document.getElementById('chip-plan-mode');
+          if (chip) chip.textContent = lineName;
+        } else if (parentTabId === 'tab-attendance') {
+          state.calendarMode = lineKey === 'schedule' ? 'schedule' : 'attendance';
+          try { localStorage.setItem('pms_last_cal_mode', state.calendarMode); } catch (e) {}
+          state.calSchedExpandedWeekIdx = null;
+          state.calSchedSelectedDate = null;
+          const chip = document.getElementById('chip-cal-mode');
           if (chip) chip.textContent = lineName;
         }
 
@@ -3419,9 +3552,89 @@
     }
   }
 
+  function updateNavTabBadges() {
+    // 1) 검정현황: 미등록 건수 (작성/대기 중 실제 품목이 있는 행)
+    const certUnregCount = (state.certDraftRows || []).filter(r =>
+      (r && ((r.code && String(r.code).trim()) || (r.name && String(r.name).trim())))
+    ).length;
+    const certBadge = document.getElementById('badge-cert-saved-count');
+    if (certBadge) {
+      certBadge.textContent = certUnregCount > 0 ? String(certUnregCount) : '';
+      certBadge.title = `미등록 검정 건수: ${certUnregCount}건`;
+    }
+
+    // 2) 일정계획: 로트별로 작성되지 않은 건수 (일정완료 제외)
+    let inspUnplannedCount = 0;
+    const inspCache = new Map();
+    (state.certSavedRows || []).forEach(r => {
+      if (!r || r.status === '일정완료') return;
+      const wk = r.weekDate || '';
+      let itemsObj = null;
+      if (wk && state.inspectionTargetDate === wk && state.inspV2Data && state.inspV2Data.items) {
+        itemsObj = state.inspV2Data.items;
+      } else if (wk) {
+        if (!inspCache.has(wk)) {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.INSP_V2_PREFIX + wk);
+            inspCache.set(wk, raw ? (JSON.parse(raw).items || {}) : {});
+          } catch (e) { inspCache.set(wk, {}); }
+        }
+        itemsObj = inspCache.get(wk);
+      }
+      const itState = itemsObj ? itemsObj[r.id] : null;
+      const excl = (itState && itState.excludedProcs) || {};
+      const dp = (itState && itState.dailyPlans) || {};
+      const hasPlan = Object.values(dp).some(pObj =>
+        pObj && ['assembly', 'inspect', 'pack'].some(p => !excl[p] && parseSafeInt(pObj[p]) > 0)
+      );
+      if (!hasPlan) inspUnplannedCount++;
+    });
+    const inspBadge = document.getElementById('badge-insp-unplanned-count');
+    if (inspBadge) {
+      inspBadge.textContent = inspUnplannedCount > 0 ? String(inspUnplannedCount) : '';
+      inspBadge.title = `일정계획 미작성 로트: ${inspUnplannedCount}건`;
+    }
+
+    // 3) 생산일보 - 일보작성: 감지기반, 유도등반, 수신기반 중 내용이 비어있는 반 건수
+    const targetProdDate = state.productionDate || getTodayDateString();
+    let prodEntries = [];
+    if (state.dailyV2Data && Array.isArray(state.dailyV2Data.entries)) {
+      prodEntries = state.dailyV2Data.entries;
+    } else {
+      try {
+        const rawD = localStorage.getItem(STORAGE_KEYS.DAILY_V2_PREFIX + targetProdDate);
+        if (rawD) prodEntries = JSON.parse(rawD).entries || [];
+      } catch (e) { /* ignore */ }
+    }
+    const prodLines = ['감지기반', '유도등반', '수신기반'];
+    const prodIncompleteCount = prodLines.filter(ln => {
+      const lineEntries = prodEntries.filter(ent => ent && String(ent.line || '').trim() === ln);
+      if (lineEntries.length === 0) return true;
+      return !lineEntries.some(ent => {
+        if (parseSafeInt(ent.qty) > 0) return true;
+        if (ent.workerHours && Object.values(ent.workerHours).some(v => parseFloat(v) > 0)) return true;
+        if (ent.isLoss && parseFloat(ent.lossHours || ent.hours || 0) > 0) return true;
+        if (String(ent.note || ent.itemName || '').trim()) return true;
+        return false;
+      });
+    }).length;
+    const prodBadge = document.getElementById('badge-prod-incomplete-count');
+    if (prodBadge) {
+      prodBadge.textContent = prodIncompleteCount > 0 ? String(prodIncompleteCount) : '';
+      prodBadge.title = `일보 미작성 작업반: ${prodIncompleteCount}개 반`;
+    }
+
+    // 4) 품질검사: 품검요청이 등록된 건수
+    const qualReqCount = (state.certSavedRows || []).filter(r => r && r.status === '품검요청').length;
+    const qualBadge = document.getElementById('badge-quality-req-count');
+    if (qualBadge) {
+      qualBadge.textContent = qualReqCount > 0 ? String(qualReqCount) : '';
+      qualBadge.title = `품검요청 등록 건수: ${qualReqCount}건`;
+    }
+  }
+
   function updateCertBadgeCounts() {
-    const savedBadge = document.getElementById('badge-cert-saved-count');
-    if (savedBadge) savedBadge.textContent = (state.certSavedRows || []).length;
+    updateNavTabBadges();
 
     const masterBadge = document.getElementById('count-cert-master-badge');
     if (masterBadge) masterBadge.textContent = `${(state.certMasterItems || []).length}개 등록됨`;
@@ -4210,6 +4423,7 @@
 
   // (8-B) [품질검사] 그리드 렌더링 (검정현황 품검요청 연동)
   function renderQualityTable() {
+    if (typeof updateNavTabBadges === 'function') updateNavTabBadges();
     const tbody = document.getElementById('quality-tbody');
     if (!tbody) return;
 
@@ -8906,6 +9120,7 @@
       ...state.inspV2Data,
       updatedAt: Date.now()
     }));
+    if (typeof updateNavTabBadges === 'function') updateNavTabBadges();
   }
 
   async function loadInspectionV2FromDb(weekDate) {
@@ -9023,6 +9238,8 @@
       date: state.productionDate,
       updatedAt: Date.now()
     }));
+    if (typeof updateNavTabBadges === 'function') updateNavTabBadges();
+    if (typeof renderProdMissingDropdown === 'function') renderProdMissingDropdown();
   }
 
   async function loadDailyV2FromDb(dateStr) {
@@ -9285,6 +9502,7 @@
 
     const dayCount = state.inspV2Data.dayCount || 10;
     const baseDate = state.inspV2Data.startDate || getMondayOfWeek(targetDate);
+    const dowLabels = ['일', '월', '화', '수', '목', '금', '토'];
     const dateCols = [];
     for (let d = 0; d < dayCount; d++) {
       const ds = addDaysStr(baseDate, d);
@@ -9296,7 +9514,7 @@
       const compHol = (state.attendanceHolidays && state.attendanceHolidays[ds]) || '';
       const isWeekend = dow === 0 || dow === 6;
       const isOffDay = isWeekend || !!krHol || !!compHol;
-      dateCols.push({ dateStr: ds, label: `${mm}/${dd}`, isWeekend, isOffDay, offReason: krHol || compHol, dow });
+      dateCols.push({ dateStr: ds, label: `${mm}/${dd} (${dowLabels[dow]})`, isWeekend, isOffDay, offReason: krHol || compHol, dow });
     }
 
     const visibleLines = (state.inspLineFilter && state.inspLineFilter !== 'ALL')
@@ -9316,7 +9534,7 @@
 
       let tbodyHtml = '';
       if (lineRows.length === 0) {
-        tbodyHtml = `<tr><td colspan="${7 + dayCount}" style="text-align:center; padding: 20px; color:#94a3b8;">해당 생산주차(${targetDate || '-'})에 등록된 [${lineName}] 검정 내역이 없습니다.</td></tr>`;
+        tbodyHtml = `<tr><td colspan="${8 + dayCount}" style="text-align:center; padding: 20px; color:#94a3b8;">해당 생산주차(${targetDate || '-'})에 등록된 [${lineName}] 검정 내역이 없습니다.</td></tr>`;
       } else {
         const procDefs = [
           { key: 'assembly', label: '조립', cls: 'is-assembly', stField: 'stAssembly' },
@@ -9366,8 +9584,14 @@
             }
 
             const badgeHtml = `<button type="button" tabindex="-1" class="insp-proc-badge ${isExcl ? 'is-excluded' : pd.cls}" data-row-id="${cRow.id}" data-proc="${pd.key}" title="${isExcl ? '제외됨 (클릭 시 포함)' : '클릭 시 해당 공정 제외'}">${pd.label}</button>`;
+            const lineGroups = getDailyProcGroups(lineName);
+            const isProcLinked = !isExcl && lineGroups.some(g => g.length > 1 && g.includes(pd.key));
+            const procLinkIcon = isProcLinked
+              ? `<span class="prod-proc-link-indicator" title="연결된 공정 (선행 공정 입력 시 자동 채움)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></span>`
+              : `<span class="prod-proc-link-indicator is-empty" aria-hidden="true"></span>`;
 
             let dateCellsHtml = '';
+            let procPlanSum = 0;
             dateCols.forEach((dc, dIdx) => {
               if (dc.isOffDay) {
                 dateCellsHtml += `<td class="weekend-cell" style="background:${dc.offReason ? 'var(--danger-light)' : 'var(--bg-subtle)'};" title="${dc.offReason || '주말'}"></td>`;
@@ -9381,6 +9605,7 @@
                 const isMismatch = isPastOrToday && (val > actualOnDay);
                 const isMatch = isPastOrToday && (val > 0) && (actualOnDay >= val);
                 if (val > 0) {
+                  procPlanSum += val;
                   if (pd.key === 'assembly') dailyQtySums[dIdx] += val;
                   dailyStSeconds[dIdx] += (val * stMap[pd.key]);
                 }
@@ -9421,9 +9646,10 @@
             tbodyHtml += `
               <tr class="${rowCls}">
                 ${mergedCols}
-                <td class="text-center">${badgeHtml}</td>
+                <td class="text-center" style="white-space:nowrap;">${badgeHtml}${procLinkIcon}</td>
                 <td class="num-cell text-center insp-qty-blue font-bold">${!isExcl ? compProcQty.toLocaleString() : '-'}</td>
                 <td class="num-cell text-center insp-remain-red" data-remain="${cRow.id}__${pd.key}">${remainHtml}</td>
+                <td class="num-cell text-center font-bold" data-row-plan-sum="${cRow.id}__${pd.key}">${!isExcl ? procPlanSum.toLocaleString() : '-'}</td>
                 ${dateCellsHtml}
               </tr>
             `;
@@ -9432,9 +9658,9 @@
       }
 
       const dateThs = dateCols.map(dc => {
-        const cls = (dc.dow === 0 || dc.offReason) ? 'text-danger' : (dc.dow === 6 ? 'text-primary' : '');
+        const cls = (dc.dow === 0 || dc.offReason) ? 'text-danger' : (dc.dow === 6 ? 'insp-sat-th' : '');
         const subTag = dc.offReason ? `<div style="font-size:9px; font-weight:700; color:#dc2626; line-height:1.1;">${dc.offReason}</div>` : '';
-        return `<th class="insp-date-th ${cls}" style="width: 64px; text-align:center;" title="${dc.offReason || ''}">${dc.label}${subTag}</th>`;
+        return `<th class="insp-date-th ${cls}" style="min-width: 72px; width: 72px; text-align:center;" title="${dc.offReason || ''}">${dc.label}${subTag}</th>`;
       }).join('');
 
       const tfootDateTds = dateCols.map((dc, dIdx) => {
@@ -9447,14 +9673,16 @@
         </td>`;
       }).join('');
 
+      const sumPlanTotal = dailyQtySums.reduce((acc, v) => acc + v, 0);
       const lineRate = sumTarget > 0 ? ((sumCompleted / sumTarget) * 100).toFixed(1) : '0.0';
 
       card.innerHTML = `
         <div class="table-section-header header-process" style="padding: 10px 14px;">
-          <div class="section-title-wrap">
+          <div class="section-title-wrap" style="flex-wrap: wrap;">
             <span class="section-indicator bar-process"></span>
             <h3 class="section-title">${lineName}</h3>
             <span class="sidebar-count-badge">${lineRows.length}건</span>
+            ${renderProdProcLinkBar(lineName)}
           </div>
           <div class="section-summary-pills">
             <span class="summary-pill">목표: <strong>${sumTarget.toLocaleString()}</strong></span>
@@ -9471,9 +9699,10 @@
                 <th style="width: 175px;">품명</th>
                 <th style="width: 82px;">로트번호</th>
                 <th style="width: 72px;">로트수량</th>
-                <th style="width: 58px; text-align:center;" title="클릭 시 해당 공정 제외/포함">공정</th>
+                <th style="width: 72px; text-align:center;" title="클릭 시 해당 공정 제외/포함">공정</th>
                 <th style="width: 68px;">실적완료</th>
                 <th style="width: 72px;">잔량</th>
+                <th style="width: 68px; text-align:center;">합계</th>
                 ${dateThs}
               </tr>
             </thead>
@@ -9485,6 +9714,7 @@
                 <td></td>
                 <td class="num-cell text-center insp-qty-blue font-bold">${sumCompleted.toLocaleString()}</td>
                 <td class="num-cell text-center insp-remain-red">${sumBalance.toLocaleString()}</td>
+                <td class="num-cell text-center font-bold" data-tfoot-plan-sum="${lineName}">${sumPlanTotal.toLocaleString()}</td>
                 ${tfootDateTds}
               </tr>
             </tfoot>
@@ -9556,8 +9786,74 @@
       renderInspectionV2();
     });
 
-    // 행 펼침/접기, 공정 제외 토글 & 날짜 셀 인라인 입력
+    // 행 펼침/접기, 공정 제외 토글 & 공정 연동 컨트롤
     container.addEventListener('click', (e) => {
+      const pillBtn = e.target.closest('.prod-link-group-pill');
+      if (pillBtn) {
+        const ln = pillBtn.dataset.line;
+        const gIdx = Number(pillBtn.dataset.groupIdx);
+        if (!state.dailyProcLinkSelected[ln]) state.dailyProcLinkSelected[ln] = [];
+        const sel = state.dailyProcLinkSelected[ln];
+        const pos = sel.indexOf(gIdx);
+        if (pos >= 0) sel.splice(pos, 1);
+        else sel.push(gIdx);
+        renderInspectionV2();
+        return;
+      }
+
+      const linkBtn = e.target.closest('.btn-prod-proc-link');
+      if (linkBtn) {
+        const ln = linkBtn.dataset.line;
+        const groups = getDailyProcGroups(ln);
+        const sel = (state.dailyProcLinkSelected[ln] || []).slice().sort((a, b) => a - b);
+        if (sel.length < 2) return;
+        const mergedProcs = [];
+        sel.forEach(idx => {
+          if (groups[idx]) mergedProcs.push(...groups[idx]);
+        });
+        const sortedProcs = DAILY_PROC_ORDER.filter(p => mergedProcs.includes(p));
+        if (sortedProcs.length === 2 && sortedProcs[0] === 'assembly' && sortedProcs[1] === 'pack') {
+          showToast('인접한 공정(조립·검사, 검사·포장 또는 전체)을 선택해 주세요.');
+          return;
+        }
+        const nextGroups = groups.filter((_, i) => !sel.includes(i));
+        nextGroups.push(sortedProcs);
+        nextGroups.sort((a, b) => DAILY_PROC_ORDER.indexOf(a[0]) - DAILY_PROC_ORDER.indexOf(b[0]));
+        state.dailyProcLinks[ln] = nextGroups;
+        state.dailyProcLinkSelected[ln] = [];
+        saveDailyProcLinks();
+        renderInspectionV2();
+        showToast(`[${ln}] ${sortedProcs.map(p => DAILY_PROC_NAMES[p]).join('→')} 공정이 연결되었습니다.`);
+        return;
+      }
+
+      const unlinkBtn = e.target.closest('.btn-prod-proc-unlink');
+      if (unlinkBtn) {
+        const ln = unlinkBtn.dataset.line;
+        const groups = getDailyProcGroups(ln);
+        const sel = state.dailyProcLinkSelected[ln] || [];
+        const targetIndices = sel.length > 0
+          ? sel.filter(i => groups[i] && groups[i].length > 1)
+          : groups.map((g, i) => (g.length > 1 ? i : -1)).filter(i => i >= 0);
+        if (targetIndices.length === 0) return;
+
+        const nextGroups = [];
+        groups.forEach((g, idx) => {
+          if (targetIndices.includes(idx)) {
+            g.forEach(p => nextGroups.push([p]));
+          } else {
+            nextGroups.push(g);
+          }
+        });
+        nextGroups.sort((a, b) => DAILY_PROC_ORDER.indexOf(a[0]) - DAILY_PROC_ORDER.indexOf(b[0]));
+        state.dailyProcLinks[ln] = nextGroups;
+        state.dailyProcLinkSelected[ln] = [];
+        saveDailyProcLinks();
+        renderInspectionV2();
+        showToast(`[${ln}] 공정 연결이 해제되었습니다.`);
+        return;
+      }
+
       const expBtn = e.target.closest('.insp-expand-btn');
       if (expBtn) {
         const rowId = expBtn.dataset.rowId;
@@ -9643,8 +9939,36 @@
       }
 
       if (td) td.classList.remove('is-limit-error');
-      if (isCommit || (otherDaysSum + val <= targetQty && !(actualOnDay > 0 && val < actualOnDay))) {
+      const canApplyVal = isCommit || (otherDaysSum + val <= targetQty && !(actualOnDay > 0 && val < actualOnDay));
+      if (canApplyVal) {
         dailyPlans[dateStr][proc] = val > 0 ? val : 0;
+
+        // 단방향 공정 연동: 조립 -> 검사 -> 포장 순으로 연결된 후행 공정 자동 채움 (제외 공정 건너뜀)
+        const groups = getDailyProcGroups(lineName);
+        const matchedGrp = groups.find(g => g.length > 1 && g.includes(proc));
+        if (matchedGrp) {
+          const curIdx = matchedGrp.indexOf(proc);
+          const downstreamProcs = matchedGrp.slice(curIdx + 1);
+          const itemExcl = (state.inspV2Data.items[rowId] && state.inspV2Data.items[rowId].excludedProcs) || {};
+          downstreamProcs.forEach(dp => {
+            if (itemExcl[dp]) return;
+            const dpInput = container.querySelector(`.insp-v2-date-input[data-row-id="${rowId}"][data-date="${dateStr}"][data-proc="${dp}"]`);
+            const dpActual = dpInput ? parseSafeInt(dpInput.dataset.actual) : 0;
+            const appliedDpVal = val > 0 ? Math.max(val, dpActual) : (dpActual > 0 ? dpActual : 0);
+            dailyPlans[dateStr][dp] = appliedDpVal;
+            if (dpInput) {
+              dpInput.value = appliedDpVal > 0 ? appliedDpVal : '';
+            }
+            const dpSumTd = container.querySelector(`td[data-row-plan-sum="${rowId}__${dp}"]`);
+            if (dpSumTd) {
+              let dpRowSum = 0;
+              container.querySelectorAll(`.insp-v2-date-input[data-row-id="${rowId}"][data-proc="${dp}"]`).forEach(x => {
+                dpRowSum += parseSafeInt(x.value);
+              });
+              dpSumTd.textContent = dpRowSum.toLocaleString();
+            }
+          });
+        }
       }
 
       // 계획 vs 실적 일치/불일치(오늘 이하) 왼쪽 상단 점 UI 즉시 갱신
@@ -9694,6 +10018,24 @@
       if (tfootTd) {
         const h = dSec / 3600;
         tfootTd.innerHTML = `${dQty > 0 ? `<strong>${dQty.toLocaleString()}</strong>` : ''}${h > 0 ? `<span class="insp-st-hours">${h.toFixed(1)}h</span>` : ''}`;
+      }
+
+      // 해당 행 합계 & 반 전체 합계 열 실시간 갱신
+      const rowSumTd = container.querySelector(`td[data-row-plan-sum="${rowId}__${proc}"]`);
+      if (rowSumTd) {
+        let rSum = 0;
+        container.querySelectorAll(`.insp-v2-date-input[data-row-id="${rowId}"][data-proc="${proc}"]`).forEach(inp => {
+          rSum += parseSafeInt(inp.value);
+        });
+        rowSumTd.textContent = rSum.toLocaleString();
+      }
+      const tfootSumTd = container.querySelector(`td[data-tfoot-plan-sum="${lineName}"]`);
+      if (tfootSumTd) {
+        let lSum = 0;
+        container.querySelectorAll(`.insp-v2-date-input[data-line="${lineName}"][data-proc="assembly"]`).forEach(inp => {
+          lSum += parseSafeInt(inp.value);
+        });
+        tfootSumTd.textContent = lSum.toLocaleString();
       }
 
       renderSidebarSchedulesV2();
@@ -9788,6 +10130,71 @@
     }
 
     return collected;
+  }
+
+  const DAILY_PROC_ORDER = ['assembly', 'inspect', 'pack'];
+  const DAILY_PROC_NAMES = { assembly: '조립', inspect: '검사', pack: '포장' };
+
+  function getDailyProcGroups(lineName) {
+    const def = [['assembly'], ['inspect'], ['pack']];
+    const groups = state.dailyProcLinks && state.dailyProcLinks[lineName];
+    if (!Array.isArray(groups) || groups.length === 0) return def;
+    const seen = new Set();
+    const valid = [];
+    groups.forEach(g => {
+      if (!Array.isArray(g)) return;
+      const clean = DAILY_PROC_ORDER.filter(p => g.includes(p) && !seen.has(p));
+      if (clean.length > 0) {
+        clean.forEach(p => seen.add(p));
+        valid.push(clean);
+      }
+    });
+    DAILY_PROC_ORDER.forEach(p => {
+      if (!seen.has(p)) valid.push([p]);
+    });
+    valid.sort((a, b) => DAILY_PROC_ORDER.indexOf(a[0]) - DAILY_PROC_ORDER.indexOf(b[0]));
+    return valid;
+  }
+
+  function saveDailyProcLinks() {
+    try {
+      localStorage.setItem('pms_daily_proc_link_v1', JSON.stringify(state.dailyProcLinks || {}));
+    } catch (e) { /* ignore */ }
+  }
+
+  function renderProdProcLinkBar(lineName) {
+    const groups = getDailyProcGroups(lineName);
+    const selList = (state.dailyProcLinkSelected && state.dailyProcLinkSelected[lineName]) || [];
+    const linkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>`;
+    const unlinkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"></path><path d="M5.17 11.75l-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"></path><line x1="8" y1="2" x2="8" y2="5"></line><line x1="2" y1="8" x2="5" y2="8"></line><line x1="16" y1="19" x2="16" y2="22"></line><line x1="19" y1="16" x2="22" y2="16"></line></svg>`;
+
+    const pillsHtml = groups.map((grp, gIdx) => {
+      const isMerged = grp.length > 1;
+      const isSelected = selList.includes(gIdx);
+      const labelHtml = grp.map(p => DAILY_PROC_NAMES[p] || p).join('<span class="prod-link-sep">→</span>');
+      return `
+        <button type="button" class="prod-link-group-pill ${isMerged ? 'is-merged' : ''} ${isSelected ? 'is-selected' : ''}" data-line="${lineName}" data-group-idx="${gIdx}" title="${isMerged ? '연결된 공정 (단방향 자동 채움)' : '클릭하여 연결할 공정 선택'}">
+          ${isMerged ? linkSvg : ''}
+          <span>${labelHtml}</span>
+        </button>
+      `;
+    }).join('');
+
+    const canLink = selList.length >= 2;
+    const mergedIndices = groups.map((g, i) => (g.length > 1 ? i : -1)).filter(i => i >= 0);
+    const canUnlink = selList.some(i => groups[i] && groups[i].length > 1) || (selList.length === 0 && mergedIndices.length > 0);
+
+    return `
+      <div class="prod-proc-link-bar" data-line="${lineName}">
+        ${pillsHtml}
+        <button type="button" class="prod-link-action-btn btn-prod-proc-link" data-line="${lineName}" ${canLink ? '' : 'disabled'} title="선택한 공정을 하나로 연결 (앞 공정 입력 시 뒤 공정 자동 채움)">
+          ${linkSvg}연결
+        </button>
+        <button type="button" class="prod-link-action-btn is-unlink btn-prod-proc-unlink" data-line="${lineName}" ${canUnlink ? '' : 'disabled'} title="연결된 공정 해제">
+          ${unlinkSvg}연결해제
+        </button>
+      </div>
+    `;
   }
 
   function renderProductionV2() {
@@ -11632,9 +12039,136 @@
     return 0;
   }
 
+  const CAL_SCHED_MAX_PREVIEW = 3;
+
+  function normalizeCalSchedStatus(rawStatus) {
+    const s = String(rawStatus || '').trim();
+    if (s === '일정완료') return '일정완료';
+    if (s === '품검요청') return '품검요청';
+    if (s === '검정신청') return '검정신청';
+    return '등록완료';
+  }
+
+  function getCalSchedStatusMeta(status) {
+    switch (status) {
+      case '일정완료': return { label: '일정완료', dotCls: 'st-done' };
+      case '품검요청': return { label: '품검요청', dotCls: 'st-qual' };
+      case '검정신청': return { label: '검정신청', dotCls: 'st-apply' };
+      default: return { label: '검정등록', dotCls: 'st-reg' };
+    }
+  }
+
+  function getCalSchedLineClass(lineName) {
+    if (lineName === '감지기반') return 'line-sensor';
+    if (lineName === '유도등반') return 'line-guide';
+    if (lineName === '수신기반') return 'line-receiver';
+    return '';
+  }
+
+  function collectScheduleCalendarData() {
+    const certMap = new Map((state.certSavedRows || []).map(r => [r.id, r]));
+    const masterMap = new Map((state.certMasterItems || []).map(it => [it.code, it]));
+    const dailyActualMap = typeof aggregateDailyActualsByCertRow === 'function' ? aggregateDailyActualsByCertRow() : {};
+    const dateMap = new Map();
+
+    // localStorage의 모든 pms_insp_v2_ 주차 데이터 수집
+    const allWeekPlans = new Map();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(STORAGE_KEYS.INSP_V2_PREFIX)) continue;
+      const weekDate = k.slice(STORAGE_KEYS.INSP_V2_PREFIX.length);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(weekDate)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(k));
+        if (parsed && parsed.items) {
+          allWeekPlans.set(weekDate, parsed.items);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // 현재 메모리에 열려 있는 일정계획이 있으면 최신 반영
+    if (state.inspectionTargetDate && state.inspV2Data && state.inspV2Data.items) {
+      allWeekPlans.set(state.inspectionTargetDate, state.inspV2Data.items);
+    }
+
+    allWeekPlans.forEach((itemsObj, weekDate) => {
+      Object.entries(itemsObj).forEach(([certRowId, itemState]) => {
+        const cRow = certMap.get(certRowId);
+        if (!cRow || !itemState || !itemState.dailyPlans) return;
+
+        const excl = itemState.excludedProcs || {};
+        const mItem = masterMap.get(cRow.code) || {};
+        const lineName = String(cRow.group || mItem.group || '기타').trim();
+        const itemGroup = String(mItem.itemGroup || cRow.itemGroup || '기타').trim() || '기타';
+        const dispName = (typeof getDisplayItemName === 'function' ? getDisplayItemName(mItem) : '') || cRow.name || cRow.code || '-';
+        const status = normalizeCalSchedStatus(cRow.status);
+
+        // 대표 공정 결정 (조립 우선, 제외 시 검사 -> 포장)
+        let repProc = 'assembly';
+        if (excl.assembly) {
+          if (!excl.inspect) repProc = 'inspect';
+          else if (!excl.pack) repProc = 'pack';
+        }
+
+        Object.entries(itemState.dailyPlans).forEach(([ds, pObj]) => {
+          if (!pObj || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return;
+          const planQty = parseSafeInt(pObj[repProc]);
+          if (planQty <= 0) return;
+
+          const actualQty = parseSafeInt(dailyActualMap[certRowId]?.[ds]?.[repProc]);
+          if (!dateMap.has(ds)) dateMap.set(ds, []);
+          dateMap.get(ds).push({
+            certRowId,
+            weekDate,
+            lineName,
+            itemGroup,
+            code: cRow.code || '',
+            name: dispName,
+            lotNo: String(cRow.lotNo || '').trim(),
+            lotQty: parseSafeInt(cRow.qty),
+            planQty,
+            actualQty,
+            status
+          });
+        });
+      });
+    });
+
+    // 날짜별 반 순서(감지->유도->수신) 및 품목명 정렬
+    const lineOrder = { '감지기반': 1, '유도등반': 2, '수신기반': 3 };
+    dateMap.forEach(list => {
+      list.sort((a, b) => {
+        const la = lineOrder[a.lineName] || 9;
+        const lb = lineOrder[b.lineName] || 9;
+        if (la !== lb) return la - lb;
+        return a.name.localeCompare(b.name, 'ko');
+      });
+    });
+
+    return dateMap;
+  }
+
   function renderAttendanceModule() {
     const monthStr = state.attendanceMonth || getTodayDateString().slice(0, 7);
     const [yearNum, monthNum] = monthStr.split('-').map(Number);
+
+    const isSched = state.calendarMode === 'schedule';
+
+    // 상위 메뉴 드롭다운 칩 & 툴바 & 사이드바 전환
+    const calChip = document.getElementById('chip-cal-mode');
+    if (calChip) calChip.textContent = isSched ? '생산일정' : '근태관리';
+    document.querySelectorAll('.nav-dropdown-item[data-parent-tab="tab-attendance"]').forEach(el => {
+      el.classList.toggle('active', el.dataset.line === (isSched ? 'schedule' : 'attendance'));
+    });
+    const attActions = document.getElementById('att-mode-actions');
+    const schedActions = document.getElementById('cal-sched-actions');
+    if (attActions) attActions.style.display = isSched ? 'none' : 'flex';
+    if (schedActions) schedActions.style.display = isSched ? 'flex' : 'none';
+
+    const attSidebarWrap = document.getElementById('att-sidebar-attendance-wrap');
+    const schedSidebarWrap = document.getElementById('cal-sched-sidebar-wrap');
+    if (attSidebarWrap) attSidebarWrap.style.display = isSched ? 'none' : 'flex';
+    if (schedSidebarWrap) schedSidebarWrap.style.display = isSched ? 'flex' : 'none';
 
     const yearSel = document.getElementById('att-year-select');
     if (yearSel) {
@@ -11651,6 +12185,11 @@
     const monthSel = document.getElementById('att-month-select');
     if (monthSel) {
       monthSel.value = String(monthNum).padStart(2, '0');
+    }
+
+    if (isSched) {
+      renderScheduleCalendarMode(yearNum, monthNum);
+      return;
     }
 
     const badgeEl = document.getElementById('att-sidebar-month-badge');
@@ -11684,6 +12223,8 @@
 
     const calBody = document.getElementById('att-cal-body');
     if (calBody) {
+      calBody.classList.remove('is-schedule-mode', 'has-expanded-week');
+      calBody.style.gridTemplateRows = '';
       let html = '';
       let weekCount = 0;
       const cursor = new Date(startSunday);
@@ -11755,6 +12296,283 @@
     }
 
     renderAttendanceSidebar();
+  }
+
+  function renderScheduleCalendarMode(yearNum, monthNum) {
+    const badgeEl = document.getElementById('cal-sched-month-badge');
+    if (badgeEl) badgeEl.textContent = `${yearNum}년 ${monthNum}월`;
+
+    // 반 필터 버튼 활성화
+    const lineFilter = state.calSchedLineFilter || 'ALL';
+    document.querySelectorAll('#cal-sched-line-filter .plan-seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.line === lineFilter);
+    });
+
+    // 상단 범례: 작업반 왼쪽 색상 + 클릭 가능한 상태 원형 필터
+    const legendEl = document.getElementById('att-legend-wrap');
+    if (legendEl) {
+      const statusFilter = state.calSchedStatusFilter || 'ALL';
+      const statusDefs = [
+        { key: '등록완료', label: '검정등록', cls: 'st-reg' },
+        { key: '검정신청', label: '검정신청', cls: 'st-apply' },
+        { key: '품검요청', label: '품검요청', cls: 'st-qual' },
+        { key: '일정완료', label: '일정완료', cls: 'st-done' }
+      ];
+      const statusPills = statusDefs.map(sd => {
+        const isActive = statusFilter === sd.key;
+        return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-status="${sd.key}" title="클릭 시 [${sd.label}] 상태만 강조">${`<span class="cal-status-dot ${sd.cls}"></span>`}${sd.label}</span>`;
+      }).join('');
+      const linePills = `
+        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#ef4444;"></span>감지기반</span>
+        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#10b981;"></span>유도등반</span>
+        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#3b82f6;"></span>수신기반</span>
+      `;
+      legendEl.innerHTML = `${linePills}<span style="color:#cbd5e1; margin:0 2px;">|</span>${statusPills}`;
+    }
+
+    const dateMap = collectScheduleCalendarData();
+
+    const firstOfMonth = new Date(yearNum, monthNum - 1, 1);
+    const lastOfMonth = new Date(yearNum, monthNum, 0);
+    const startSunday = new Date(firstOfMonth);
+    startSunday.setDate(firstOfMonth.getDate() - firstOfMonth.getDay());
+    const endSaturday = new Date(lastOfMonth);
+    endSaturday.setDate(lastOfMonth.getDate() + (6 - lastOfMonth.getDay()));
+
+    const todayStr = getTodayDateString();
+    const statusFilter = state.calSchedStatusFilter || 'ALL';
+    const expandedIdx = state.calSchedExpandedWeekIdx;
+
+    const weeksData = [];
+    const cursor = new Date(startSunday);
+    let weekIdx = 0;
+
+    while (cursor <= endSaturday) {
+      const sundayStr = formatDateYMD(cursor);
+      const weekLabel = getPlanWeekLabelForSunday(sundayStr);
+      const days = [];
+      let maxOverflow = 0;
+      const groupTotals = new Map();
+      let weekTotalQty = 0;
+
+      for (let d = 0; d < 7; d++) {
+        const ds = formatDateYMD(cursor);
+        const rawItems = dateMap.get(ds) || [];
+        const filteredItems = rawItems.filter(it => lineFilter === 'ALL' || it.lineName === lineFilter);
+        if (filteredItems.length > CAL_SCHED_MAX_PREVIEW) {
+          maxOverflow = Math.max(maxOverflow, filteredItems.length - CAL_SCHED_MAX_PREVIEW);
+        }
+
+        filteredItems.forEach(it => {
+          weekTotalQty += it.planQty;
+          groupTotals.set(it.itemGroup, (groupTotals.get(it.itemGroup) || 0) + it.planQty);
+        });
+
+        days.push({
+          dateStr: ds,
+          dayNum: cursor.getDate(),
+          isOtherMonth: cursor.getMonth() !== (monthNum - 1),
+          items: filteredItems
+        });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const satStr = days[6].dateStr;
+      weeksData.push({
+        weekIdx,
+        weekLabel,
+        rangeLabel: `${sundayStr.slice(5).replace('-', '/')}~${satStr.slice(5).replace('-', '/')}`,
+        days,
+        maxOverflow,
+        groupTotals,
+        weekTotalQty
+      });
+      weekIdx++;
+    }
+
+    // 유효하지 않은 확장 인덱스 보정
+    const validExpandedIdx = (expandedIdx !== null && expandedIdx >= 0 && expandedIdx < weeksData.length) ? expandedIdx : null;
+    if (validExpandedIdx !== state.calSchedExpandedWeekIdx) {
+      state.calSchedExpandedWeekIdx = validExpandedIdx;
+    }
+
+    const collapseBtn = document.getElementById('btn-cal-collapse-week');
+    if (collapseBtn) collapseBtn.style.display = validExpandedIdx !== null ? 'inline-flex' : 'none';
+
+    const calBody = document.getElementById('att-cal-body');
+    if (calBody) {
+      calBody.classList.add('is-schedule-mode');
+      calBody.classList.toggle('has-expanded-week', validExpandedIdx !== null);
+      calBody.style.setProperty('--att-weeks', String(Math.max(weeksData.length, 5)));
+      if (validExpandedIdx !== null) {
+        calBody.style.gridTemplateRows = weeksData.map(w => w.weekIdx === validExpandedIdx ? 'auto' : 'minmax(108px, 1fr)').join(' ');
+      } else {
+        calBody.style.gridTemplateRows = '';
+      }
+
+      let html = '';
+      weeksData.forEach(w => {
+        const isExpanded = w.weekIdx === validExpandedIdx;
+        html += `<div class="att-cal-row ${isExpanded ? 'is-week-expanded' : ''}" data-week-idx="${w.weekIdx}">`;
+        html += `<div class="att-week-cell"><span class="att-week-badge">${w.weekLabel}</span>`;
+        if (w.maxOverflow > 0 || isExpanded) {
+          const btnIcon = isExpanded
+            ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:2px; pointer-events:none;"><polyline points="18 15 12 9 6 15"></polyline></svg>`
+            : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:2px; pointer-events:none;"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+          html += `<button type="button" class="att-week-expand-btn ${isExpanded ? 'is-expanded' : ''}" data-week-idx="${w.weekIdx}">${btnIcon}${isExpanded ? '접기' : `+${w.maxOverflow}`}</button>`;
+        }
+        html += `</div>`;
+
+        w.days.forEach(day => {
+          const ds = day.dateStr;
+          const status = getAttendanceDayStatus(ds);
+          const isToday = ds === todayStr;
+          const isSelected = state.calSchedSelectedDate === ds;
+          const hasConflict = status.isOffDay && day.items.length > 0;
+
+          const classes = ['att-day-cell'];
+          if (day.isOtherMonth) classes.push('is-other-month');
+          if (isToday) classes.push('is-today');
+          if (isSelected) classes.push('is-sched-selected');
+          if (status.dow === 0) classes.push('is-sun');
+          if (status.dow === 6) classes.push('is-sat');
+          if (status.isWeekend) classes.push('is-weekend');
+          if (status.holidayName) classes.push('is-holiday');
+          if (status.closedReason) classes.push('is-closed');
+          if (status.isOffDay) classes.push('is-offday');
+          if (hasConflict) classes.push('has-sched-conflict');
+
+          let tagHtml = '';
+          if (hasConflict) {
+            tagHtml = `<span class="cal-conflict-badge" title="휴무일에 생산일정이 등록되어 있습니다 (${status.holidayName || status.closedReason || '주말'})"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>휴무일정</span>`;
+          } else if (status.holidayName) {
+            tagHtml = `<span class="att-day-tag tag-holiday" title="${status.holidayName}">${status.holidayName}</span>`;
+          } else if (status.closedReason) {
+            tagHtml = `<span class="att-day-tag tag-closed" title="${status.closedReason}">휴무: ${status.closedReason}</span>`;
+          }
+
+          const visibleItems = isExpanded ? day.items : day.items.slice(0, CAL_SCHED_MAX_PREVIEW);
+          const hiddenCount = isExpanded ? 0 : Math.max(0, day.items.length - CAL_SCHED_MAX_PREVIEW);
+
+          const chipsHtml = visibleItems.map(it => {
+            const lineCls = getCalSchedLineClass(it.lineName);
+            const stMeta = getCalSchedStatusMeta(it.status);
+            const isDimmed = statusFilter !== 'ALL' && it.status !== statusFilter;
+            const pct = it.planQty > 0 ? Math.round((it.actualQty / it.planQty) * 100) : 0;
+            const tooltip = [
+              `[${it.lineName}] ${it.name}`,
+              `로트번호 : ${it.lotNo || '-'}`,
+              `로트수량 : ${it.lotQty.toLocaleString()}`,
+              `계획 : ${it.planQty.toLocaleString()} / 실적 : ${it.actualQty.toLocaleString()} (${pct}%)`,
+              `상태 : ${stMeta.label}`
+            ].join('\n');
+            return `
+              <div class="cal-sched-chip ${lineCls} ${isDimmed ? 'is-dimmed' : ''}" data-date="${ds}" data-week-date="${it.weekDate}" title="${tooltip}">
+                <span class="cal-sched-chip-name">${it.name}</span>
+                <span class="cal-sched-chip-qty">${it.planQty.toLocaleString()}</span>
+                <span class="cal-status-dot ${stMeta.dotCls}" title="${stMeta.label}"></span>
+              </div>
+            `;
+          }).join('');
+
+          const moreHtml = hiddenCount > 0
+            ? `<div class="cal-sched-more-hint" data-week-idx="${w.weekIdx}">+${hiddenCount}건 더보기</div>`
+            : '';
+
+          html += `
+            <div class="${classes.join(' ')}" data-date="${ds}">
+              <div class="att-day-top">
+                <span class="att-day-num">${day.dayNum}</span>
+                ${tagHtml}
+              </div>
+              <div class="att-events-wrap">${chipsHtml}${moreHtml}</div>
+            </div>
+          `;
+        });
+        html += `</div>`;
+      });
+
+      calBody.innerHTML = html;
+    }
+
+    renderScheduleCalendarSidebar(weeksData, dateMap);
+  }
+
+  function renderScheduleCalendarSidebar(weeksData, dateMap) {
+    const detailEl = document.getElementById('cal-sched-day-detail');
+    const selDate = state.calSchedSelectedDate;
+    const lineFilter = state.calSchedLineFilter || 'ALL';
+
+    if (detailEl) {
+      if (!selDate) {
+        detailEl.style.display = 'none';
+      } else {
+        const items = (dateMap.get(selDate) || []).filter(it => lineFilter === 'ALL' || it.lineName === lineFilter);
+        detailEl.style.display = 'block';
+        let dHtml = `
+          <div class="cal-detail-header">
+            <span class="cal-detail-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              ${selDate} 상세 (${items.length}건)
+            </span>
+            <button type="button" class="cal-detail-close" id="btn-cal-detail-close" title="상세 닫기">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events:none;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+        `;
+        if (items.length === 0) {
+          dHtml += `<div style="font-size:11px; color:#64748b; padding:6px 0;">등록된 생산일정이 없습니다.</div>`;
+        } else {
+          dHtml += items.map(it => {
+            const lineCls = getCalSchedLineClass(it.lineName);
+            const stMeta = getCalSchedStatusMeta(it.status);
+            const pct = it.planQty > 0 ? Math.round((it.actualQty / it.planQty) * 100) : 0;
+            return `
+              <div class="cal-detail-item ${lineCls}">
+                <div class="cal-detail-item-main">
+                  <div class="cal-detail-item-name" title="${it.name}">${it.name}</div>
+                  <div class="cal-detail-item-sub">
+                    ${it.lineName} · 로트 ${it.lotNo || '-'} (${it.lotQty.toLocaleString()}) · 계획 <strong>${it.planQty.toLocaleString()}</strong> / 실적 ${it.actualQty.toLocaleString()} (${pct}%) · <span class="cal-status-dot ${stMeta.dotCls}" style="vertical-align:middle;"></span> ${stMeta.label}
+                  </div>
+                </div>
+                <button type="button" class="cal-detail-jump-btn" data-jump-tab="tab-inspection" data-week-date="${it.weekDate}" title="일정계획에서 보기">일정</button>
+              </div>
+            `;
+          }).join('');
+        }
+        detailEl.innerHTML = dHtml;
+      }
+    }
+
+    const listEl = document.getElementById('cal-sched-weekly-groups');
+    if (listEl) {
+      const expandedIdx = state.calSchedExpandedWeekIdx;
+      listEl.innerHTML = weeksData.map(w => {
+        const isExpanded = w.weekIdx === expandedIdx;
+        const sortedGroups = Array.from(w.groupTotals.entries()).sort((a, b) => b[1] - a[1]);
+        const groupRowsHtml = sortedGroups.length > 0
+          ? sortedGroups.map(([grpName, qty]) => `
+              <div class="cal-week-group-row">
+                <span>${grpName}</span>
+                <span class="cal-week-group-qty">${qty.toLocaleString()}</span>
+              </div>
+            `).join('')
+          : `<div class="cal-week-group-row" style="color:#94a3b8;"><span>일정 없음</span><span>0</span></div>`;
+
+        return `
+          <div class="cal-week-summary-card ${isExpanded ? 'is-expanded' : ''}">
+            <div class="cal-week-summary-head">
+              <div>
+                <span>${w.weekLabel}</span>
+                <span class="cal-week-summary-range">(${w.rangeLabel})</span>
+              </div>
+              <span class="cal-week-summary-total">${w.weekTotalQty.toLocaleString()}</span>
+            </div>
+            <div class="cal-week-group-rows">${groupRowsHtml}</div>
+          </div>
+        `;
+      }).join('');
+    }
   }
 
   function renderAttendanceSidebar() {
@@ -12177,6 +12995,67 @@
       renderAttendanceSidebar();
     });
 
+    // 생산일정 캘린더: 우측 사이드바 반별 필터
+    document.getElementById('cal-sched-line-filter')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.plan-seg-btn');
+      if (!btn || !btn.dataset.line) return;
+      state.calSchedLineFilter = btn.dataset.line;
+      state.calSchedExpandedWeekIdx = null;
+      renderAttendanceModule();
+    });
+
+    // 생산일정 캘린더: 상단 상태 범례 클릭 필터
+    document.getElementById('att-legend-wrap')?.addEventListener('click', (e) => {
+      if (state.calendarMode !== 'schedule') return;
+      const pill = e.target.closest('[data-cal-status]');
+      if (!pill) return;
+      const st = pill.dataset.calStatus;
+      state.calSchedStatusFilter = (state.calSchedStatusFilter === st) ? 'ALL' : st;
+      renderAttendanceModule();
+    });
+
+    // 생산일정 캘린더: 상단 접기 버튼 & ESC 키 복귀
+    document.getElementById('btn-cal-collapse-week')?.addEventListener('click', () => {
+      if (state.calSchedExpandedWeekIdx !== null) {
+        state.calSchedExpandedWeekIdx = null;
+        renderAttendanceModule();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.currentTab === 'tab-attendance' && state.calendarMode === 'schedule' && state.calSchedExpandedWeekIdx !== null) {
+        state.calSchedExpandedWeekIdx = null;
+        renderAttendanceModule();
+      }
+    });
+
+    // 생산일정 캘린더: 일정계획 바로가기
+    document.getElementById('btn-cal-goto-insp')?.addEventListener('click', () => {
+      activateTab('tab-inspection');
+    });
+
+    // 생산일정 캘린더: 우측 사이드바 날짜 상세 닫기 & 주차 바로가기
+    document.getElementById('cal-sched-day-detail')?.addEventListener('click', async (e) => {
+      if (e.target.closest('#btn-cal-detail-close')) {
+        state.calSchedSelectedDate = null;
+        renderAttendanceModule();
+        return;
+      }
+      const jumpBtn = e.target.closest('[data-jump-tab]');
+      if (jumpBtn) {
+        const weekDate = jumpBtn.dataset.weekDate;
+        if (weekDate) {
+          state.inspectionTargetDate = weekDate;
+          localStorage.setItem(STORAGE_KEYS.LAST_INSP_TARGET, weekDate);
+          if (typeof loadInspectionV2FromDb === 'function') {
+            await loadInspectionV2FromDb(weekDate);
+          }
+        }
+        await activateTab('tab-inspection');
+        if (typeof renderInspectionV2 === 'function') renderInspectionV2();
+      }
+    });
+
     // 캘린더: 날짜 드래그 선택(기간 등록) & 일정 칩 클릭 & 드래그&드롭 이동
     const calBody = document.getElementById('att-cal-body');
     if (calBody) {
@@ -12200,6 +13079,7 @@
       };
 
       calBody.addEventListener('mousedown', (e) => {
+        if (state.calendarMode === 'schedule') return;
         if (e.button !== 0) return;
         if (e.target.closest('.att-event-chip')) return;
         const cell = e.target.closest('.att-day-cell');
@@ -12211,6 +13091,7 @@
       });
 
       calBody.addEventListener('mousemove', (e) => {
+        if (state.calendarMode === 'schedule') return;
         if (!dragSelecting) return;
         const cell = e.target.closest('.att-day-cell');
         if (!cell) return;
@@ -12221,6 +13102,7 @@
       });
 
       window.addEventListener('mouseup', () => {
+        if (state.calendarMode === 'schedule') return;
         if (!dragSelecting) return;
         const s = dragStartDate <= dragEndDate ? dragStartDate : dragEndDate;
         const e = dragStartDate <= dragEndDate ? dragEndDate : dragStartDate;
@@ -12242,6 +13124,23 @@
       });
 
       calBody.addEventListener('click', (e) => {
+        if (state.calendarMode === 'schedule') {
+          const expandBtn = e.target.closest('.att-week-expand-btn, .cal-sched-more-hint');
+          if (expandBtn) {
+            e.stopPropagation();
+            const idx = Number(expandBtn.dataset.weekIdx);
+            state.calSchedExpandedWeekIdx = (state.calSchedExpandedWeekIdx === idx) ? null : idx;
+            renderAttendanceModule();
+            return;
+          }
+          const cell = e.target.closest('.att-day-cell');
+          if (cell && cell.dataset.date) {
+            const ds = cell.dataset.date;
+            state.calSchedSelectedDate = (state.calSchedSelectedDate === ds) ? null : ds;
+            renderAttendanceModule();
+          }
+          return;
+        }
         const chip = e.target.closest('.att-event-chip');
         if (chip) {
           e.stopPropagation();
@@ -16017,6 +16916,9 @@
       } else if (tId === 'tab-plan' || tId === 'tab-receiver-plan') {
         const chip = document.getElementById('chip-plan-mode')?.textContent?.trim();
         el.textContent = chip || '생산계획';
+      } else if (tId === 'tab-attendance') {
+        const chip = document.getElementById('chip-cal-mode')?.textContent?.trim();
+        el.textContent = chip ? `캘린더 · ${chip}` : '캘린더';
       } else {
         const label = activeTab.querySelector('span')?.textContent?.trim();
         if (label) el.textContent = label;
@@ -16059,6 +16961,31 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    // 새로고침 시 마지막에 보던 하위 모드 및 탭을 가장 먼저 복원 (초기 깜빡임 방지)
+    let savedTabToRestore = null;
+    try {
+      const savedCalMode = localStorage.getItem('pms_last_cal_mode');
+      if (savedCalMode === 'schedule' || savedCalMode === 'attendance') {
+        state.calendarMode = savedCalMode;
+        const calChip = document.getElementById('chip-cal-mode');
+        if (calChip) calChip.textContent = savedCalMode === 'schedule' ? '생산일정' : '근태관리';
+      }
+      const savedDailyMode = localStorage.getItem('pms_last_daily_mode');
+      if (savedDailyMode === 'daily' || savedDailyMode === 'workhours') {
+        state.activeLines.daily = savedDailyMode;
+        const dChip = document.getElementById('chip-daily-line');
+        if (dChip) dChip.textContent = savedDailyMode === 'workhours' ? '공수집계' : '일보작성';
+      }
+      const savedTab = localStorage.getItem('pms_last_active_tab');
+      if (savedTab && document.getElementById(savedTab)) {
+        savedTabToRestore = savedTab;
+        if (savedTab === 'tab-receiver-plan') {
+          const pChip = document.getElementById('chip-plan-mode');
+          if (pChip) pChip.textContent = '수신기계획';
+        }
+      }
+    } catch (e) { /* ignore */ }
+
     loadLocalReceiverPlanData();
     initEventListeners();
     initReceiverPlanEvents();
@@ -16070,7 +16997,46 @@
     initBottomStatusBar();
     initGlobalCustomDropdowns();
     startClock();
+    if (savedTabToRestore) {
+      activateTab(savedTabToRestore);
+    }
     initFirebase();
+
+    // 생산일보 미작성 일자 드롭다운 이벤트
+    const missingWrap = document.getElementById('prod-missing-dropdown-wrap');
+    const missingBtn = document.getElementById('btn-prod-missing-days');
+    const missingPop = document.getElementById('prod-missing-popover');
+    if (missingWrap && missingBtn && missingPop) {
+      missingBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = missingPop.style.display !== 'none';
+        if (!isOpen && typeof renderProdMissingDropdown === 'function') {
+          renderProdMissingDropdown();
+        }
+        missingPop.style.display = isOpen ? 'none' : 'flex';
+      });
+
+      missingPop.addEventListener('click', async (e) => {
+        const itemBtn = e.target.closest('[data-missing-date]');
+        if (!itemBtn) return;
+        const ds = itemBtn.dataset.missingDate;
+        missingPop.style.display = 'none';
+        if (!ds) return;
+        state.productionDate = ds;
+        localStorage.setItem(STORAGE_KEYS.LAST_PROD_DATE, ds);
+        const dateInput = document.getElementById('production-date');
+        if (dateInput) dateInput.value = ds;
+        await loadProductionDataFromDb(ds);
+        await loadDailyV2FromDb(ds);
+        renderProductionTable();
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!missingWrap.contains(e.target)) {
+          missingPop.style.display = 'none';
+        }
+      });
+    }
   });
 
 })();
