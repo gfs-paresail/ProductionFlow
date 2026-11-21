@@ -3,51 +3,67 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>생산관리 시스템</title>
-  <link rel="stylesheet" href="style.css?v=3.5">
+  <title>생산관리 시스템 1.0</title>
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('pms_theme_mode_v4') === 'dark') {
+          document.documentElement.classList.add('dark-mode');
+          document.documentElement.dataset.theme = 'dark';
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css?v=6.5">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body class="view-mode-default">
   <div id="app" class="app-container">
-    <!-- 상단 글로벌 네비게이션 헤더 -->
+    <!-- 상단 글로벌 네비게이션 헤더 (1단 슬림 + 노트북 해상도 최적화) -->
     <header class="app-header">
       <div class="header-left">
         <div class="logo-badge">
           <svg class="icon-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
           </svg>
-          <span class="logo-title">생산관리 시스템</span>
+          <span class="logo-title">생산관리 시스템 1.0</span>
         </div>
         <span class="system-tag">Smart MES</span>
 
-        <!-- 글로벌 통합 저장 버튼 (프로젝트 이름 오른쪽, 상단 메뉴바 왼쪽) -->
+        <!-- 상단 변경상태 표시 배지 -->
         <div class="global-save-wrap">
-          <button type="button" class="btn btn-global-save is-saved" id="btn-global-save" title="전체 작업 데이터 DB 영구 저장">
-            <svg class="save-icon disk-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-              <polyline points="17 21 17 13 7 13 7 21"></polyline>
-              <polyline points="7 3 7 8 15 8"></polyline>
-            </svg>
-            <svg class="save-icon check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-            <span class="btn-save-text">저장됨</span>
-          </button>
+          <span class="global-dirty-status-pill is-saved" id="global-dirty-status-pill" title="현재 작업 변경사항 저장 상태 (각 페이지의 저장 버튼으로 DB에 저장하세요)">● 저장됨</span>
         </div>
       </div>
 
-      <!-- 탭 네비게이션 (7대 메뉴 순서 재배치 & 0.2초 슬라이드 트리 구조) -->
+      <!-- 탭 네비게이션 -->
       <nav class="nav-tabs" role="tablist">
-        <!-- 1. 생산계획 -->
-        <button class="nav-tab" data-tab="tab-plan" role="tab" aria-selected="false">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 3v18h18"></path>
-            <path d="M18 9l-5 5-4-4-3 3"></path>
-          </svg>
-          <span>생산계획</span>
-        </button>
+        <!-- 1. 생산계획 (하위메뉴: 생산계획, 수신기계획) -->
+        <div class="nav-dropdown-wrap">
+          <button class="nav-tab" data-tab="tab-plan" role="tab" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3v18h18"></path>
+              <path d="M18 9l-5 5-4-4-3 3"></path>
+            </svg>
+            <span>생산계획</span>
+            <span class="nav-sub-chip" id="chip-plan-mode">생산계획</span>
+            <svg class="dropdown-arrow-icon" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+            </svg>
+          </button>
+          <div class="nav-dropdown-menu">
+            <button type="button" class="nav-dropdown-item active" data-parent-tab="tab-plan" data-plan-sub="plan" data-line-name="생산계획">
+              <span class="line-dot line-detector"></span>
+              생산계획
+            </button>
+            <button type="button" class="nav-dropdown-item" data-parent-tab="tab-receiver-plan" data-plan-sub="receiver" data-line-name="수신기계획">
+              <span class="line-dot line-workhours"></span>
+              수신기계획
+            </button>
+          </div>
+        </div>
 
         <!-- 2. 검정현황 (단일 화면) -->
         <button class="nav-tab" data-tab="tab-certification" role="tab" aria-selected="false">
@@ -127,30 +143,55 @@
         </button>
       </nav>
 
-      <!-- 우측 상단 유틸리티: 뷰 모드 전환 + DB 상태 + 시계 + 백업 -->
+      <!-- 우측 상단 유틸리티: 테마 전환 + 뷰 모드 아이콘 + DB 상태 + 시계 + 사용자 배지 -->
       <div class="header-right">
-        <!-- 뷰 모드 전환 버튼 (기본형 / 와이드형) -->
-        <div class="view-mode-selector" title="화면 표시 너비 모드 전환">
-          <button type="button" class="btn-view-toggle active" id="btn-view-default" data-mode="default">기본 뷰</button>
-          <button type="button" class="btn-view-toggle" id="btn-view-wide" data-mode="wide">와이드 뷰</button>
-        </div>
+        <!-- 라이트/다크 모드 전환 버튼 -->
+        <button type="button" class="btn-theme-toggle" id="btn-theme-toggle" title="다크 모드로 전환" aria-label="테마 전환">
+          <svg class="theme-icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <svg class="theme-icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
 
-        <div class="status-indicator" id="db-status-badge">
-          <span class="status-dot" id="db-status-dot"></span>
-          <span class="status-text" id="db-status-text">DB 연결됨</span>
-        </div>
-        <div class="clock-display" id="clock-display">2026-10-27 12:00:00</div>
-        <div class="backup-actions">
-          <button id="btn-export-json" class="btn btn-sm btn-ghost" title="전체 데이터 백업(JSON)">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            백업
-          </button>
-          <label for="input-import-json" class="btn btn-sm btn-ghost" title="데이터 복원(JSON)">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            복원
-          </label>
-          <input type="file" id="input-import-json" accept=".json" style="display:none">
-        </div>
+        <!-- 뷰 모드 아이콘 토글 버튼 (기본 뷰 / 와이드 뷰) -->
+        <button type="button" class="btn-view-mode-toggle" id="btn-view-mode-toggle" title="와이드 뷰로 전환" aria-label="화면 너비 모드 전환">
+          <svg class="view-icon icon-wide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+          <svg class="view-icon icon-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+            <polyline points="4 14 10 14 10 20"></polyline>
+            <polyline points="20 10 14 10 14 4"></polyline>
+            <line x1="14" y1="10" x2="21" y2="3"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        </button>
+
+        <!-- 우측 상단 로그인 사용자(원형 등급 이니셜 + 이름) 배지 + 바로 로그아웃 -->
+        <button type="button" class="header-user-badge" id="btn-header-user-profile" title="내 계정 · 비밀번호 변경">
+          <span class="user-role-circle role-master" id="header-user-role" title="등급">M</span>
+          <span class="user-name-text" id="header-user-name">로그인 대기</span>
+          <span class="auth-header-alert" id="header-auth-alert" style="display:none;" title="가입 승인 / 비밀번호 초기화 요청">0</span>
+        </button>
+        <button type="button" class="header-logout-btn" id="btn-header-logout" style="display:none;" title="로그아웃" aria-label="로그아웃">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -221,8 +262,8 @@
               <div class="plan-dropdown-wrap" id="plan-item-group-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-plan-item-groups">품목그룹 ▾</button>
                 <div class="plan-dropdown-menu" id="plan-item-group-dropdown-menu" style="min-width: 220px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 8px 6px; border-bottom: 1px solid #e2e8f0; margin-bottom: 4px;">
-                    <span style="font-size: 11px; font-weight: 700; color: #475569;">그룹별 합산 보기 (ON/OFF)</span>
+                  <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 8px 6px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
+                    <span style="font-size: 11px; font-weight: 700; color: var(--text-sub);">그룹별 합산 보기 (ON/OFF)</span>
                     <div style="display:flex; gap:4px;">
                       <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-all-on" style="font-size:11px; padding:1px 4px;">전체ON</button>
                       <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-all-off" style="font-size:11px; padding:1px 4px;">전체OFF</button>
@@ -335,6 +376,140 @@
             </div>
           </div>
           <div class="plan-memo-popover-body" id="plan-memo-popover-body"></div>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- 탭 1-2: [수신기계획] (수신기 전용 엑셀형 그리드) -->
+      <!-- ============================================ -->
+      <section id="tab-receiver-plan" class="tab-pane" role="tabpanel">
+        <div class="plan-container rp-container">
+          <!-- 상단 툴바 -->
+          <div class="plan-toolbar card rp-toolbar">
+            <div class="plan-toolbar-left" style="flex-wrap: wrap; gap: 6px;">
+              <div class="plan-title-group">
+                <h2 class="plan-title">수신기계획</h2>
+                <span class="rp-summary-chip is-urgent" id="rp-summary-urgent" style="display:none;">납기임박 0건</span>
+              </div>
+            </div>
+
+            <div class="plan-toolbar-right" style="flex-wrap: wrap; gap: 6px;">
+              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-add-row">+ 행 추가</button>
+              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-clone-row" title="체크한 행 복제">행 복제</button>
+              <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-rp-delete-rows">선택 삭제</button>
+              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-bulk-edit" title="체크한 행의 생산주차/수검일자 일괄 변경">일괄 편집</button>
+              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-recommend-lot" title="형식번호 기준 로트번호·제조번호 자동 추천">로트/제조번호 추천</button>
+
+              <div class="plan-dropdown-wrap" id="rp-file-dropdown-wrap">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-rp-file-menu">엑셀 입출력 ▾</button>
+                <div class="plan-dropdown-menu" id="rp-file-dropdown-menu">
+                  <button type="button" class="plan-menu-btn" id="btn-rp-upload-excel">📤 엑셀/CSV 업로드 (.xlsx/.csv)</button>
+                  <button type="button" class="plan-menu-btn" id="btn-rp-download-excel">📥 엑셀 다운로드 (.xlsx)</button>
+                </div>
+                <input type="file" id="input-rp-upload-excel" accept=".xlsx,.xls,.csv" style="display:none;">
+              </div>
+
+              <button type="button" class="btn btn-sm btn-primary" id="btn-rp-send-cert" title="체크한 행을 검정현황 등록 내역(표 2)에 등록완료 상태로 검정등록">📤 검정등록</button>
+              <button type="button" class="btn btn-sm btn-save-success" id="btn-rp-save">저장</button>
+            </div>
+          </div>
+
+          <!-- 상태 필터 & 상세 필터 & 단축키 힌트 바 -->
+          <div class="plan-hint-bar rp-hint-bar">
+            <div class="rp-hint-left" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <div class="plan-legend-filters" id="rp-status-filters">
+                <span class="plan-legend-title">검정상태:</span>
+                <button type="button" class="plan-legend-chip active" data-rp-status="ALL">전체 <span class="plan-filter-count-badge" id="rp-count-all">0</span></button>
+                <button type="button" class="plan-legend-chip" data-rp-status="미신청"><span class="plan-dot dot-pink"></span>미신청 <span class="plan-filter-count-badge is-pending" id="rp-count-pending">0</span></button>
+                <button type="button" class="plan-legend-chip" data-rp-status="신청완료"><span class="plan-dot dot-green"></span>등록완료·신청</button>
+              </div>
+
+              <div class="rp-inline-filters" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <input type="text" id="rp-search-site" class="form-input form-input-sm" placeholder="현장명 부분 검색..." style="width: 155px;" title="현장명에 포함된 단어 일부만 입력해도 검색됩니다">
+                <select id="rp-filter-week" class="form-select form-select-sm" title="생산주차 필터">
+                  <option value="ALL">전체 생산주차</option>
+                </select>
+                <select id="rp-filter-item" class="form-select form-select-sm" title="품명(모델) 필터">
+                  <option value="ALL">전체 품명</option>
+                </select>
+                <select id="rp-filter-builder" class="form-select form-select-sm" title="건설사 필터">
+                  <option value="ALL">전체 건설사</option>
+                </select>
+                <select id="rp-filter-client" class="form-select form-select-sm" title="거래선 필터">
+                  <option value="ALL">전체 거래선</option>
+                </select>
+                <button type="button" class="btn btn-xs btn-outline" id="btn-rp-reset-filters" title="모든 검색·필터 조건 초기화">필터 초기화</button>
+              </div>
+            </div>
+
+            <div class="plan-hint-right">
+              <button type="button" class="btn btn-xs btn-ghost" id="btn-rp-undo" title="실행 취소 (Ctrl+Z)" disabled>↩ 되돌리기</button>
+              <span class="plan-shortcut-tip" title="• 날짜 단축 입력: 6-1 → 2026-06-01, 27-1-3 → 2027-01-03&#10;• 품목코드 입력 시 품목정보 마스터 자동완성 및 형식번호/품명 자동 채움&#10;• Enter / Tab / 방향키로 셀 이동, 앞뒤 공백 자동 제거&#10;• Ctrl+Z: 실행 취소">? 입력 팁</span>
+              <div class="plan-hint-status" id="rp-selection-info">선택: 0건</div>
+            </div>
+          </div>
+
+          <!-- 엑셀형 수신기계획 그리드 -->
+          <div class="plan-grid-card card">
+            <div class="plan-grid-scroll-wrap rp-grid-scroll-wrap" id="rp-grid-scroll-wrap" tabindex="0">
+              <table class="plan-excel-table rp-excel-table" id="rp-excel-table">
+                <thead>
+                  <tr class="plan-header-row-1">
+                    <th class="rp-fixed-col rp-col-chk" style="left: 0px;"><input type="checkbox" id="chk-rp-all" title="현재 필터 목록 전체 선택"></th>
+                    <th class="rp-fixed-col rp-col-no" style="left: 36px;">NO</th>
+                    <th class="rp-fixed-col rp-col-status" style="left: 78px;">검정상태</th>
+                    <th class="rp-fixed-col rp-col-req" style="left: 164px;">제작의뢰번호</th>
+                    <th class="rp-fixed-col rp-col-code" style="left: 294px;">품목코드</th>
+                    <th class="rp-fixed-col rp-col-fmt" style="left: 404px;">형식번호</th>
+                    <th class="rp-fixed-col rp-col-name" style="left: 489px;">품명</th>
+                    <th class="rp-fixed-col rp-col-site" style="left: 619px;">현장명</th>
+                    <th class="rp-col-builder">건설사</th>
+                    <th class="rp-col-client">거래선</th>
+                    <th class="rp-col-manager">담당자</th>
+                    <th class="rp-col-date">접수일</th>
+                    <th class="rp-col-date">납기일자</th>
+                    <th class="rp-col-date">불출요청일</th>
+                    <th class="rp-col-date">생산주차</th>
+                    <th class="rp-col-date">수검일자</th>
+                    <th class="rp-col-color">외함색상</th>
+                    <th class="rp-col-remark">비고</th>
+                    <th class="rp-col-lot">로트번호</th>
+                    <th class="rp-col-ym">제조년월</th>
+                    <th class="rp-col-serial">제조번호 FROM</th>
+                    <th class="rp-col-serial">제조번호 TO</th>
+                  </tr>
+                </thead>
+                <tbody id="rp-excel-tbody">
+                  <!-- JS 동적 렌더링 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 일괄 편집 모달 (생산주차 / 수검일자) -->
+        <div class="cert-modal-overlay" id="rp-bulk-edit-modal" style="display: none;">
+          <div class="cert-modal-box" style="width: 400px; max-width: 95vw;">
+            <div class="cert-modal-head">
+              <h3>📅 선택 행 일괄 편집</h3>
+              <button type="button" class="btn-close-modal" id="btn-close-rp-bulk-modal">×</button>
+            </div>
+            <div class="cert-modal-body" style="padding: 16px; display:flex; flex-direction:column; gap:12px;">
+              <div id="rp-bulk-target-info" style="font-size: 12.5px; color: var(--text-sub); background: var(--bg-subtle); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-light);"></div>
+              <div>
+                <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px;">생산주차 (비워두면 변경 안 함)</label>
+                <input type="text" id="rp-bulk-week-date" class="form-input form-input-sm" placeholder="예: 2026-01-16 또는 1-16, 27-1-3">
+              </div>
+              <div>
+                <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px;">수검일자 (비워두면 변경 안 함)</label>
+                <input type="text" id="rp-bulk-inspect-date" class="form-input form-input-sm" placeholder="예: 2026-01-16 또는 1-16, 27-1-3">
+              </div>
+            </div>
+            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
+              <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-rp-bulk-modal">취소</button>
+              <button type="button" class="btn btn-sm btn-primary" id="btn-apply-rp-bulk-modal">일괄 적용</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -480,15 +655,16 @@
           </div>
         </div>
 
-        <!-- 2. [공수집계] 뷰 (월별 ST 집계 & 작업자 공수 집계) -->
+        <!-- 2. [공수집계] 뷰 (리뉴얼: 단일/묶음 ST 집계, 유실 분리, 반별/단위 전환, 드릴다운) -->
         <div id="prod-workhours-view" style="display: none;">
-          <div class="panel-header-card" style="margin-bottom: 12px;">
-            <div class="panel-toolbar" style="flex-wrap: wrap; gap: 10px;">
-              <div class="toolbar-group" style="gap: 10px; flex-wrap: wrap;">
+          <!-- 상단 컨트롤 바 -->
+          <div class="panel-header-card" style="margin-bottom: 10px;">
+            <div class="panel-toolbar" style="flex-wrap: wrap; gap: 8px; justify-content: space-between;">
+              <div class="toolbar-group" style="gap: 8px; flex-wrap: wrap; align-items: center;">
                 <label for="wh-month-input" class="toolbar-label">
                   <span class="label-badge" style="background-color: #7c3aed;">집계 월</span>
                 </label>
-                <input type="month" id="wh-month-input" class="form-input form-input-sm font-bold" style="width: 145px;">
+                <input type="month" id="wh-month-input" class="form-input form-input-sm font-bold" style="width: 140px;">
 
                 <div class="plan-view-segmented" id="wh-line-filter-group">
                   <button type="button" class="plan-seg-btn active" data-line="ALL">전체</button>
@@ -496,53 +672,117 @@
                   <button type="button" class="plan-seg-btn" data-line="유도등반">유도등반</button>
                   <button type="button" class="plan-seg-btn" data-line="수신기반">수신기반</button>
                 </div>
+
+                <div class="plan-view-segmented" id="wh-unit-group" title="공수 표시 단위 선택 (시간 / 분 / 초)">
+                  <button type="button" class="plan-seg-btn active" data-unit="H">H</button>
+                  <button type="button" class="plan-seg-btn" data-unit="M">M</button>
+                  <button type="button" class="plan-seg-btn" data-unit="S">S</button>
+                </div>
+
+                <label class="wh-toggle-chip" title="실동효율 계산 시 연차·반차·조퇴 등 근태 유실 포함 여부">
+                  <input type="checkbox" id="wh-include-att-loss">
+                  <span>근태유실 포함</span>
+                </label>
               </div>
 
-              <div class="section-summary-pills" style="gap: 8px;">
-                <span class="summary-pill">실제 투입: <strong id="wh-kpi-actual">0.0h</strong></span>
-                <span class="summary-pill pill-primary">표준 ST: <strong id="wh-kpi-st">0.0h</strong></span>
-                <span class="summary-pill" style="background:#ecfdf5; color:#047857;">공수 효율: <strong id="wh-kpi-eff">-</strong></span>
+              <div class="toolbar-group" style="gap: 6px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm wh-unmapped-badge" id="btn-wh-unmapped-alert" style="display: none;" title="클릭하여 미설정 품목의 ST·공수 기준을 지정합니다">
+                  ⚠ 미설정 <strong id="wh-unmapped-count">0</strong>건
+                </button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-wh-st-config" title="단일/묶음/제외 및 조립·검사·포장 ST 기준 관리">
+                  ⚙ 공수/ST 기준 설정
+                </button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-wh-export-csv" title="현재 월간 공수집계 결과를 CSV로 다운로드">
+                  📥 CSV 내보내기
+                </button>
               </div>
             </div>
           </div>
 
+          <!-- KPI 요약 카드 5종 -->
+          <div class="wh-kpi-grid" id="wh-kpi-grid">
+            <div class="wh-kpi-card">
+              <div class="wh-kpi-label">표준공수 (S/T)</div>
+              <div class="wh-kpi-value is-st" id="wh-kpi-st">0.0h</div>
+              <div class="wh-kpi-sub" id="wh-kpi-st-diff">전월 대비 -</div>
+            </div>
+            <div class="wh-kpi-card">
+              <div class="wh-kpi-label">실동공수</div>
+              <div class="wh-kpi-value" id="wh-kpi-actual">0.0h</div>
+              <div class="wh-kpi-sub" id="wh-kpi-actual-diff">전월 대비 -</div>
+            </div>
+            <div class="wh-kpi-card">
+              <div class="wh-kpi-label">유실공수 <small id="wh-kpi-loss-scope" style="font-weight:500;">(작업)</small></div>
+              <div class="wh-kpi-value is-loss" id="wh-kpi-loss">0.0h</div>
+              <div class="wh-kpi-sub" id="wh-kpi-loss-sub">근태 -</div>
+            </div>
+            <div class="wh-kpi-card">
+              <div class="wh-kpi-label">S/T효율 <small style="font-weight:500;">(S/T ÷ 실동)</small></div>
+              <div class="wh-kpi-value is-eff" id="wh-kpi-eff">-</div>
+              <div class="wh-kpi-sub" id="wh-kpi-eff-diff">전월 대비 -</div>
+            </div>
+            <div class="wh-kpi-card">
+              <div class="wh-kpi-label">실동효율 <small style="font-weight:500;">(유실 포함)</small></div>
+              <div class="wh-kpi-value is-realeff" id="wh-kpi-real-eff">-</div>
+              <div class="wh-kpi-sub" id="wh-kpi-real-eff-diff">전월 대비 -</div>
+            </div>
+          </div>
+
+          <!-- 메인 2단 + 하단 작업자 공수 -->
           <div class="production-split-container">
-            <!-- 월별 품목별 ST 집계표 -->
-            <div class="table-section-card">
-              <div class="table-section-header header-process">
-                <div class="section-title-wrap">
-                  <span class="section-indicator bar-process"></span>
-                  <span class="section-badge badge-process">월별 ST 집계</span>
-                  <h3 class="section-title">품목별 월간 표준공수(ST) vs 실제공수 집계</h3>
-                  <span class="section-desc">[품목정보]의 ST(조립/검사/포장 초)를 기준으로 월간 완료수량 대비 표준공수를 집계합니다.</span>
+            <div class="wh-main-split">
+              <!-- 좌측: 품목(단일/묶음)별 공수집계표 -->
+              <div class="table-section-card wh-item-card">
+                <div class="table-section-header header-process" style="justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+                  <div class="section-title-wrap">
+                    <span class="section-indicator bar-process"></span>
+                    <span class="section-badge badge-process">월별 ST 집계</span>
+                    <h3 class="section-title">품목(단일·묶음)별 표준공수 vs 실동공수</h3>
+                    <span class="section-desc">묶음 행을 클릭하면 세부 품목코드별 내역이 펼쳐집니다.</span>
+                  </div>
+                  <input type="text" id="wh-item-search" class="form-input form-input-sm" placeholder="품목명/코드 검색..." style="width: 155px;">
+                </div>
+                <div class="table-container" style="max-height: 410px; overflow: auto;">
+                  <table class="grid-table wh-agg-table">
+                    <thead>
+                      <tr class="header-row-primary">
+                        <th style="width: 38px;">No</th>
+                        <th style="width: 72px;">작업반</th>
+                        <th style="min-width: 170px;">집계 품목명</th>
+                        <th style="width: 68px;">조립</th>
+                        <th style="width: 68px;">검사</th>
+                        <th style="width: 68px;">포장</th>
+                        <th style="width: 118px;">ST (조/검/포 s)</th>
+                        <th style="width: 82px;">S/T공수</th>
+                        <th style="width: 82px;">실동공수</th>
+                        <th style="width: 78px;">S/T효율</th>
+                        <th style="width: 78px;">실동효율</th>
+                      </tr>
+                    </thead>
+                    <tbody id="wh-st-tbody"></tbody>
+                    <tfoot>
+                      <tr class="summary-row" id="wh-st-tfoot"></tr>
+                    </tfoot>
+                  </table>
                 </div>
               </div>
-              <div class="table-container" style="max-height: 360px; overflow: auto;">
-                <table class="grid-table">
-                  <thead>
-                    <tr class="header-row-primary">
-                      <th style="width: 45px;">No</th>
-                      <th style="width: 85px;">작업반</th>
-                      <th style="width: 115px;">품목코드</th>
-                      <th style="min-width: 180px;">품명</th>
-                      <th style="width: 80px;">조립 실적</th>
-                      <th style="width: 80px;">검사 실적</th>
-                      <th style="width: 80px;">포장 실적</th>
-                      <th style="width: 120px;">ST (조/검/포 초)</th>
-                      <th style="width: 95px;">표준공수 (H)</th>
-                      <th style="width: 95px;">실제공수 (H)</th>
-                      <th style="width: 80px;">효율 (%)</th>
-                    </tr>
-                  </thead>
-                  <tbody id="wh-st-tbody"></tbody>
-                  <tfoot>
-                    <tr class="summary-row" id="wh-st-tfoot"></tr>
-                  </tfoot>
-                </table>
+
+              <!-- 우측: 반별 유실항목 집계표 -->
+              <div class="table-section-card wh-loss-card">
+                <div class="table-section-header header-prod-etc" style="justify-content: space-between;">
+                  <div class="section-title-wrap">
+                    <span class="section-indicator" style="background:#ef4444;"></span>
+                    <span class="section-badge" style="background:#fee2e2; color:#b91c1c;">유실 집계</span>
+                    <h3 class="section-title" id="wh-loss-title">유실항목별 집계 (전체)</h3>
+                  </div>
+                </div>
+                <div class="wh-loss-body" id="wh-loss-body">
+                  <!-- 작업 유실 & 근태 유실 동적 렌더링 -->
+                </div>
               </div>
             </div>
 
-            <!-- 월별 작업자별 공수 집계표 -->
+            <!-- 하단: 월별 작업자별 공수 집계표 -->
             <div class="table-section-card">
               <div class="table-section-header header-assembly">
                 <div class="section-title-wrap">
@@ -551,19 +791,22 @@
                   <h3 class="section-title">작업자별 월간 투입공수 집계</h3>
                 </div>
               </div>
-              <div class="table-container" style="max-height: 320px; overflow: auto;">
+              <div class="table-container" style="max-height: 290px; overflow: auto;">
                 <table class="grid-table">
                   <thead>
                     <tr class="header-row-primary">
-                      <th style="width: 45px;">No</th>
-                      <th style="width: 110px;">작업자</th>
-                      <th style="width: 80px;">구분</th>
-                      <th style="width: 95px;">조립 (H)</th>
-                      <th style="width: 95px;">검사 (H)</th>
-                      <th style="width: 95px;">포장 (H)</th>
-                      <th style="width: 95px;">병합/기타 (H)</th>
-                      <th style="width: 105px;">총 투입 (H)</th>
-                      <th style="width: 80px;">투입일수</th>
+                      <th style="width: 42px;">No</th>
+                      <th style="width: 96px;">작업자</th>
+                      <th style="width: 72px;">작업반</th>
+                      <th style="width: 62px;">구분</th>
+                      <th style="width: 84px;">조립</th>
+                      <th style="width: 84px;">검사</th>
+                      <th style="width: 84px;">포장</th>
+                      <th style="width: 84px;">병합/기타</th>
+                      <th style="width: 88px;">실동 합계</th>
+                      <th style="width: 84px;">유실 합계</th>
+                      <th style="width: 92px;">총 투입</th>
+                      <th style="width: 72px;">투입일수</th>
                     </tr>
                   </thead>
                   <tbody id="wh-worker-tbody"></tbody>
@@ -571,6 +814,61 @@
                     <tr class="summary-row" id="wh-worker-tfoot"></tr>
                   </tfoot>
                 </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- [ST · 공수 기준 설정] 모달 -->
+        <div class="cert-modal-overlay" id="modal-st-config" style="display: none;">
+          <div class="cert-modal-box" style="width: 1060px; max-width: 96vw; height: 84vh; display: flex; flex-direction: column;">
+            <div class="cert-modal-head">
+              <div>
+                <h3 style="margin:0;">⚙ 공수/ST 기준 설정 (단일 · 묶음 · 제외)</h3>
+                <p style="margin:2px 0 0; font-size:11.5px; color:var(--text-muted);">공수집계에 사용할 품목 묶음과 공정별 표준시간(ST, 초)을 관리합니다. 공수를 측정하지 않는 품목은 [제외]로 지정할 수 있습니다.</p>
+              </div>
+              <button type="button" class="btn-close-modal" id="btn-close-st-config">×</button>
+            </div>
+            <div class="wh-st-modal-body">
+              <!-- 좌측: 항목 목록 + 필터 -->
+              <div class="wh-st-list-pane">
+                <div class="wh-st-list-toolbar">
+                  <div class="plan-view-segmented" id="st-cfg-line-group" style="width:100%; margin-bottom:6px;">
+                    <button type="button" class="plan-seg-btn active" data-line="ALL">전체 반</button>
+                    <button type="button" class="plan-seg-btn" data-line="감지기반">감지기반</button>
+                    <button type="button" class="plan-seg-btn" data-line="유도등반">유도등반</button>
+                    <button type="button" class="plan-seg-btn" data-line="수신기반">수신기반</button>
+                  </div>
+                  <div class="plan-view-segmented" id="st-cfg-filter-group" style="width:100%;">
+                    <button type="button" class="plan-seg-btn active" data-filter="ALL">전체</button>
+                    <button type="button" class="plan-seg-btn" data-filter="single">단일</button>
+                    <button type="button" class="plan-seg-btn" data-filter="group">묶음</button>
+                    <button type="button" class="plan-seg-btn" data-filter="unmapped">미설정</button>
+                    <button type="button" class="plan-seg-btn" data-filter="excluded">제외</button>
+                  </div>
+                  <div style="display:flex; gap:6px; margin-top:6px;">
+                    <input type="text" id="st-cfg-search" class="form-input form-input-sm" placeholder="항목명 / 품목코드 검색..." style="flex:1;">
+                    <button type="button" class="btn btn-sm btn-primary" id="btn-st-cfg-add">+ 새 항목</button>
+                  </div>
+                </div>
+                <div class="wh-st-list-scroll" id="st-cfg-list"></div>
+              </div>
+
+              <!-- 우측: 선택 항목 편집 또는 미설정/제외 관리 -->
+              <div class="wh-st-edit-pane" id="st-cfg-edit-pane">
+                <div style="color:var(--text-muted); text-align:center; padding: 60px 20px;">좌측에서 공수 기준 항목을 선택하거나 [+ 새 항목]을 눌러 추가하세요.</div>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-top:1px solid var(--border-light); background:var(--bg-subtle); flex-wrap:wrap; gap:8px;">
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-st-cfg-reset" title="시트 기반 초기 54종 매핑으로 재설정">↺ 초기 매핑 불러오기</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-st-cfg-download" title="현재 ST·매핑 기준을 엑셀(CSV) 양식으로 다운로드">📥 양식 다운받기</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-st-cfg-upload" title="작성한 ST 양식 파일(.xlsx, .xls, .csv)을 일괄 업로드">📤 ST 일괄 업로드</button>
+                <input type="file" id="st-cfg-upload-input" accept=".xlsx,.xls,.csv" style="display:none;">
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-st-config">닫기</button>
+                <button type="button" class="btn btn-sm btn-primary" id="btn-save-st-config">💾 설정 저장</button>
               </div>
             </div>
           </div>
@@ -586,7 +884,7 @@
             <div class="cert-modal-body" style="padding: 16px;">
               <input type="text" id="prod-adhoc-search" class="form-input" placeholder="품목코드 또는 품명 검색..." style="width: 100%; margin-bottom: 10px;">
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                <span style="font-size: 12px; font-weight: 600; color: #475569;">작업 공정:</span>
+                <span style="font-size: 12px; font-weight: 600; color: var(--text-sub);">작업 공정:</span>
                 <label style="font-size: 12.5px;"><input type="checkbox" class="prod-adhoc-proc" value="assembly" checked> 조립</label>
                 <label style="font-size: 12.5px;"><input type="checkbox" class="prod-adhoc-proc" value="inspect"> 검사</label>
                 <label style="font-size: 12.5px;"><input type="checkbox" class="prod-adhoc-proc" value="pack"> 포장</label>
@@ -609,7 +907,7 @@
             <!-- [표 1] 검정 등록 그리드 (상단 자동/수동·주차·분할·합산·등록 툴바 통합) -->
             <div class="table-section-card cert-draft-card">
               <div class="table-section-header header-cert-draft" style="flex-wrap: wrap; gap: 10px;">
-                <div class="section-title-wrap">
+                <div class="section-title-wrap" style="flex-wrap: wrap; gap: 8px;">
                   <span class="section-indicator bar-process"></span>
                   <span class="section-badge badge-process">신규 작성</span>
                   <h3 class="section-title">검정 신청 등록</h3>
@@ -618,11 +916,12 @@
                     <button type="button" class="cert-mode-btn active" data-mode="auto">자동</button>
                     <button type="button" class="cert-mode-btn" data-mode="manual">수동</button>
                   </div>
-                </div>
-
-                <div class="section-actions-wrap" style="flex-wrap: wrap; gap: 8px;">
-                  <!-- 자동 모드 전용 컨트롤 -->
+                  <!-- 자동 모드 전용 컨트롤 (자동/수동 버튼 우측 배치) -->
                   <div id="cert-auto-controls" style="display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-refresh-week" title="선택된 주차의 생산계획을 다시 불러옵니다">
+                      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                      새로고침
+                    </button>
                     <select id="cert-plan-week-select" class="form-select form-select-sm font-bold" title="생산계획 주차 선택" style="min-width: 170px;"></select>
                     <select id="cert-auto-line-filter" class="form-select form-select-sm" title="자동 로드 작업반 필터">
                       <option value="ALL">전체 작업반</option>
@@ -637,6 +936,9 @@
                       🔗 기존 로트 합산
                     </button>
                   </div>
+                </div>
+
+                <div class="section-actions-wrap" style="flex-wrap: wrap; gap: 8px;">
 
                   <!-- 수동/공통 행 제어 버튼 -->
                   <div class="cert-btn-group">
@@ -672,7 +974,7 @@
                       <th class="col-cert-check" style="width: 40px;"><input type="checkbox" id="check-all-cert-draft" title="전체 선택"></th>
                       <th class="col-cert-no" style="width: 48px;">No</th>
                       <th class="col-cert-code" style="width: 120px;">품목코드</th>
-                      <th class="col-cert-name" style="width: 220px;">품명 (F2 검색)</th>
+                      <th class="col-cert-name" style="width: 220px;">품명</th>
                       <th class="col-cert-spec" style="width: 200px;">규격</th>
                       <th class="col-cert-format" style="width: 100px;">형식번호</th>
                       <th class="col-cert-type" style="width: 75px;">구분</th>
@@ -734,6 +1036,7 @@
                   <span class="section-indicator bar-assembly"></span>
                   <span class="section-badge badge-assembly">저장 내역</span>
                   <h3 class="section-title">검정 등록 내역</h3>
+                  <button type="button" class="btn btn-xs btn-outline" id="btn-cert-saved-expand" title="검정 등록 내역 크게 보기 (상단 1행만 표시)">펼침</button>
 
                   <!-- 조회 필터 (작업반 / 조회기준 / 존재하는 날짜만 드롭다운) -->
                   <div class="cert-saved-filter-bar" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; margin-left: 6px;">
@@ -767,7 +1070,13 @@
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
                       품검요청
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-del-saved-selected" title="선택된 내역 영구 삭제 (일정완료 제외)">
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-edit-saved" title="등록완료 상태인 선택 항목 수정 (품검요청·완료 건 불가)">
+                      수정
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-cancel-saved" title="등록완료 상태인 선택 항목 등록취소 (품검요청·완료 건 불가)">
+                      등록취소
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-del-saved-selected" title="선택된 내역 영구 삭제 (품검요청·일정완료 제외)">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                       선택 삭제
                     </button>
@@ -837,7 +1146,7 @@
               <button type="button" class="btn-close-modal" id="btn-close-split-modal">×</button>
             </div>
             <div class="cert-modal-body" style="padding: 16px;">
-              <div id="cert-split-item-info" style="margin-bottom: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px;"></div>
+              <div id="cert-split-item-info" style="margin-bottom: 12px; padding: 10px 12px; background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 8px; font-size: 13px;"></div>
               <div class="plan-view-segmented" style="margin-bottom: 12px;">
                 <button type="button" class="plan-seg-btn active" id="btn-split-tab-manual">직접 분할</button>
                 <button type="button" class="plan-seg-btn" id="btn-split-tab-lot">LOT 단위 자동 분할</button>
@@ -852,10 +1161,10 @@
               <div id="cert-split-lot-pane" style="display: none;">
                 <label style="display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 6px;">1 LOT 기준 수량</label>
                 <input type="number" id="cert-split-lot-unit" class="form-input" min="1" placeholder="예: 3000" style="width: 100%; margin-bottom: 8px;">
-                <div id="cert-split-lot-preview" style="font-size: 12.5px; color: #475569; background: #f1f5f9; padding: 8px 10px; border-radius: 6px;"></div>
+                <div id="cert-split-lot-preview" style="font-size: 12.5px; color: var(--text-sub); background: var(--bg-subtle); padding: 8px 10px; border-radius: 6px;"></div>
               </div>
             </div>
-            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #e2e8f0;">
+            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
               <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-split-modal">취소</button>
               <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-split-modal">분할 적용</button>
             </div>
@@ -870,11 +1179,11 @@
               <button type="button" class="btn-close-modal" id="btn-close-merge-modal">×</button>
             </div>
             <div class="cert-modal-body" style="padding: 16px;">
-              <div id="cert-merge-source-info" style="margin-bottom: 12px; padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px;"></div>
-              <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">합산할 기존 등록 로트를 선택하세요. (대기/등록완료/검정신청 상태만 가능)</div>
+              <div id="cert-merge-source-info" style="margin-bottom: 12px; padding: 10px 12px; background: var(--primary-light); border: 1px solid var(--primary-border); border-radius: 8px; font-size: 13px;"></div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">합산할 기존 등록 로트를 선택하세요. (대기/등록완료/검정신청 상태만 가능)</div>
               <div id="cert-merge-target-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto;"></div>
             </div>
-            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #e2e8f0;">
+            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
               <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-merge-modal">취소</button>
               <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-merge-modal">선택 로트에 합산</button>
             </div>
@@ -918,6 +1227,7 @@
               <div class="att-action-group">
                 <span class="att-tip-text">날짜 클릭·드래그로 등록 / 일정 드래그로 이동</span>
                 <button type="button" class="btn btn-sm btn-primary" id="btn-att-new-event">+ 근태 등록</button>
+                <button type="button" class="btn btn-sm btn-save-primary" id="btn-att-save-db" title="근태 데이터를 DB에 저장">저장</button>
                 <button type="button" class="btn btn-sm btn-outline" id="btn-att-goto-settings" title="설정 화면에서 근태유형 및 색상 관리">⚙ 근태유형 수정</button>
               </div>
             </div>
@@ -953,7 +1263,10 @@
                     <option value="감지기반">감지기반</option>
                     <option value="유도등반">유도등반</option>
                     <option value="수신기반">수신기반</option>
-                    <option value="기타">기타</option>
+                    <option value="생산관리">생산관리</option>
+                    <option value="제조기술">제조기술</option>
+                    <option value="SMT반">SMT반</option>
+                    <option value="물류지원">물류지원</option>
                   </select>
                   <select id="att-filter-worker" class="form-select form-select-sm">
                     <option value="ALL">전체 작업자</option>
@@ -1063,12 +1376,19 @@
                   <input type="date" id="quality-filter-date" class="input-date font-bold text-primary">
                 </div>
                 <button type="button" class="btn btn-sm btn-outline" id="btn-quality-today">오늘</button>
-                <button type="button" class="btn btn-sm btn-outline" id="btn-quality-all" title="날짜 필터 해제하고 전체 목록 표시">전체</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-quality-all" title="날짜 및 주차 필터 해제하고 전체 목록 표시">전체</button>
+                <select id="quality-filter-week" class="form-select form-select-sm font-bold" title="생산주차별 필터" style="min-width: 140px;">
+                  <option value="ALL">전체 주차</option>
+                </select>
 
-                <!-- [검사합격] 액션 버튼 -->
-                <button type="button" class="btn btn-sm" id="btn-quality-pass" style="background-color: #16a34a; color:#fff; font-weight:700;" title="선택된 항목을 검사합격 처리 (검정현황의 일정이 '일정완료'로 잠금됩니다)">
+                <!-- [합격] / [부적합] 액션 버튼 -->
+                <button type="button" class="btn btn-sm" id="btn-quality-pass" style="background-color: #2563eb; color:#fff; font-weight:700;" title="선택된 항목을 합격 처리 (검정현황의 일정이 '일정완료'로 잠금됩니다)">
                   <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                  검사합격
+                  합격
+                </button>
+                <button type="button" class="btn btn-sm" id="btn-quality-fail" style="background-color: #dc2626; color:#fff; font-weight:700;" title="선택된 항목을 부적합 처리 (검정현황에 '부적합'으로 표시되며 재신청 가능)">
+                  <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  부적합
                 </button>
 
                 <span class="cert-filter-status-pill" id="quality-filter-status-pill">
@@ -1151,22 +1471,47 @@
           <aside class="settings-nav-sidebar">
             <div class="settings-nav-title">시스템 설정</div>
             <button type="button" class="settings-nav-btn active" data-pane="settings-pane-items">
-              <span>📦</span><span>품목정보</span>
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              <span>품목정보</span>
             </button>
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-workers">
-              <span>👥</span><span>작업자 · 공정 설정</span>
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              <span>작업자 · 공정 설정</span>
             </button>
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-depts">
-              <span>🏢</span><span>요청부서 관리</span>
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"></path></svg>
+              <span>요청부서 관리</span>
             </button>
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-kfi">
-              <span>🔐</span><span>KFI 합격번호 데이터</span>
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span>KFI 합격번호 데이터</span>
             </button>
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-attendance">
-              <span>📅</span><span>근태유형 설정</span>
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <span>근태유형 설정</span>
+            </button>
+            <button type="button" class="settings-nav-btn" data-pane="settings-pane-reports">
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              <span>공정검사 보고서 양식</span>
+            </button>
+            <button type="button" class="settings-nav-btn" data-pane="settings-pane-users" id="btn-settings-nav-users" style="display:none;">
+              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              <span>사용자·권한 관리</span>
+              <span class="auth-nav-badge" id="settings-auth-pending-badge" style="display:none;">0</span>
             </button>
 
-            <div class="settings-nav-footer">
+            <div class="settings-nav-footer" style="display:flex; flex-direction:column; gap:8px;">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                <button id="btn-export-json" class="btn btn-sm btn-outline" style="justify-content:center;" title="전체 데이터 백업(JSON)">
+                  <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  백업
+                </button>
+                <label for="input-import-json" class="btn btn-sm btn-outline" style="justify-content:center; cursor:pointer; margin:0;" title="데이터 복원(JSON)">
+                  <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                  복원
+                </label>
+                <input type="file" id="input-import-json" accept=".json" style="display:none">
+              </div>
               <button type="button" class="btn btn-sm btn-save-success" id="btn-save-master" style="width: 100%; justify-content: center;" title="변경된 설정을 DB에 영구 저장">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                 설정 저장
@@ -1191,7 +1536,7 @@
                   </div>
 
                   <div class="header-action-group" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <div class="cert-master-tab-filter" id="cert-master-tab-filter" style="display: flex; gap: 4px; background: #f1f5f9; padding: 3px; border-radius: 8px;">
+                    <div class="cert-master-tab-filter" id="cert-master-tab-filter" style="display: flex; gap: 4px; background: var(--bg-subtle); border: 1px solid var(--border-light); padding: 3px; border-radius: 8px;">
                       <button type="button" class="btn-cert-tab active" data-group="ALL">전체 (<span id="count-cert-tab-all">0</span>)</button>
                       <button type="button" class="btn-cert-tab" data-group="유도등반">유도등반 (<span id="count-cert-tab-guide">0</span>)</button>
                       <button type="button" class="btn-cert-tab" data-group="수신기반">수신기반 (<span id="count-cert-tab-receiver">0</span>)</button>
@@ -1229,6 +1574,7 @@
                           <th style="width: 34px; text-align: center;"><input type="checkbox" id="chk-cert-master-all" title="전체 선택"></th>
                           <th style="width: 36px; text-align: center;">순서</th>
                           <th style="width: 52px; text-align: center;">사용</th>
+                          <th style="width: 64px; text-align: center;">신청유형</th>
                           <th style="width: 58px; text-align: center;">검사유형</th>
                           <th style="width: 66px; text-align: center;">작업반</th>
                           <th style="width: 72px; text-align: center;">품목그룹</th>
@@ -1239,12 +1585,6 @@
                           <th style="width: 78px; text-align: center;">형식번호</th>
                           <th style="width: 82px;">모델명</th>
                           <th style="width: 66px; text-align: right;">단가</th>
-                          <th style="width: 60px; text-align: right;">기초재고</th>
-                          <th style="width: 74px; text-align: right;">적정(최소)</th>
-                          <th style="width: 74px; text-align: right;">적정(최대)</th>
-                          <th style="width: 64px; text-align: right;">ST조립(s)</th>
-                          <th style="width: 64px; text-align: right;">ST검사(s)</th>
-                          <th style="width: 64px; text-align: right;">ST포장(s)</th>
                           <th style="width: 40px; text-align: center;">감지</th>
                           <th style="width: 40px; text-align: center;">제어</th>
                           <th style="width: 40px; text-align: center;">가스</th>
@@ -1277,7 +1617,11 @@
 
                   <div class="settings-card-body">
                     <form id="form-add-worker" class="inline-add-form" style="gap: 6px;">
-                      <select id="select-new-worker-group" class="form-select" style="width: 115px;">
+                      <select id="select-new-worker-category" class="form-select" style="width: 105px;" title="작업그룹 선택">
+                        <option value="직접제조">직접제조</option>
+                        <option value="제조지원">제조지원</option>
+                      </select>
+                      <select id="select-new-worker-group" class="form-select" data-has-workgroup-manage="1" style="width: 120px;" title="소속반 선택">
                         <option value="감지기반">감지기반</option>
                         <option value="유도등반">유도등반</option>
                         <option value="수신기반">수신기반</option>
@@ -1292,6 +1636,7 @@
                           <tr>
                             <th style="width: 44px;">순서</th>
                             <th>성명</th>
+                            <th style="width: 86px; text-align: center;">작업그룹</th>
                             <th style="width: 110px; text-align: center;">소속반</th>
                             <th style="width: 120px; text-align: center;">관리</th>
                           </tr>
@@ -1384,14 +1729,14 @@
                   <span class="count-badge" id="count-kfi-records-badge">0건 연동됨</span>
                 </div>
                 <div class="settings-card-body">
-                  <div class="kfi-upload-dropzone" id="kfi-upload-dropzone" style="border: 2px dashed #cbd5e1; border-radius: 12px; padding: 32px 20px; text-align: center; background: #f8fafc; cursor: pointer;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" style="width: 40px; height: 40px; margin: 0 auto 10px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    <p style="font-weight: 600; color: #334155; margin-bottom: 4px;">KFI 엑셀/CSV 파일을 이곳으로 드래그하거나 클릭하여 선택하세요</p>
-                    <p style="font-size: 12px; color: #64748b; margin-bottom: 12px;">지원 형식: .xlsx, .xls, .csv</p>
+                  <div class="kfi-upload-dropzone" id="kfi-upload-dropzone" style="border: 2px dashed var(--border-light); border-radius: 12px; padding: 32px 20px; text-align: center; background: var(--bg-subtle); cursor: pointer;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" style="width: 40px; height: 40px; margin: 0 auto 10px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <p style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">KFI 엑셀/CSV 파일을 이곳으로 드래그하거나 클릭하여 선택하세요</p>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">지원 형식: .xlsx, .xls, .csv</p>
                     <label for="input-kfi-excel-upload" class="btn btn-sm btn-outline" style="cursor: pointer; display: inline-flex;">파일 찾아보기</label>
                     <input type="file" id="input-kfi-excel-upload" accept=".xlsx, .xls, .csv" style="display:none">
                   </div>
-                  <div id="kfi-upload-summary-box" style="margin-top: 12px; padding: 10px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; font-size: 13px; color: #166534; display: none;">
+                  <div id="kfi-upload-summary-box" style="margin-top: 12px; padding: 10px 14px; background: var(--success-light); border: 1px solid var(--success); border-radius: 8px; font-size: 13px; color: var(--success); display: none;">
                     <strong>✓ KFI 데이터가 정상 로드되었습니다:</strong> 총 <span id="kfi-summary-count">0</span>건
                   </div>
                 </div>
@@ -1414,14 +1759,14 @@
                   <button type="button" class="btn btn-xs btn-outline" id="btn-settings-goto-attendance">← 근태관리로 이동</button>
                 </div>
                 <div class="settings-card-body">
-                  <form id="form-add-att-type" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#f8fafc; border-radius:10px; border:1px solid #e2e8f0;">
+                  <form id="form-add-att-type" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:var(--bg-subtle); border-radius:10px; border:1px solid var(--border-light);">
                     <div style="flex:1; min-width:160px;">
-                      <label for="att-type-new-name" style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:4px;">유형명 *</label>
+                      <label for="att-type-new-name" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">유형명 *</label>
                       <input type="text" id="att-type-new-name" class="form-input form-input-sm" placeholder="예: 공가, 병가, 출장" required>
                     </div>
                     <div>
-                      <label for="att-type-new-color" style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:4px;">표시 색상</label>
-                      <input type="color" id="att-type-new-color" value="#0ea5e9" style="width:48px; height:32px; padding:2px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; cursor:pointer;">
+                      <label for="att-type-new-color" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">표시 색상</label>
+                      <input type="color" id="att-type-new-color" value="#0ea5e9" style="width:48px; height:32px; padding:2px; border:1px solid var(--border-light); border-radius:6px; background:var(--bg-card); cursor:pointer;">
                     </div>
                     <button type="submit" class="btn btn-sm btn-primary">+ 유형 추가</button>
                   </form>
@@ -1441,6 +1786,242 @@
                 </div>
               </div>
             </div>
+
+            <!-- 5-2. 공정검사 보고서 양식 관리 패널 -->
+            <div class="settings-sub-pane" id="settings-pane-reports">
+              <div class="settings-card settings-card-wide">
+                <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                  <div class="card-title-wrap">
+                    <div class="card-icon-box blue" style="background:#eff6ff; color:#2563eb;">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                    </div>
+                    <div>
+                      <h3 class="card-title">공정검사 보고서 양식 (.pdf) 관리 및 품목 연결</h3>
+                      <p class="card-subtitle">작업반을 선택하고 .pdf 양식을 드래그&amp;드롭한 뒤, 마우스로 로트번호·로트수량·비고 출력 위치를 지정하면 일정계획에서 바로 인쇄할 수 있습니다.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-card-body">
+                  <!-- 작업반 필터 / 업로드 대상 선택 바 -->
+                  <div class="rpt-group-bar" id="rpt-group-bar">
+                    <button type="button" class="plan-seg-btn active" data-group="분류대기">분류대기 <span class="rpt-grp-cnt" data-cnt-group="분류대기">0</span></button>
+                    <button type="button" class="plan-seg-btn" data-group="감지기반">감지기반 <span class="rpt-grp-cnt" data-cnt-group="감지기반">0</span></button>
+                    <button type="button" class="plan-seg-btn" data-group="유도등반">유도등반 <span class="rpt-grp-cnt" data-cnt-group="유도등반">0</span></button>
+                    <button type="button" class="plan-seg-btn" data-group="수신기반">수신기반 <span class="rpt-grp-cnt" data-cnt-group="수신기반">0</span></button>
+                  </div>
+
+                  <div class="rpt-manage-grid">
+                    <!-- 좌측: 드래그&드롭 업로드 + 선택 양식 설정 및 작업반 이동 -->
+                    <div class="rpt-left-col">
+                      <div class="rpt-dropzone" id="rpt-dropzone">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        <span id="rpt-dropzone-text">.pdf 양식 파일을 여기에 드래그&amp;드롭하거나 클릭하여 업로드하세요 (여러 개 가능)</span>
+                        <input type="file" id="rpt-tpl-file" accept=".pdf,application/pdf" multiple style="display:none;">
+                      </div>
+
+                      <div class="rpt-editor-box" id="rpt-editor-box">
+                        <div class="rpt-section-label">선택 양식 설정 및 작업반 이동</div>
+                        <div class="rpt-form-row">
+                          <label>파일명</label>
+                          <div id="rpt-tpl-file-info" style="font-size:12px; font-weight:700; color:var(--text-main); word-break:break-all;">선택된 양식 없음</div>
+                        </div>
+                        <div class="rpt-form-row">
+                          <label>작업반 이동</label>
+                          <div class="rpt-move-btns" id="rpt-move-btns">
+                            <button type="button" class="btn btn-xs btn-outline rpt-move-btn" data-move-group="분류대기">분류대기</button>
+                            <button type="button" class="btn btn-xs btn-outline rpt-move-btn" data-move-group="감지기반">감지기반</button>
+                            <button type="button" class="btn btn-xs btn-outline rpt-move-btn" data-move-group="유도등반">유도등반</button>
+                            <button type="button" class="btn btn-xs btn-outline rpt-move-btn" data-move-group="수신기반">수신기반</button>
+                          </div>
+                        </div>
+                        <div class="rpt-form-row">
+                          <label>PDF 출력 위치 &amp; 글자 크기</label>
+                          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-sm btn-outline" id="btn-rpt-open-pos-modal" style="flex:1;">
+                              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                              클릭으로 위치 지정
+                            </button>
+                            <select id="rpt-font-size" class="form-select form-select-sm" style="width:78px;" title="출력 글자 크기">
+                              <option value="6">6pt</option>
+                              <option value="7">7pt</option>
+                              <option value="8">8pt</option>
+                              <option value="9">9pt</option>
+                              <option value="10" selected>10pt</option>
+                              <option value="11">11pt</option>
+                              <option value="12">12pt</option>
+                              <option value="13">13pt</option>
+                              <option value="14">14pt</option>
+                            </select>
+                          </div>
+                          <div id="rpt-pos-summary" style="font-size:11px; color:var(--text-muted); margin-top:2px;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; gap:8px; margin-top:4px;">
+                          <button type="button" class="btn btn-xs btn-outline" id="btn-rpt-tpl-delete" style="color:#dc2626; border-color:#fca5a5;">양식 삭제</button>
+                          <button type="button" class="btn btn-sm btn-primary" id="btn-rpt-tpl-save">변경사항 저장</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 가운데: 작업반별 등록된 양식 목록 -->
+                    <div class="rpt-center-col">
+                      <div class="rpt-center-box">
+                        <div class="rpt-section-label" style="margin-bottom:8px;">등록된 양식 목록 (<span id="rpt-list-group-label">분류대기</span>)</div>
+                        <div class="rpt-tpl-list" id="rpt-tpl-list"></div>
+                      </div>
+                    </div>
+
+                    <!-- 우측: 연결된 품목 (상단) + 반별 품목 선택창 (하단) -->
+                    <div class="rpt-right-col">
+                      <div class="rpt-connected-box">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                          <div class="rpt-section-label" style="margin:0;">연결된 품목 (<span id="rpt-mapped-count">0</span>개)</div>
+                          <button type="button" class="btn btn-xs btn-primary" id="btn-rpt-open-picker">+ 품목 연결</button>
+                        </div>
+                        <div class="rpt-connected-list" id="rpt-connected-list"></div>
+                      </div>
+
+                      <div class="rpt-picker-box" id="rpt-picker-box" style="display:none;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                          <div class="rpt-section-label" style="margin:0;">반별 품목 선택</div>
+                          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                            <select id="rpt-item-group-filter" class="form-select form-select-sm" style="width:105px;">
+                              <option value="ALL">전체 반</option>
+                              <option value="감지기반">감지기반</option>
+                              <option value="유도등반">유도등반</option>
+                              <option value="수신기반">수신기반</option>
+                            </select>
+                            <input type="text" id="rpt-item-search" class="form-input form-input-sm" placeholder="품목코드 / 품명 검색..." style="width:155px;">
+                            <button type="button" class="btn btn-xs btn-outline" id="btn-rpt-select-visible">전체선택</button>
+                            <button type="button" class="btn btn-xs btn-outline" id="btn-rpt-clear-visible">선택해제</button>
+                          </div>
+                        </div>
+                        <div class="rpt-item-map-list" id="rpt-item-map-list"></div>
+                        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+                          <button type="button" class="btn btn-xs btn-outline" id="btn-rpt-close-picker">닫기</button>
+                          <button type="button" class="btn btn-sm btn-primary" id="btn-rpt-apply-items">연결</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 6. 사용자 · 권한 관리 패널 -->
+            <div class="settings-sub-pane" id="settings-pane-users">
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <!-- 상단 3단: 1) 가입승인/비번초기화 2) 소속 관리 3) 역할 프리셋 관리 -->
+                <div class="auth-top-3grid">
+                  <!-- 1. 가입 승인 대기 & 비밀번호 초기화 요청 -->
+                  <div class="settings-card" id="auth-pending-card">
+                    <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                      <div class="card-title-wrap">
+                        <div class="card-icon-box" style="background:#fef3c7; color:#b45309;">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        </div>
+                        <div>
+                          <h3 class="card-title">가입 승인 · 비번 초기화</h3>
+                          <p class="card-subtitle">가입 승인 및 임시 비밀번호 발급</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="settings-card-body auth-meta-body" id="auth-pending-list">
+                      <!-- 동적 렌더링 -->
+                    </div>
+                  </div>
+
+                  <!-- 2. 소속 목록 관리 -->
+                  <div class="settings-card" id="auth-depts-card">
+                    <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                      <div class="card-title-wrap">
+                        <div class="card-icon-box blue" style="background:#eff6ff; color:#2563eb;">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01"></path></svg>
+                        </div>
+                        <div>
+                          <h3 class="card-title">소속 목록 관리</h3>
+                          <p class="card-subtitle">가입/사용자 목록의 소속 항목 수정·삭제</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="settings-card-body auth-meta-body">
+                      <div class="auth-meta-add-row">
+                        <input type="text" id="auth-dept-new-name" class="form-input form-input-sm" placeholder="새 소속명 입력...">
+                        <button type="button" class="btn btn-xs btn-primary" id="btn-auth-dept-add">+ 추가</button>
+                      </div>
+                      <div class="auth-meta-list" id="auth-depts-list"></div>
+                    </div>
+                  </div>
+
+                  <!-- 3. 역할 프리셋 관리 -->
+                  <div class="settings-card" id="auth-roles-card">
+                    <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                      <div class="card-title-wrap">
+                        <div class="card-icon-box" style="background:#ecfdf5; color:#047857;">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                        </div>
+                        <div>
+                          <h3 class="card-title">역할 프리셋 관리</h3>
+                          <p class="card-subtitle">역할 이름과 설명 수정·추가·삭제</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="settings-card-body auth-meta-body">
+                      <div class="auth-meta-add-row">
+                        <input type="text" id="auth-role-new-name" class="form-input form-input-sm" placeholder="역할 이름" style="width:92px; flex:0 0 92px;">
+                        <input type="text" id="auth-role-new-desc" class="form-input form-input-sm" placeholder="역할 설명 (어떤 역할인지)">
+                        <button type="button" class="btn btn-xs btn-primary" id="btn-auth-role-add">+ 추가</button>
+                      </div>
+                      <div class="auth-meta-list" id="auth-roles-list"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 전체 사용자 및 권한 매트릭스 -->
+                <div class="settings-card settings-card-wide">
+                  <div class="settings-card-header" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <div class="card-title-wrap">
+                      <div class="card-icon-box blue" style="background:#e0f2fe; color:#0284c7;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                      </div>
+                      <div>
+                        <h3 class="card-title">사용자 목록 및 화면별 권한 설정</h3>
+                        <p class="card-subtitle">역할 프리셋을 선택하거나 화면별로 [숨김 / 조회 / 수정] 권한을 개별 지정할 수 있습니다.</p>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary" id="btn-auth-save-users">
+                      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                      권한 변경사항 저장
+                    </button>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="master-list-container" style="max-height: calc(100vh - 340px);">
+                      <table class="master-table auth-users-table">
+                        <thead>
+                          <tr>
+                            <th style="min-width:82px;">아이디</th>
+                            <th style="min-width:74px;">이름</th>
+                            <th style="min-width:78px;">소속</th>
+                            <th style="min-width:96px;">역할 프리셋</th>
+                            <th style="min-width:56px; text-align:center;">승인</th>
+                            <th style="min-width:68px; text-align:center;">생산계획</th>
+                            <th style="min-width:74px; text-align:center;">수신기계획</th>
+                            <th style="min-width:68px; text-align:center;">검정현황</th>
+                            <th style="min-width:68px; text-align:center;">일정계획</th>
+                            <th style="min-width:68px; text-align:center;">생산일보</th>
+                            <th style="min-width:68px; text-align:center;">공수집계</th>
+                            <th style="min-width:68px; text-align:center;">근태관리</th>
+                            <th style="min-width:68px; text-align:center;">품질검사</th>
+                            <th style="min-width:62px; text-align:center;">설정</th>
+                            <th style="min-width:115px; text-align:center;">관리</th>
+                          </tr>
+                        </thead>
+                        <tbody id="auth-users-tbody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1454,6 +2035,7 @@
             <form id="form-add-cert-item" style="overflow-y: auto; padding: 16px;">
               <div class="cert-master-add-grid">
                 <div class="cert-add-field"><label for="cert-add-use">사용여부</label><select id="cert-add-use" class="form-select"><option value="사용" selected>사용</option><option value="미사용">미사용</option></select></div>
+                <div class="cert-add-field"><label for="cert-add-apply-type">신청유형</label><select id="cert-add-apply-type" class="form-select"><option value="자동" selected>자동</option><option value="수동">수동</option></select></div>
                 <div class="cert-add-field"><label for="cert-add-type">검사유형</label><select id="cert-add-type" class="form-select"><option value="품질" selected>품질</option><option value="생산">생산</option><option value="-">-</option></select></div>
                 <div class="cert-add-field"><label for="cert-add-group">작업반</label><select id="cert-add-group" class="form-select"><option value="유도등반">유도등반</option><option value="수신기반">수신기반</option><option value="감지기반" selected>감지기반</option><option value="-">-</option><option value="기타">기타</option></select></div>
                 <div class="cert-add-field"><label for="cert-add-item-group">품목그룹</label><input type="text" id="cert-add-item-group" class="form-input" placeholder="예: 감지기"></div>
@@ -1464,17 +2046,11 @@
                 <div class="cert-add-field"><label for="cert-add-format">형식번호</label><input type="text" id="cert-add-format" class="form-input" placeholder="형식번호"></div>
                 <div class="cert-add-field"><label for="cert-add-model">모델명</label><input type="text" id="cert-add-model" class="form-input" placeholder="모델명"></div>
                 <div class="cert-add-field"><label for="cert-add-price">단가</label><input type="number" id="cert-add-price" class="form-input" placeholder="단가" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-base-stock">기초재고</label><input type="number" id="cert-add-base-stock" class="form-input" placeholder="기초재고" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-min-stock">적정재고 (최소)</label><input type="number" id="cert-add-min-stock" class="form-input" placeholder="최소" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-max-stock">적정재고 (최대)</label><input type="number" id="cert-add-max-stock" class="form-input" placeholder="최대" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-st-assembly">ST 조립 (s)</label><input type="number" id="cert-add-st-assembly" class="form-input" placeholder="조립(s)" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-st-inspect">ST 검사 (s)</label><input type="number" id="cert-add-st-inspect" class="form-input" placeholder="검사(s)" min="0"></div>
-                <div class="cert-add-field"><label for="cert-add-st-pack">ST 포장 (s)</label><input type="number" id="cert-add-st-pack" class="form-input" placeholder="포장(s)" min="0"></div>
                 <div class="cert-add-field"><label for="cert-add-sensor">감지</label><input type="text" id="cert-add-sensor" class="form-input" style="text-align:center;"></div>
                 <div class="cert-add-field"><label for="cert-add-ctrl">제어</label><input type="text" id="cert-add-ctrl" class="form-input" style="text-align:center;"></div>
                 <div class="cert-add-field"><label for="cert-add-gas">가스</label><input type="text" id="cert-add-gas" class="form-input" style="text-align:center;"></div>
               </div>
-              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-light);">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-cert-item-modal">취소</button>
                 <button type="submit" class="btn btn-sm btn-primary">+ 품목 등록</button>
               </div>
@@ -1484,6 +2060,25 @@
       </section>
 
     </main>
+
+    <!-- 하단 고정 상태바 (메인 화면과 시각적 구분 + DB 연결상태 및 시계 표시) -->
+    <footer class="app-bottom-bar" id="app-bottom-bar">
+      <div class="bottom-bar-left">
+        <span class="bottom-bar-brand">생산관리 시스템 1.0 · Smart MES</span>
+        <span class="bottom-bar-sep">|</span>
+        <span class="bottom-bar-item" id="footer-current-tab">일정계획</span>
+        <span class="bottom-bar-sep">|</span>
+        <span class="bottom-bar-item" id="footer-last-saved">최근 저장: 대기중</span>
+        <button type="button" class="bottom-scroll-top-btn" id="btn-scroll-top" title="화면 맨 위로 이동">↑ 맨위로</button>
+      </div>
+      <div class="bottom-bar-right">
+        <div class="status-indicator" id="db-status-badge">
+          <span class="status-dot" id="db-status-dot"></span>
+          <span class="status-text" id="db-status-text">DB 연결됨</span>
+        </div>
+        <div class="clock-display" id="clock-display">2026-10-27 12:00</div>
+      </div>
+    </footer>
 
     <!-- 실시간 Toast 팝업 -->
     <div id="toast-container" class="toast-container">
@@ -1522,7 +2117,7 @@
             </div>
           </div>
 
-          <div class="modal-table-container" style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px;">
+          <div class="modal-table-container" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 6px;">
             <table class="grid-table modal-item-table" id="cert-modal-item-table">
               <thead>
                 <tr class="header-row-primary">
@@ -1543,22 +2138,285 @@
           </div>
         </div>
 
-        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
-          <span style="font-size: 12px; color: #64748b;">💡 <strong>방향키</strong>로 행 선택 후 <strong>Enter</strong> 키를 누르면 바로 선택됩니다.</span>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: var(--bg-subtle); border-top: 1px solid var(--border-light);">
+          <span style="font-size: 12px; color: var(--text-muted);">💡 <strong>방향키</strong>로 행 선택 후 <strong>Enter</strong> 키를 누르면 바로 선택됩니다.</span>
           <button type="button" class="btn btn-outline" id="btn-cancel-cert-modal">닫기</button>
         </div>
       </div>
     </div>
 
+    <!-- 작업반 등록/수정 팝업 모달 -->
+    <div id="modal-work-groups" class="modal-overlay" style="display: none; z-index: 9999;">
+      <div class="cert-modal-box" style="max-width: 460px; width: 92%; background: var(--bg-card); border-radius: 14px; overflow: hidden;">
+        <div class="cert-modal-head" style="display:flex; align-items:center; justify-content:space-between; padding: 14px 18px; background: var(--bg-subtle); border-bottom: 1px solid var(--border-light);">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; background:var(--primary-light); color:var(--primary); font-size:15px;">⚙</span>
+            <div>
+              <h3 class="modal-title" style="margin:0; font-size:15px; font-weight:700; color:var(--text-main);">작업반 등록 / 수정</h3>
+              <p style="margin:2px 0 0; font-size:11.5px; color:var(--text-muted);">작업반을 추가하거나 명칭을 변경·삭제할 수 있습니다.</p>
+            </div>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-workgroup-modal" title="닫기">×</button>
+        </div>
+        <div class="cert-modal-body" style="padding: 16px 18px; background: var(--bg-card);">
+          <form id="form-add-workgroup" style="display:flex; gap:8px; margin-bottom: 14px;">
+            <select id="select-new-workgroup-category" class="form-select form-select-sm" style="width: 105px; height:34px; border-radius:8px;">
+              <option value="직접제조">직접제조</option>
+              <option value="제조지원">제조지원</option>
+            </select>
+            <input type="text" id="input-new-workgroup" class="form-input form-input-sm" placeholder="새 작업반 이름 입력 (예: 포장반)" required style="flex:1; height:34px; border-radius:8px;">
+            <button type="submit" class="btn btn-sm btn-primary" style="height:34px; padding:0 14px; border-radius:8px; font-weight:700;">+ 추가</button>
+          </form>
+          <div style="max-height: 290px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 10px; background: var(--bg-card);">
+            <table class="master-table" style="margin:0; background:var(--bg-card);">
+              <thead>
+                <tr style="background:var(--bg-subtle);">
+                  <th style="width: 40px; text-align:center; font-size:12px; color:var(--text-sub);">No</th>
+                  <th style="width: 100px; text-align:center; font-size:12px; color:var(--text-sub);">작업그룹</th>
+                  <th style="font-size:12px; color:var(--text-sub);">작업반 명칭</th>
+                  <th style="width: 108px; text-align:center; font-size:12px; color:var(--text-sub);">관리</th>
+                </tr>
+              </thead>
+              <tbody id="workgroup-modal-tbody" style="background:var(--bg-card);"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="cert-modal-foot" style="display:flex; justify-content:flex-end; padding: 12px 18px; background: var(--bg-subtle); border-top: 1px solid var(--border-light);">
+          <button type="button" class="btn btn-sm btn-outline" id="btn-done-workgroup-modal" style="min-width:72px; border-radius:8px;">닫기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 검정 등록 내역 수정 모달 (등록완료 건 전용) -->
+    <div id="modal-cert-saved-edit" class="modal-overlay" style="display: none; z-index: 9999;">
+      <div class="cert-modal-box" style="max-width: 560px; width: 94%; background: var(--bg-card); border-radius: 14px; overflow: hidden;">
+        <div class="cert-modal-head" style="display:flex; align-items:center; justify-content:space-between; padding: 14px 18px; background: var(--bg-subtle); border-bottom: 1px solid var(--border-light);">
+          <div>
+            <h3 class="modal-title" style="margin:0; font-size:15px; font-weight:700; color:var(--text-main);">검정 등록 내역 수정</h3>
+            <p id="cert-edit-item-subtitle" style="margin:2px 0 0; font-size:11.5px; color:var(--text-muted);">등록완료 상태인 항목만 수정할 수 있습니다.</p>
+          </div>
+          <button type="button" class="btn-close-modal" id="btn-close-cert-edit-modal" title="닫기">×</button>
+        </div>
+        <form id="form-cert-saved-edit">
+          <div class="cert-modal-body" style="padding: 16px 18px; background: var(--bg-card); display:grid; grid-template-columns: 1fr 1fr; gap: 10px 14px;">
+            <input type="hidden" id="cert-edit-id">
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">수검일자</label>
+              <input type="date" id="cert-edit-inspect-date" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">생산주차</label>
+              <input type="date" id="cert-edit-week-date" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">신청수량</label>
+              <input type="number" id="cert-edit-qty" class="form-input form-input-sm" min="1" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">로트번호</label>
+              <input type="text" id="cert-edit-lot" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">제조번호 FROM</label>
+              <input type="text" id="cert-edit-from" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">제조번호 TO</label>
+              <input type="text" id="cert-edit-to" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">합격표시번호</label>
+              <input type="text" id="cert-edit-passno" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">외함색상</label>
+              <input type="text" id="cert-edit-color" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">요청부서</label>
+              <input type="text" id="cert-edit-dept" class="form-input form-input-sm" style="width:100%;">
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px; font-weight:600; color:var(--text-sub); display:block; margin-bottom:4px;">현장명 (비고)</label>
+              <input type="text" id="cert-edit-site" class="form-input form-input-sm" style="width:100%;">
+            </div>
+          </div>
+          <div class="cert-modal-foot" style="display:flex; justify-content:flex-end; gap:8px; padding: 12px 18px; background: var(--bg-subtle); border-top: 1px solid var(--border-light);">
+            <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-cert-edit-modal" style="min-width:72px; border-radius:8px;">취소</button>
+            <button type="submit" class="btn btn-sm btn-primary" style="min-width:84px; border-radius:8px; font-weight:700;">저장</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 로그인 / 회원가입 / 비밀번호 재설정 오버레이 -->
+  <div class="auth-overlay" id="auth-overlay" style="display: none;">
+    <div class="auth-card">
+      <button type="button" class="btn-theme-toggle auth-theme-toggle" id="btn-auth-theme-toggle" title="다크 모드로 전환" aria-label="테마 전환">
+        <svg class="theme-icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        <svg class="theme-icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      </button>
+      <div class="auth-card-header">
+        <div class="auth-logo-badge"><img src="gfs-logo.png" alt="GFS" class="auth-logo-img"></div>
+        <h2 class="auth-title">생산관리 시스템 1.0</h2>
+        <p class="auth-subtitle">사내 계정으로 로그인하거나 가입을 신청하세요.</p>
+      </div>
+
+      <div class="auth-tabs" id="auth-mode-tabs">
+        <button type="button" class="auth-tab-btn active" data-auth-tab="login">로그인</button>
+        <button type="button" class="auth-tab-btn" data-auth-tab="signup">회원가입 신청</button>
+        <button type="button" class="auth-tab-btn" data-auth-tab="reset">비밀번호 재설정</button>
+      </div>
+
+      <!-- 1. 로그인 폼 -->
+      <form id="form-auth-login" class="auth-form active">
+        <div class="auth-field">
+          <label for="auth-login-id">아이디</label>
+          <input type="text" id="auth-login-id" class="form-input" placeholder="아이디 입력" autocomplete="username" required>
+        </div>
+        <div class="auth-field">
+          <label for="auth-login-pw">비밀번호</label>
+          <input type="password" id="auth-login-pw" class="form-input" placeholder="비밀번호 입력" autocomplete="current-password" required>
+        </div>
+        <div class="auth-checks-row">
+          <label class="auth-chk-label"><input type="checkbox" id="auth-save-id" checked> 아이디 저장</label>
+          <label class="auth-chk-label"><input type="checkbox" id="auth-keep-login" checked> 로그인 유지</label>
+        </div>
+        <div class="auth-msg" id="auth-login-msg"></div>
+        <button type="submit" class="btn btn-primary auth-submit-btn">로그인</button>
+        <div class="auth-footer-hint" style="justify-content:flex-end;">
+          <button type="button" class="auth-link-btn" id="btn-go-reset-tab">비밀번호를 잊으셨나요?</button>
+        </div>
+      </form>
+
+      <!-- 2. 회원가입 신청 폼 -->
+      <form id="form-auth-signup" class="auth-form" style="display:none;">
+        <div class="auth-grid-2">
+          <div class="auth-field">
+            <label for="auth-reg-name">이름 *</label>
+            <input type="text" id="auth-reg-name" class="form-input" placeholder="홍길동" required>
+          </div>
+          <div class="auth-field">
+            <label for="auth-reg-dept">소속 *</label>
+            <select id="auth-reg-dept" class="form-select">
+              <option value="감지기반">감지기반</option>
+              <option value="유도등반">유도등반</option>
+              <option value="수신기반">수신기반</option>
+              <option value="생산관리">생산관리</option>
+              <option value="품질">품질</option>
+              <option value="제조기술">제조기술</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+        </div>
+        <div class="auth-field">
+          <label for="auth-reg-id">아이디 *</label>
+          <input type="text" id="auth-reg-id" class="form-input" placeholder="영문/숫자 (예: hong)" required>
+        </div>
+        <div class="auth-grid-2">
+          <div class="auth-field">
+            <label for="auth-reg-pw">비밀번호 *</label>
+            <input type="password" id="auth-reg-pw" class="form-input" placeholder="4자 이상" required>
+          </div>
+          <div class="auth-field">
+            <label for="auth-reg-pw2">비밀번호 확인 *</label>
+            <input type="password" id="auth-reg-pw2" class="form-input" placeholder="다시 입력" required>
+          </div>
+        </div>
+        <div class="auth-msg" id="auth-signup-msg"></div>
+        <button type="submit" class="btn btn-primary auth-submit-btn">가입 신청 (승인 대기)</button>
+      </form>
+
+      <!-- 3. 비밀번호 재설정 요청 폼 -->
+      <form id="form-auth-reset" class="auth-form" style="display:none;">
+        <p style="font-size:12px; color:var(--text-secondary); margin:0 0 8px;">아이디와 이름을 입력해 재설정을 요청하면, 관리자가 확인 후 <strong>임시 비밀번호</strong>를 발급해 드립니다.</p>
+        <div class="auth-field">
+          <label for="auth-reset-id">아이디 *</label>
+          <input type="text" id="auth-reset-id" class="form-input" placeholder="가입된 아이디" required>
+        </div>
+        <div class="auth-field">
+          <label for="auth-reset-name">이름 *</label>
+          <input type="text" id="auth-reset-name" class="form-input" placeholder="가입 시 등록한 이름" required>
+        </div>
+        <div class="auth-msg" id="auth-reset-msg"></div>
+        <button type="submit" class="btn btn-primary auth-submit-btn">비밀번호 초기화 요청</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 내 계정 · 비밀번호 변경 · 로그아웃 모달 -->
+  <div class="cert-modal-overlay" id="modal-user-account" style="display: none;">
+    <div class="cert-modal-box" style="width: 420px; max-width: 94vw;">
+      <div class="cert-modal-head">
+        <h3>👤 내 계정 정보</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-user-account">×</button>
+      </div>
+      <div style="padding: 16px; display:flex; flex-direction:column; gap:14px;">
+        <div id="user-account-temp-pw-alert" style="display:none; padding:10px 12px; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; font-size:12px; color:#92400e; font-weight:600;">
+          ⚠ 임시 비밀번호로 로그인하셨습니다. 아래에서 새 비밀번호로 변경해 주세요.
+        </div>
+        <div class="auth-account-summary" id="user-account-summary"></div>
+        <form id="form-change-my-pw" style="display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--border-light); padding-top:12px;">
+          <div style="font-size:12.5px; font-weight:700;">🔑 비밀번호 변경</div>
+          <input type="password" id="my-pw-current" class="form-input form-input-sm" placeholder="현재 비밀번호 (또는 임시 비밀번호)" required>
+          <input type="password" id="my-pw-new" class="form-input form-input-sm" placeholder="새 비밀번호 (4자 이상)" required>
+          <input type="password" id="my-pw-new2" class="form-input form-input-sm" placeholder="새 비밀번호 확인" required>
+          <div class="auth-msg" id="my-pw-msg"></div>
+          <button type="submit" class="btn btn-sm btn-primary" style="align-self:flex-end;">비밀번호 변경</button>
+        </form>
+        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-light); padding-top:12px;">
+          <button type="button" class="btn btn-sm btn-outline" id="btn-auth-go-manage" style="display:none;">🛡️ 사용자·권한 관리로 이동</button>
+          <button type="button" class="btn btn-sm btn-outline" id="btn-auth-logout" style="color:#dc2626; border-color:#fca5a5; margin-left:auto;">🚪 로그아웃</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF 양식 출력 위치 지정 모달 -->
+  <div class="cert-modal-overlay" id="modal-rpt-pdf-pos" style="display:none; z-index:2100;">
+    <div class="cert-modal-box" style="width: 820px; max-width: 96vw; max-height: 92vh; display:flex; flex-direction:column;">
+      <div class="cert-modal-head">
+        <h3>PDF 출력 위치 지정 (클릭하여 배치)</h3>
+        <button type="button" class="btn-close-modal" id="btn-rpt-close-pos">×</button>
+      </div>
+      <div class="rpt-pos-toolbar">
+        <span style="font-size:12px; color:var(--text-sub); font-weight:600;">항목 선택 후 PDF 위에서 셀 영역을 드래그하면 정가운데로 자동 정렬됩니다:</span>
+        <div class="rpt-pos-field-btns" id="rpt-pos-field-btns">
+          <button type="button" class="btn btn-xs btn-outline active" data-pos-field="lot">1. 로트번호</button>
+          <button type="button" class="btn btn-xs btn-outline" data-pos-field="qty">2. 로트수량</button>
+          <button type="button" class="btn btn-xs btn-outline" data-pos-field="remark">3. 비고</button>
+        </div>
+      </div>
+      <div class="rpt-pos-canvas-scroll">
+        <div class="rpt-pdf-canvas-wrap" id="rpt-pdf-canvas-wrap">
+          <canvas id="rpt-pdf-preview-canvas"></canvas>
+          <div class="rpt-pos-pin is-lot" id="rpt-pin-lot">로트번호 (예: LOT-001)</div>
+          <div class="rpt-pos-pin is-qty" id="rpt-pin-qty">로트수량 (예: 100)</div>
+          <div class="rpt-pos-pin is-remark" id="rpt-pin-remark">비고 (예: 현장명)</div>
+        </div>
+      </div>
+      <div class="cert-modal-foot" style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px 16px; border-top:1px solid var(--border-light); flex-wrap:wrap;">
+        <button type="button" class="btn btn-sm btn-outline" id="btn-rpt-apply-pos-all" title="현재 지정한 위치를 등록된 모든 양식에 똑같이 적용합니다">모든 양식에 동일 위치 적용</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-sm btn-outline" id="btn-rpt-cancel-pos">취소</button>
+          <button type="button" class="btn btn-sm btn-primary" id="btn-rpt-save-pos">이 양식에 저장</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- XLSX Engine (오프라인 엑셀 파서 & 생성기) -->
   <script src="xlsx-engine.js"></script>
+  <!-- pdf-lib & pdf.js (PDF 양식 미리보기 · 위치 지정 · 바로 인쇄) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- 검정현황 & 신규 품목정보 마스터 기본 데이터셋 -->
-  <script src="cert-data.js"></script>
+  <script src="cert-data.js?v=4.3"></script>
   <!-- Firebase App 및 Cloud Firestore SDK (Compat v10) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="app.js?v=3.5"></script>
+  <script src="app.js?v=7.6"></script>
 </body>
 </html>

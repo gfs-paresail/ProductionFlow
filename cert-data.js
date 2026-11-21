@@ -527,10 +527,81 @@ window.PMS_CERT_DEFAULTS = (function() {
     }
   ];
 
+  // 5. 공수집계 리뉴얼: 기본 ST · 공수 기준 (단일/묶음 54종 + 예측 ST)
+  const DEFAULT_ST_ITEMS = [
+    // [감지기반]
+    { id: 'st_d1', line: '감지기반', name: '신규_일반_차동식', mode: 'single', codes: ['PDCRS-1003'], stAssembly: 8.00, stInspect: 13.01, stPack: 0.46 },
+    { id: 'st_d2', line: '감지기반', name: '신규_일반_광전식', mode: 'single', codes: ['PDCPS-1002'], stAssembly: 7.40, stInspect: 13.84, stPack: 0.46 },
+    { id: 'st_d3', line: '감지기반', name: '신규_일반_정온식', mode: 'single', codes: ['PDCFS-1702'], stAssembly: 7.54, stInspect: 13.47, stPack: 0.46 },
+    { id: 'st_d4', line: '감지기반', name: 'AN_광전식감지기', mode: 'single', codes: ['PDIPS-4002'], stAssembly: 7.64, stInspect: 13.65, stPack: 0.46 },
+    { id: 'st_d5', line: '감지기반', name: 'AN_정온식감지기', mode: 'single', codes: ['PDIFS-4702'], stAssembly: 8.31, stInspect: 12.98, stPack: 0.46 },
+    { id: 'st_d6', line: '감지기반', name: 'AN_정온식_방수형', mode: 'single', codes: ['PDAFW-0003'], stAssembly: 8.47, stInspect: 12.82, stPack: 0.46 },
+    { id: 'st_d7', line: '감지기반', name: '일반_정온식_방수형', mode: 'single', codes: ['PDCFW-0701'], stAssembly: 7.92, stInspect: 13.37, stPack: 0.46 },
+    { id: 'st_d8', line: '감지기반', name: '일반_차동식_방수형', mode: 'single', codes: ['PDCRW-0001'], stAssembly: 7.94, stInspect: 13.35, stPack: 0.46 },
+    { id: 'st_d9', line: '감지기반', name: '중계기_X2_2회로', mode: 'single', codes: ['PMGIO-2231'], stAssembly: 0, stInspect: 0, stPack: 1.74 },
+    { id: 'st_d10', line: '감지기반', name: '중계기_X2_4회로', mode: 'single', codes: ['PMGIO-2452'], stAssembly: 0, stInspect: 0, stPack: 1.74 },
+    { id: 'st_d11', line: '감지기반', name: '시각경보기 동조기', mode: 'single', codes: ['PBMXX-2007'], stAssembly: 0.61, stInspect: 5.84, stPack: 3.81 },
+    { id: 'st_d12', line: '감지기반', name: '아이솔레이터 (중계기)', mode: 'single', codes: ['PMIIX-3100'], stAssembly: 97.8, stInspect: 56.4, stPack: 0.3 },
+    { id: 'st_d13', line: '감지기반', name: '아이솔레이터_BASE', mode: 'single', codes: ['PDBIX-0001'], stAssembly: 0, stInspect: 18.32, stPack: 58.59 },
+    // [유도등반]
+    { id: 'st_l1', line: '유도등반', name: '피난구_벽부_소형_단면', mode: 'single', codes: ['PLESW-2100'], stAssembly: 62.35, stInspect: 30.65, stPack: 40.98 },
+    { id: 'st_l2', line: '유도등반', name: '와이드 음성점멸', mode: 'single', codes: ['PLEWW-2132'], stAssembly: 341.93, stInspect: 91, stPack: 124.17 },
+    { id: 'st_l3', line: '유도등반', name: '피난구_천정_중형_양면-신규', mode: 'group', codes: ['PLEMC-3200', 'PLEMC-3202'], stAssembly: 64.95, stInspect: 34.11, stPack: 44.69 },
+    { id: 'st_l4', line: '유도등반', name: '피난구_천정_중형_단면-신규', mode: 'single', codes: ['PLEMC-3100'], stAssembly: 54.8, stInspect: 51.04, stPack: 37.91 },
+    { id: 'st_l5', line: '유도등반', name: '거실통로_천정_중형_양면-신규', mode: 'single', codes: ['PLHMC-3200'], stAssembly: 61.43, stInspect: 37.5, stPack: 44.82 },
+    { id: 'st_l6', line: '유도등반', name: '거실통로_천정_중형_단면-신규', mode: 'single', codes: ['PLHMC-3100'], stAssembly: 76.85, stInspect: 0, stPack: 66.9 },
+    { id: 'st_l7', line: '유도등반', name: '피난구_벽부_중형_단면', mode: 'single', codes: ['PLEMW-2101'], stAssembly: 53.66, stInspect: 32.94, stPack: 43.24 },
+    { id: 'st_l8', line: '유도등반', name: '피난구_벽부_대형_단면', mode: 'single', codes: ['PLELW-1101'], stAssembly: 115.65, stInspect: 37.05, stPack: 65.69 },
+    { id: 'st_l9', line: '유도등반', name: '피난구_천정_소형_단면', mode: 'single', codes: ['PLESC-2101'], stAssembly: 107.51, stInspect: 0, stPack: 63.49 },
+    { id: 'st_l10', line: '유도등반', name: '피난구_천정_소형_양면', mode: 'single', codes: ['PLESC-2201'], stAssembly: 98.32, stInspect: 0, stPack: 72.68 },
+    { id: 'st_l11', line: '유도등반', name: '피난구 중,소형 음성점멸_천정형,세로', mode: 'group', codes: ['PLEMW-2120', 'PLESW-2120'], stAssembly: 100.99, stInspect: 69.45, stPack: 62.71 },
+    { id: 'st_l12', line: '유도등반', name: '피난구 중,소형 음성점멸_벽부형,가로', mode: 'group', codes: ['PLEMW-2122', 'PLESW-2121'], stAssembly: 109.19, stInspect: 55.19, stPack: 69.77 },
+    { id: 'st_l13', line: '유도등반', name: '피난구_천정_대형_단면', mode: 'single', codes: ['PLELC-1101'], stAssembly: 146.34, stInspect: 0, stPack: 55.26 },
+    { id: 'st_l14', line: '유도등반', name: '거실통로_벽부_중형_단면', mode: 'single', codes: ['PLHMW-2102'], stAssembly: 71.76, stInspect: 23.07, stPack: 35.01 },
+    { id: 'st_l15', line: '유도등반', name: '계단통로_벽부_소형_단면', mode: 'single', codes: ['PLSSW-2101'], stAssembly: 66.35, stInspect: 20.13, stPack: 26.72 },
+    { id: 'st_l16', line: '유도등반', name: '복도통로_벽부_소형_단면', mode: 'single', codes: ['PLCSW-2102'], stAssembly: 82.94, stInspect: 0, stPack: 51.04 },
+    { id: 'st_l17', line: '유도등반', name: '피난구 와이드유도등', mode: 'single', codes: ['PLEWW-1101'], stAssembly: 122.19, stInspect: 104.74, stPack: 52.37 },
+    { id: 'st_l18', line: '유도등반', name: '비상콘센트 구형', mode: 'single', codes: ['POXXW-0252'], stAssembly: 4.42, stInspect: 0, stPack: 2.58 },
+    { id: 'st_l19', line: '유도등반', name: '표시등', mode: 'single', codes: ['PVCLR-2000'], stAssembly: 1.26, stInspect: 0, stPack: 1.74 },
+    { id: 'st_l20', line: '유도등반', name: '비상콘센트 신형(내작)', mode: 'single', codes: ['PEXXW-1250'], stAssembly: 360.19, stInspect: 0, stPack: 24.01 },
+    // [수신기반]
+    { id: 'st_r1', line: '수신기반', name: 'R형_GT1_자립', mode: 'group', codes: ['PGGLA-1083','PGGLA-1163','PGGLA-1243','PGGLA-1323','PGGLB-1083','PGGLB-1163','PGGLB-1243','PGGLB-1323','PGGNA-1080','PGGNA-1160','PGGNA-1240','PGGNA-1320','PGGNB-1080','PGGNB-1160','PGGNB-1240','PGGNB-1320'], stAssembly: 12436.67, stInspect: 2805.17, stPack: 1938.16 },
+    { id: 'st_r2', line: '수신기반', name: 'R형_GT1_벽부', mode: 'group', codes: ['PGGLE-1040','PGGLE-1080','PGGLF-1040','PGGLF-1080'], stAssembly: 7492.48, stInspect: 2102.98, stPack: 1584.54 },
+    { id: 'st_r3', line: '수신기반', name: 'P형_F3P', mode: 'group', codes: ['PFPCE-3040','PFPCE-3080','PFPCF-3040','PFPCF-3080','PFPCE-3200','PFPCE-3400','PFPCE-3600','PFPCE-3800','PFPCF-3200','PFPCF-3400','PFPCF-3600','PFPCF-3800'], stAssembly: 3200.61, stInspect: 1303.17, stPack: 676.22 },
+    { id: 'st_r4', line: '수신기반', name: 'REDBOX', mode: 'single', codes: ['PFRVE-3020'], stAssembly: 3511.68, stInspect: 1463.49, stPack: 424.83 },
+    { id: 'st_r5', line: '수신기반', name: '부표시기_재고', mode: 'group', codes: ['PFAWW-0102','PFAWW-0202','PFAWW-0302'], stAssembly: 1005.06, stInspect: 114.35, stPack: 80.59 },
+    { id: 'st_r6', line: '수신기반', name: '소방전원공급장치_20A', mode: 'group', codes: ['PPXXX-1201','PPXXX-1206'], stAssembly: 512.07, stInspect: 243.02, stPack: 72.91 },
+    { id: 'st_r7', line: '수신기반', name: '소방전원공급장치_20A_중판', mode: 'single', codes: ['PPXXX-1203'], stAssembly: 504.76, stInspect: 267.75, stPack: 55.49 },
+    { id: 'st_r8', line: '수신기반', name: '소방전원공급장치_5A', mode: 'group', codes: ['PPXXB-0050','PPRXB-0050','PPCXB-0050'], stAssembly: 364.37, stInspect: 169.78, stPack: 41.85 },
+    { id: 'st_r9', line: '수신기반', name: '소방전원공급장치_15A', mode: 'group', codes: ['PPBXX-1150','PPXXX-1150'], stAssembly: 321.85, stInspect: 204.51, stPack: 52.64 },
+    { id: 'st_r10', line: '수신기반', name: '소방전원공급장치_15A_중판', mode: 'group', codes: ['PPBMX-1150','PPMXX-1150'], stAssembly: 322.95, stInspect: 216.99, stPack: 39.06 },
+    { id: 'st_r11', line: '수신기반', name: '중계반_GT1', mode: 'single', codes: ['PTGXX-4400'], stAssembly: 500.66, stInspect: 316.11, stPack: 79.73 },
+    { id: 'st_r12', line: '수신기반', name: '경종_제조검사', mode: 'group', codes: ['PBXXR-1904','PBXXR-1906'], stAssembly: 20.12, stInspect: 7.6, stPack: 2.23 },
+    { id: 'st_r13', line: '수신기반', name: '발신기', mode: 'group', codes: ['PACBR-0044','PACBR-0048'], stAssembly: 1.51, stInspect: 0.97, stPack: 1.27 },
+    { id: 'st_r14', line: '수신기반', name: '발신기6단자', mode: 'single', codes: ['PACBW-0062'], stAssembly: 0, stInspect: 8.44, stPack: 0.56 },
+    { id: 'st_r15', line: '수신기반', name: '시각경보기', mode: 'group', codes: ['PBNLR-2002','PBNLW-2002','PBSLR-2004','PBSLW-2004'], stAssembly: 1.24, stInspect: 0.9, stPack: 0.86 },
+    { id: 'st_r16', line: '수신기반', name: '펌프제어판넬', mode: 'single', codes: ['PWCRP-0180'], stAssembly: 33329.37, stInspect: 5951.67, stPack: 3400.96 },
+    { id: 'st_r17', line: '수신기반', name: '무선경보표시기', mode: 'single', codes: ['PYFHX-1000'], stAssembly: 1116, stInspect: 446.4, stPack: 237.6 },
+    { id: 'st_r18', line: '수신기반', name: '비상경보장치', mode: 'group', codes: ['PYAWX-1000','PYAWX-1002'], stAssembly: 581.99, stInspect: 150.84, stPack: 175.77 },
+    { id: 'st_r19', line: '수신기반', name: '무선 중계기', mode: 'single', codes: ['PYMXW-1001'], stAssembly: 177.94, stInspect: 47.7, stPack: 44.98 },
+    { id: 'st_r20', line: '수신기반', name: '주소입력기', mode: 'single', codes: ['PWAXX-3000'], stAssembly: 231.51, stInspect: 42, stPack: 39.76 },
+    { id: 'st_r21', line: '수신기반', name: '리피터', mode: 'single', codes: ['PTIRX-3500'], stAssembly: 97.8, stInspect: 56.4, stPack: 0.3 }
+  ];
+
+  // 공수 미측정 기본 제외 품목 (외주 수동조작함)
+  const DEFAULT_ST_EXCLUDED_CODES = [
+    'PSGSE-3001','PSGFE-3001','PSGSX-3001','PSGFX-3001',
+    'PSSSE-3001','PSSFE-3001','PSSSX-3001','PSSFX-3001',
+    'PSDSE-3001','PSDFE-3001','PSDSX-3001','PSDSX-2001',
+    'PSDFX-3001','PSDFR-3000','PSDFX-3002'
+  ];
+
   return {
     DEFAULT_DEPARTMENTS,
     DEFAULT_CERT_MASTER_ITEMS,
     DEFAULT_KFI_DATA_MAP,
-    DEFAULT_CERT_SAMPLE_ROWS
+    DEFAULT_CERT_SAMPLE_ROWS,
+    DEFAULT_ST_ITEMS,
+    DEFAULT_ST_EXCLUDED_CODES
   };
 })();
