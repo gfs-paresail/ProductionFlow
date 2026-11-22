@@ -14,7 +14,7 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=6.5">
+  <link rel="stylesheet" href="style.css?v=8.2">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 </head>
@@ -64,15 +64,31 @@
           </div>
         </div>
 
-        <!-- 2. 검정현황 (단일 화면) -->
-        <button class="nav-tab" data-tab="tab-certification" role="tab" aria-selected="false">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 11l3 3L22 4"></path>
-            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-          </svg>
-          <span>검정현황</span>
-          <span class="badge" id="badge-cert-saved-count">0</span>
-        </button>
+        <!-- 2. 검정현황 (하위메뉴: 검정등록, 검정정산) -->
+        <div class="nav-dropdown-wrap">
+          <button class="nav-tab" data-tab="tab-certification" role="tab" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 11l3 3L22 4"></path>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+            </svg>
+            <span>검정현황</span>
+            <span class="nav-sub-chip" id="chip-cert-mode">검정등록</span>
+            <span class="badge" id="badge-cert-saved-count">0</span>
+            <svg class="dropdown-arrow-icon" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+            </svg>
+          </button>
+          <div class="nav-dropdown-menu">
+            <button type="button" class="nav-dropdown-item active" data-parent-tab="tab-certification" data-line-name="검정등록">
+              <span class="line-dot line-detector"></span>
+              검정등록
+            </button>
+            <button type="button" class="nav-dropdown-item" data-parent-tab="tab-cert-settlement" data-line-name="검정정산">
+              <span class="line-dot line-workhours"></span>
+              검정정산
+            </button>
+          </div>
+        </div>
 
         <!-- 3. 일정계획 (단일 화면 - 내부 반별 분리 표시) -->
         <button class="nav-tab active" data-tab="tab-inspection" role="tab" aria-selected="true">
@@ -203,6 +219,7 @@
           <span class="user-name-text" id="header-user-name">로그인 대기</span>
           <span class="auth-header-alert" id="header-auth-alert" style="display:none;" title="가입 승인 / 비밀번호 초기화 요청">0</span>
         </button>
+        <span class="header-session-timer" id="header-session-timer" style="display:none;" title="남은 로그인 시간 (작업 중 만료 시 1시간 자동 연장 · 클릭 시 1시간 연장)"></span>
         <button type="button" class="header-logout-btn" id="btn-header-logout" style="display:none;" title="로그아웃" aria-label="로그아웃">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
@@ -294,11 +311,33 @@
               <!-- 표시 옵션 드롭다운 -->
               <div class="plan-dropdown-wrap" id="plan-opt-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-plan-options">표시옵션 ▾</button>
-                <div class="plan-dropdown-menu" id="plan-opt-dropdown-menu">
-                  <label class="plan-opt-item">
+                <div class="plan-dropdown-menu" id="plan-opt-dropdown-menu" style="min-width: 245px;">
+                  <label class="plan-opt-item" style="font-weight:700; border-bottom:1px solid var(--border-light); padding-bottom:6px; margin-bottom:4px;">
                     <input type="checkbox" id="chk-plan-hide-spec">
-                    <span>고정열 숨김 (형식/모델/단가/기초)</span>
+                    <span>고정열 전체 숨김 (형식/모델/단가/기초/최소·최대)</span>
                   </label>
+                  <div style="padding-left: 10px; display:flex; flex-direction:column; gap:2px; border-bottom:1px solid var(--border-light); padding-bottom:6px; margin-bottom:4px;">
+                    <label class="plan-opt-item">
+                      <input type="checkbox" id="chk-plan-hide-format">
+                      <span>형식번호 숨김</span>
+                    </label>
+                    <label class="plan-opt-item">
+                      <input type="checkbox" id="chk-plan-hide-model">
+                      <span>모델명 숨김</span>
+                    </label>
+                    <label class="plan-opt-item">
+                      <input type="checkbox" id="chk-plan-hide-price">
+                      <span>단가 숨김</span>
+                    </label>
+                    <label class="plan-opt-item">
+                      <input type="checkbox" id="chk-plan-hide-base">
+                      <span>기초재고 숨김</span>
+                    </label>
+                    <label class="plan-opt-item">
+                      <input type="checkbox" id="chk-plan-hide-minmax">
+                      <span>최소/최대재고 숨김</span>
+                    </label>
+                  </div>
                   <label class="plan-opt-item">
                     <input type="checkbox" id="chk-plan-hide-compare">
                     <span>입고비교 / 차이수량 숨김</span>
@@ -326,6 +365,10 @@
                     <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                     기간별재고 업로드 (W00.xls)
                   </button>
+                  <button type="button" class="plan-menu-btn" id="btn-plan-upload-stock-limits">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    기초·최소·최대재고 업로드 (.xls/.xlsx)
+                  </button>
                   <div class="plan-menu-divider"></div>
                   <button type="button" class="plan-menu-btn" id="btn-plan-add-week">
                     <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -339,6 +382,7 @@
               </div>
               <input type="file" id="input-plan-forecast-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
               <input type="file" id="input-plan-weekly-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
+              <input type="file" id="input-plan-stock-limits-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
 
               <button type="button" class="btn btn-sm btn-primary" id="btn-plan-save" title="생산계획 저장 (DB 및 로컬)">
                 저장
@@ -359,8 +403,6 @@
             </div>
 
             <div class="plan-hint-right">
-              <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-undo" title="실행 취소 (Ctrl+Z)" disabled>↩ 되돌리기</button>
-              <span class="plan-shortcut-tip" title="• 셀 클릭 후 바로 키보드 입력 (F2/더블클릭 수정)&#10;• Tab: 생산 셀만 오른쪽 이동 / Enter: 아래 이동&#10;• 드래그 또는 Shift+방향키: 범위 선택 후 Ctrl+C / Ctrl+V&#10;• Alt + 드래그: 같은 행 내 주차 이동&#10;• 우클릭: 5색 팔레트 & 메모지&#10;• Ctrl+Z: 실행 취소">? 단축키</span>
               <div class="plan-hint-status" id="plan-selection-info">선택: -</div>
             </div>
           </div>
@@ -421,14 +463,25 @@
                 <h2 class="plan-title">수신기계획</h2>
                 <span class="rp-summary-chip is-urgent" id="rp-summary-urgent" style="display:none;">납기임박 0건</span>
               </div>
+              <div class="rp-inline-filters" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <select id="rp-filter-week" class="form-select form-select-sm" title="생산주차 필터">
+                  <option value="ALL">전체 생산주차</option>
+                </select>
+                <select id="rp-filter-item" class="form-select form-select-sm" title="품명(모델) 필터">
+                  <option value="ALL">전체 품명</option>
+                </select>
+                <select id="rp-filter-builder" class="form-select form-select-sm" title="건설사 필터">
+                  <option value="ALL">전체 건설사</option>
+                </select>
+                <select id="rp-filter-client" class="form-select form-select-sm" title="거래선 필터">
+                  <option value="ALL">전체 거래선</option>
+                </select>
+                <button type="button" class="btn btn-xs btn-outline" id="btn-rp-reset-filters" title="모든 검색·필터 조건 초기화">필터 초기화</button>
+                <input type="text" id="rp-search-site" class="form-input form-input-sm" placeholder="현장명 부분 검색..." style="width: 155px;" title="현장명에 포함된 단어 일부만 입력해도 검색됩니다">
+              </div>
             </div>
 
             <div class="plan-toolbar-right" style="flex-wrap: wrap; gap: 6px;">
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-add-row">+ 행 추가</button>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-clone-row" title="체크한 행 복제">행 복제</button>
-              <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-rp-delete-rows">선택 삭제</button>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-bulk-edit" title="체크한 행의 생산주차/수검일자 일괄 변경">일괄 편집</button>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-recommend-lot" title="형식번호 기준 로트번호·제조번호 자동 추천">로트/제조번호 추천</button>
 
               <div class="plan-dropdown-wrap" id="rp-file-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-rp-file-menu">엑셀 입출력 ▾</button>
@@ -445,6 +498,10 @@
                 <input type="file" id="input-rp-upload-excel" accept=".xlsx,.xls,.csv" style="display:none;">
               </div>
 
+              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-print-label" title="체크한 행의 명판(A4 흑백)을 순서대로 인쇄">
+                명판 인쇄
+              </button>
+
               <button type="button" class="btn btn-sm btn-primary" id="btn-rp-send-cert" title="체크한 행을 검정현황 등록 내역(표 2)에 등록완료 상태로 검정등록">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
                 검정등록
@@ -460,30 +517,22 @@
                 <span class="plan-legend-title">검정상태:</span>
                 <button type="button" class="plan-legend-chip active" data-rp-status="ALL">전체 <span class="plan-filter-count-badge" id="rp-count-all">0</span></button>
                 <button type="button" class="plan-legend-chip" data-rp-status="미신청"><span class="plan-dot dot-pink"></span>미신청 <span class="plan-filter-count-badge is-pending" id="rp-count-pending">0</span></button>
-                <button type="button" class="plan-legend-chip" data-rp-status="신청완료"><span class="plan-dot dot-green"></span>등록완료·신청</button>
+                <button type="button" class="plan-legend-chip" data-rp-status="등록완료"><span class="cal-status-dot st-reg"></span>검정등록</button>
+                <button type="button" class="plan-legend-chip" data-rp-status="검정신청"><span class="cal-status-dot st-apply"></span>검정신청</button>
+                <button type="button" class="plan-legend-chip" data-rp-status="품검요청"><span class="cal-status-dot st-qual"></span>품검요청</button>
+                <button type="button" class="plan-legend-chip" data-rp-status="일정완료"><span class="cal-status-dot st-done"></span>일정완료</button>
               </div>
 
-              <div class="rp-inline-filters" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                <input type="text" id="rp-search-site" class="form-input form-input-sm" placeholder="현장명 부분 검색..." style="width: 155px;" title="현장명에 포함된 단어 일부만 입력해도 검색됩니다">
-                <select id="rp-filter-week" class="form-select form-select-sm" title="생산주차 필터">
-                  <option value="ALL">전체 생산주차</option>
-                </select>
-                <select id="rp-filter-item" class="form-select form-select-sm" title="품명(모델) 필터">
-                  <option value="ALL">전체 품명</option>
-                </select>
-                <select id="rp-filter-builder" class="form-select form-select-sm" title="건설사 필터">
-                  <option value="ALL">전체 건설사</option>
-                </select>
-                <select id="rp-filter-client" class="form-select form-select-sm" title="거래선 필터">
-                  <option value="ALL">전체 거래선</option>
-                </select>
-                <button type="button" class="btn btn-xs btn-outline" id="btn-rp-reset-filters" title="모든 검색·필터 조건 초기화">필터 초기화</button>
+              <div class="rp-inline-actions" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-rp-add-row">+ 행 추가</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-rp-clone-row" title="체크한 행 복제">행 복제</button>
+                <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-rp-delete-rows">선택 삭제</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-rp-bulk-edit" title="체크한 행의 생산주차/수검일자 일괄 변경">일괄 편집</button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-rp-recommend-lot" title="형식번호 기준 로트번호·제조번호 자동 추천">로트/제조번호 추천</button>
               </div>
             </div>
 
             <div class="plan-hint-right">
-              <button type="button" class="btn btn-xs btn-ghost" id="btn-rp-undo" title="실행 취소 (Ctrl+Z)" disabled>↩ 되돌리기</button>
-              <span class="plan-shortcut-tip" title="• 날짜 단축 입력: 6-1 → 2026-06-01, 27-1-3 → 2027-01-03&#10;• 품목코드 입력 시 품목정보 마스터 자동완성 및 형식번호/품명 자동 채움&#10;• Enter / Tab / 방향키로 셀 이동, 앞뒤 공백 자동 제거&#10;• Ctrl+Z: 실행 취소">? 입력 팁</span>
               <div class="plan-hint-status" id="rp-selection-info">선택: 0건</div>
             </div>
           </div>
@@ -496,12 +545,11 @@
                   <tr class="plan-header-row-1">
                     <th class="rp-fixed-col rp-col-chk" style="left: 0px;"><input type="checkbox" id="chk-rp-all" title="현재 필터 목록 전체 선택"></th>
                     <th class="rp-fixed-col rp-col-no" style="left: 36px;">NO</th>
-                    <th class="rp-fixed-col rp-col-status" style="left: 78px;">검정상태</th>
-                    <th class="rp-fixed-col rp-col-req" style="left: 164px;">제작의뢰번호</th>
-                    <th class="rp-fixed-col rp-col-code" style="left: 294px;">품목코드</th>
-                    <th class="rp-fixed-col rp-col-fmt" style="left: 404px;">형식번호</th>
-                    <th class="rp-fixed-col rp-col-name" style="left: 489px;">품명</th>
-                    <th class="rp-fixed-col rp-col-site" style="left: 619px;">현장명</th>
+                    <th class="rp-fixed-col rp-col-req" style="left: 78px;">제작의뢰번호</th>
+                    <th class="rp-fixed-col rp-col-code" style="left: 208px;">품목코드</th>
+                    <th class="rp-fixed-col rp-col-fmt" style="left: 318px;">형식번호</th>
+                    <th class="rp-fixed-col rp-col-name" style="left: 403px;">품명</th>
+                    <th class="rp-fixed-col rp-col-site" style="left: 533px;">현장명</th>
                     <th class="rp-col-builder">건설사</th>
                     <th class="rp-col-client">거래선</th>
                     <th class="rp-col-manager">담당자</th>
@@ -1102,25 +1150,27 @@
                   <h3 class="section-title">검정 등록 내역</h3>
                   <button type="button" class="btn btn-xs btn-outline" id="btn-cert-saved-expand" title="검정 등록 내역 크게 보기 (상단 1행만 표시)">펼침</button>
 
-                  <!-- 조회 필터 (작업반 / 조회기준 / 존재하는 날짜만 드롭다운) -->
-                  <div class="cert-saved-filter-bar" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; margin-left: 6px;">
+                  <!-- 조회 필터 (작업반 / 상태 / 생산주차 / 검색 / 초기화) -->
+                  <div class="cert-saved-filter-bar" style="display:inline-flex; align-items:center; gap:5px; flex-wrap:wrap; margin-left: 4px;">
                     <select id="cert-filter-line" class="form-select form-select-sm font-bold" title="작업반 필터">
-                      <option value="ALL" selected>전체 작업반</option>
+                      <option value="ALL" selected>작업반</option>
                       <option value="감지기반">감지기반</option>
                       <option value="유도등반">유도등반</option>
                       <option value="수신기반">수신기반</option>
                     </select>
-                    <select id="cert-filter-type" class="form-select form-select-sm font-bold" title="조회 기준">
-                      <option value="writeDate" selected>작성일자</option>
-                      <option value="inspectDate">수검일자</option>
-                      <option value="weekDate">생산주차</option>
+                    <select id="cert-filter-status" class="form-select form-select-sm font-bold" title="진행 상태 필터">
+                      <option value="ALL" selected>상태</option>
+                      <option value="등록완료">검정등록</option>
+                      <option value="검정신청">검정신청</option>
+                      <option value="품검요청">품검요청</option>
+                      <option value="일정완료">일정완료</option>
+                      <option value="부적합">부적합</option>
                     </select>
-                    <select id="cert-filter-date" class="form-select form-select-sm font-bold text-primary" title="등록된 내역이 있는 날짜만 표시" style="min-width: 135px;">
-                      <option value="">전체 일자</option>
+                    <select id="cert-filter-week" class="form-select form-select-sm font-bold text-primary" title="등록된 생산주차 필터" style="min-width: 130px;">
+                      <option value="ALL" selected>생산주차</option>
                     </select>
-                    <span class="cert-filter-status-pill" id="cert-filter-status-pill">
-                      <span>전체 내역</span>
-                    </span>
+                    <input type="text" id="cert-filter-search" class="form-input form-input-sm" placeholder="검색..." style="width: 125px;" title="품목코드, 품명, 규격, 형식번호, 현장명, 로트번호, 합격표시번호 검색">
+                    <button type="button" class="btn btn-xs btn-outline" id="btn-cert-filter-reset" title="모든 필터 초기화">초기화</button>
                   </div>
                 </div>
                 <div class="section-actions-wrap" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -1256,7 +1306,231 @@
       </section>
 
       <!-- ============================================ -->
-      <!-- 탭 5: [근태관리] (구글 캘린더 스타일 월간 근태 & 휴무 관리) -->
+      <!-- 탭 2-2: [검정정산] (수수료 명세서 / 명세서 집계표 / 사용 정산서 / 월별 요약) -->
+      <!-- ============================================ -->
+      <section id="tab-cert-settlement" class="tab-pane" role="tabpanel">
+        <div class="plan-container" style="gap: 12px;">
+          <!-- 상단 툴바 -->
+          <div class="plan-toolbar card">
+            <div class="plan-toolbar-left" style="flex-wrap: wrap; gap: 8px;">
+              <div class="plan-title-group">
+                <h2 class="plan-title">검정정산</h2>
+                <span class="rp-summary-chip" id="cs-match-summary" title="검정현황 등록 내역 중 KFI 검사신청목록 백데이터와 매칭된 건수">KFI 연동: 0 / 0건</span>
+              </div>
+              <select id="cs-filter-year" class="form-select form-select-sm font-bold" title="정산 연도">
+                <option value="2026">2026년</option>
+              </select>
+              <div class="plan-dropdown-wrap" id="cs-apply-type-dropdown-wrap">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-cs-apply-type-menu" style="min-width: 145px; display:inline-flex; justify-content:space-between; align-items:center; gap:6px;">
+                  <span id="cs-apply-type-btn-label">신청구분 전체</span>
+                  <span>▾</span>
+                </button>
+                <div class="plan-dropdown-menu" id="cs-apply-type-dropdown-menu" style="min-width: 215px; padding: 6px;">
+                  <label class="plan-opt-item" style="font-weight: 700; border-bottom: 1px solid var(--border-light); padding-bottom: 6px; margin-bottom: 4px;">
+                    <input type="checkbox" id="chk-cs-apply-all" checked>
+                    <span>전체 선택</span>
+                  </label>
+                  <label class="plan-opt-item">
+                    <input type="checkbox" class="chk-cs-apply-type" value="품질제품검사(형식)Ⅲ">
+                    <span>품질제품검사(형식)Ⅲ</span>
+                  </label>
+                  <label class="plan-opt-item">
+                    <input type="checkbox" class="chk-cs-apply-type" value="품질제품검사(형식)Ⅱ">
+                    <span>품질제품검사(형식)Ⅱ</span>
+                  </label>
+                  <label class="plan-opt-item">
+                    <input type="checkbox" class="chk-cs-apply-type" value="생산제품검사(형식)">
+                    <span>생산제품검사(형식)</span>
+                  </label>
+                  <label class="plan-opt-item">
+                    <input type="checkbox" class="chk-cs-apply-type" value="생산제품검사(성능)">
+                    <span>생산제품검사(성능)</span>
+                  </label>
+                </div>
+              </div>
+              <select id="cs-filter-receipt-date" class="form-select form-select-sm font-bold text-primary" title="접수일자 필터 (수수료 명세서 기준)" style="min-width: 145px;">
+                <option value="ALL">접수일자 전체</option>
+              </select>
+            </div>
+
+            <div class="plan-toolbar-right" style="flex-wrap: wrap; gap: 8px;">
+              <div class="plan-view-segmented" id="cs-view-tabs" role="group" aria-label="정산 시트 보기">
+                <button type="button" class="plan-seg-btn active" data-cs-view="spec">수수료 명세서</button>
+                <button type="button" class="plan-seg-btn" data-cs-view="summary">명세서 집계표</button>
+                <button type="button" class="plan-seg-btn" data-cs-view="ledger">사용 정산서</button>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline" id="btn-cs-upload-kfi" title="KFI 검사신청목록(.xlsx/.csv) 업로드하여 백데이터 갱신">
+                KFI 목록 업로드
+              </button>
+              <input type="file" id="input-kfi-excel-upload" accept=".xlsx, .xls, .csv" style="display:none">
+              <div class="plan-dropdown-wrap" id="cs-export-dropdown-wrap">
+                <button type="button" class="btn btn-sm btn-save-success" id="btn-cs-export-menu" title="통합 또는 시트별 개별 엑셀(.xls) 다운로드">
+                  엑셀 다운로드 ▾
+                </button>
+                <div class="plan-dropdown-menu" id="cs-export-dropdown-menu" style="min-width: 190px;">
+                  <button type="button" class="plan-menu-btn" id="btn-cs-export-all" style="font-weight: 700;">
+                    통합 다운로드 (4개 시트)
+                  </button>
+                  <div class="plan-menu-divider"></div>
+                  <button type="button" class="plan-menu-btn" id="btn-cs-export-spec">수수료 명세서만 받기</button>
+                  <button type="button" class="plan-menu-btn" id="btn-cs-export-summary">명세서 집계표만 받기</button>
+                  <button type="button" class="plan-menu-btn" id="btn-cs-export-ledger">사용 정산서만 받기</button>
+                  <button type="button" class="plan-menu-btn" id="btn-cs-export-monthly">월별 정산 요약만 받기</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 1. 수수료 명세서 -->
+          <div class="table-section-card cs-view-panel" id="cs-view-spec">
+            <div class="table-section-header header-assembly" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div class="section-title-wrap">
+                <span class="section-indicator bar-assembly"></span>
+                <h3 class="section-title">수 수 료 명 세 서</h3>
+                <span class="summary-pill" id="cs-spec-type-label">신청구분: 전체</span>
+                <span class="summary-pill" id="cs-spec-receipt-label">접수일자: 전체</span>
+              </div>
+              <div class="section-summary-pills">
+                <span class="summary-pill">건수: <strong id="cs-spec-count">0건</strong></span>
+                <span class="summary-pill">신청수량: <strong id="cs-spec-qty">0</strong></span>
+                <span class="summary-pill">공급가 계: <strong id="cs-spec-supply">0</strong></span>
+                <span class="summary-pill">부가가치세: <strong id="cs-spec-vat">0</strong></span>
+                <span class="summary-pill pill-primary">합 계: <strong id="cs-spec-total">0</strong></span>
+              </div>
+            </div>
+            <div class="table-container" style="max-height: calc(100vh - 300px); overflow: auto;">
+              <table class="grid-table">
+                <thead>
+                  <tr class="header-row-primary">
+                    <th style="width: 50px; text-align: center;">No</th>
+                    <th style="width: 190px;">종 별</th>
+                    <th style="width: 110px; text-align: center;">형식번호</th>
+                    <th style="width: 100px; text-align: right;">신청수량</th>
+                    <th style="width: 110px; text-align: right;">단 가</th>
+                    <th style="width: 130px; text-align: right;">금 액</th>
+                    <th style="width: 120px; text-align: center;">비 고 (수검일)</th>
+                    <th style="width: 110px; text-align: center;">제조번호</th>
+                  </tr>
+                </thead>
+                <tbody id="cs-spec-tbody"></tbody>
+              </table>
+            </div>
+            <div id="cs-spec-note" style="padding: 10px 14px; font-size: 12.5px; color: var(--text-sub); border-top: 1px solid var(--border-light); background: var(--bg-subtle);">
+              ※ 적요: -
+            </div>
+          </div>
+
+          <!-- 2. 명세서 집계표 -->
+          <div class="table-section-card cs-view-panel" id="cs-view-summary" style="display: none;">
+            <div class="table-section-header header-assembly" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div class="section-title-wrap">
+                <span class="section-indicator bar-assembly"></span>
+                <h3 class="section-title">명세서 집계표</h3>
+              </div>
+              <div class="section-summary-pills">
+                <span class="summary-pill">총 건수: <strong id="cs-sum-count">0건</strong></span>
+                <span class="summary-pill pill-primary">총 수수료: <strong id="cs-sum-fee">0</strong></span>
+              </div>
+            </div>
+            <div class="table-container" style="max-height: calc(100vh - 260px); overflow: auto;">
+              <table class="grid-table">
+                <thead id="cs-summary-thead">
+                  <tr class="header-row-primary">
+                    <th rowspan="2" style="width: 115px; text-align: center;">신청일자</th>
+                    <th colspan="2" style="text-align: center;">품질제품검사(형식)Ⅲ</th>
+                    <th colspan="2" style="text-align: center;">품질제품검사(형식)Ⅱ</th>
+                    <th colspan="2" style="text-align: center;">생산제품검사(형식)</th>
+                    <th colspan="2" style="text-align: center;">생산제품검사(성능)</th>
+                  </tr>
+                  <tr class="header-row-secondary">
+                    <th>건수</th>
+                    <th>수수료 합계</th>
+                    <th>건수</th>
+                    <th>수수료 합계</th>
+                    <th>건수</th>
+                    <th>수수료 합계</th>
+                    <th>건수</th>
+                    <th>수수료 합계</th>
+                  </tr>
+                </thead>
+                <tbody id="cs-summary-tbody"></tbody>
+                <tfoot id="cs-summary-tfoot"></tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- 3. 사용 정산서 (1번 그리드: 월별 정산 요약 + 2번 그리드: 건별 내역) -->
+          <div class="cs-view-panel" id="cs-view-ledger" style="display: none; flex-direction: column; gap: 12px;">
+            <!-- 1번 그리드: 월별 정산 요약 -->
+            <div class="table-section-card">
+              <div class="table-section-header header-assembly" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div class="section-title-wrap">
+                  <span class="section-indicator bar-assembly"></span>
+                  <h3 class="section-title">1. 월별 정산 요약</h3>
+                </div>
+              </div>
+              <div class="table-container" style="overflow: auto;">
+                <table class="grid-table">
+                  <thead>
+                    <tr class="header-row-primary">
+                      <th style="width: 50px;">순번</th>
+                      <th style="width: 130px;" id="cs-monthly-year-th">2026</th>
+                      <th style="width: 110px;">계</th>
+                      <th>1월</th>
+                      <th>2월</th>
+                      <th>3월</th>
+                      <th>4월</th>
+                      <th>5월</th>
+                      <th>6월</th>
+                      <th>7월</th>
+                      <th>8월</th>
+                      <th>9월</th>
+                      <th>10월</th>
+                      <th>11월</th>
+                      <th>12월</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cs-monthly-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 2번 그리드: 사용 정산서 (건별 내역) -->
+            <div class="table-section-card">
+              <div class="table-section-header header-assembly" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div class="section-title-wrap">
+                  <span class="section-indicator bar-assembly"></span>
+                  <h3 class="section-title">2. 사용 정산서 (건별 내역)</h3>
+                </div>
+                <div class="section-summary-pills">
+                  <span class="summary-pill">건수: <strong id="cs-led-count">0건</strong></span>
+                  <span class="summary-pill">공급가: <strong id="cs-led-supply">0</strong></span>
+                  <span class="summary-pill">부가세: <strong id="cs-led-vat">0</strong></span>
+                  <span class="summary-pill pill-primary">금액 합계: <strong id="cs-led-total">0</strong></span>
+                </div>
+              </div>
+              <div class="table-container" style="max-height: calc(100vh - 420px); min-height: 220px; overflow: auto;">
+                <table class="grid-table">
+                  <thead>
+                    <tr class="header-row-primary">
+                      <th style="width: 55px;">순번</th>
+                      <th style="width: 120px;">품번</th>
+                      <th style="width: 110px;">지출일자</th>
+                      <th style="width: 220px;">품명</th>
+                      <th style="width: 90px;">검정수량</th>
+                      <th style="width: 100px;">검정단가</th>
+                      <th style="width: 115px;">공급가</th>
+                      <th style="width: 105px;">부가세</th>
+                      <th style="width: 120px;">금액</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cs-ledger-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- ============================================ -->
       <section id="tab-attendance" class="tab-pane" role="tabpanel">
         <div class="att-view-layout">
@@ -1296,7 +1570,7 @@
                 <span class="att-tip-text">날짜 클릭·드래그로 등록 / 일정 드래그로 이동</span>
                 <button type="button" class="btn btn-sm btn-primary" id="btn-att-new-event">+ 근태 등록</button>
                 <button type="button" class="btn btn-sm btn-save-primary" id="btn-att-save-db" title="근태 데이터를 DB에 저장">저장</button>
-                <button type="button" class="btn btn-sm btn-outline" id="btn-att-goto-settings" title="설정 화면에서 근태유형 및 색상 관리">
+                <button type="button" class="btn btn-sm btn-outline" id="btn-att-goto-settings" title="근태유형 및 색상 관리">
                   <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                   근태유형 수정
                 </button>
@@ -1467,6 +1741,49 @@
             </form>
           </div>
         </div>
+
+        <!-- 근태유형 및 색상 관리 팝업 모달 -->
+        <div class="att-modal-overlay" id="att-type-settings-modal-overlay" aria-hidden="true">
+          <div class="att-modal-box" role="dialog" aria-modal="true" aria-labelledby="att-type-modal-title" style="max-width: 680px;">
+            <div class="att-modal-head">
+              <h3 id="att-type-modal-title">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; margin-right:4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                근태유형 및 색상 관리
+              </h3>
+              <button type="button" class="btn-close-modal" id="btn-close-att-type-modal">×</button>
+            </div>
+            <div class="att-modal-body" style="max-height: 70vh; overflow-y: auto;">
+              <p style="font-size: 12.5px; color: var(--text-muted); margin: 0 0 12px 0;">근태관리 캘린더에 표시할 근태유형(연차, 반차, 외근 등)과 색상을 추가/수정합니다.</p>
+              <form id="form-add-att-type" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:var(--bg-subtle); border-radius:10px; border:1px solid var(--border-light);">
+                <div style="flex:1; min-width:160px;">
+                  <label for="att-type-new-name" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">유형명 *</label>
+                  <input type="text" id="att-type-new-name" class="form-input form-input-sm" placeholder="예: 공가, 병가, 출장" required>
+                </div>
+                <div>
+                  <label for="att-type-new-color" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">표시 색상</label>
+                  <input type="color" id="att-type-new-color" value="#0ea5e9" style="width:48px; height:32px; padding:2px; border:1px solid var(--border-light); border-radius:6px; background:var(--bg-card); cursor:pointer;">
+                </div>
+                <button type="submit" class="btn btn-sm btn-primary">+ 유형 추가</button>
+              </form>
+
+              <table class="master-table" style="width:100%;">
+                <thead>
+                  <tr>
+                    <th style="width:50px; text-align:center;">No</th>
+                    <th>근태유형명</th>
+                    <th style="width:110px; text-align:center;">색상</th>
+                    <th style="width:130px; text-align:center;">사용일수 기준</th>
+                    <th style="width:90px; text-align:center;">관리</th>
+                  </tr>
+                </thead>
+                <tbody id="master-att-types-tbody"></tbody>
+              </table>
+            </div>
+            <div class="att-modal-footer" style="justify-content: flex-end;">
+              <button type="button" class="btn btn-sm btn-outline" id="btn-close-att-type-modal-footer">닫기</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ============================================ -->
@@ -1591,14 +1908,6 @@
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-depts">
               <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"></path></svg>
               <span>요청부서 관리</span>
-            </button>
-            <button type="button" class="settings-nav-btn" data-pane="settings-pane-kfi">
-              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-              <span>KFI 합격번호 데이터</span>
-            </button>
-            <button type="button" class="settings-nav-btn" data-pane="settings-pane-attendance">
-              <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              <span>근태유형 설정</span>
             </button>
             <button type="button" class="settings-nav-btn" data-pane="settings-pane-reports">
               <svg class="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -1823,80 +2132,6 @@
                       <tbody id="master-departments-tbody"></tbody>
                     </table>
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 4. KFI 합격번호 데이터 패널 -->
-            <div class="settings-sub-pane" id="settings-pane-kfi">
-              <div class="settings-card" id="settings-card-kfi-upload" style="max-width: 720px;">
-                <div class="settings-card-header">
-                  <div class="card-title-wrap">
-                    <div class="card-icon-box purple" style="background-color: #f3e8ff; color: #9333ea;">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    </div>
-                    <div>
-                      <h3 class="card-title">KFI 정보 엑셀 업로드 (합격표시번호 연동)</h3>
-                      <p class="card-subtitle">KFI 검정 결과 엑셀의 P열 '합격표시번호'를 추출하여 자동 매핑합니다.</p>
-                    </div>
-                  </div>
-                  <span class="count-badge" id="count-kfi-records-badge">0건 연동됨</span>
-                </div>
-                <div class="settings-card-body">
-                  <div class="kfi-upload-dropzone" id="kfi-upload-dropzone" style="border: 2px dashed var(--border-light); border-radius: 12px; padding: 32px 20px; text-align: center; background: var(--bg-subtle); cursor: pointer;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" style="width: 40px; height: 40px; margin: 0 auto 10px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    <p style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">KFI 엑셀/CSV 파일을 이곳으로 드래그하거나 클릭하여 선택하세요</p>
-                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">지원 형식: .xlsx, .xls, .csv</p>
-                    <label for="input-kfi-excel-upload" class="btn btn-sm btn-outline" style="cursor: pointer; display: inline-flex;">파일 찾아보기</label>
-                    <input type="file" id="input-kfi-excel-upload" accept=".xlsx, .xls, .csv" style="display:none">
-                  </div>
-                  <div id="kfi-upload-summary-box" style="margin-top: 12px; padding: 10px 14px; background: var(--success-light); border: 1px solid var(--success); border-radius: 8px; font-size: 13px; color: var(--success); display: none;">
-                    <strong>✓ KFI 데이터가 정상 로드되었습니다:</strong> 총 <span id="kfi-summary-count">0</span>건
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 5. 근태유형 설정 패널 -->
-            <div class="settings-sub-pane" id="settings-pane-attendance">
-              <div class="settings-card" style="max-width: 760px;">
-                <div class="settings-card-header">
-                  <div class="card-title-wrap">
-                    <div class="card-icon-box blue" style="background-color: #dbeafe; color: #2563eb;">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                    </div>
-                    <div>
-                      <h3 class="card-title">근태유형 및 색상 관리</h3>
-                      <p class="card-subtitle">근태관리 캘린더에 표시할 근태유형(연차, 반차, 외근 등)과 색상을 추가/수정합니다.</p>
-                    </div>
-                  </div>
-                  <button type="button" class="btn btn-xs btn-outline" id="btn-settings-goto-attendance">← 근태관리로 이동</button>
-                </div>
-                <div class="settings-card-body">
-                  <form id="form-add-att-type" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:var(--bg-subtle); border-radius:10px; border:1px solid var(--border-light);">
-                    <div style="flex:1; min-width:160px;">
-                      <label for="att-type-new-name" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">유형명 *</label>
-                      <input type="text" id="att-type-new-name" class="form-input form-input-sm" placeholder="예: 공가, 병가, 출장" required>
-                    </div>
-                    <div>
-                      <label for="att-type-new-color" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">표시 색상</label>
-                      <input type="color" id="att-type-new-color" value="#0ea5e9" style="width:48px; height:32px; padding:2px; border:1px solid var(--border-light); border-radius:6px; background:var(--bg-card); cursor:pointer;">
-                    </div>
-                    <button type="submit" class="btn btn-sm btn-primary">+ 유형 추가</button>
-                  </form>
-
-                  <table class="master-table" style="width:100%;">
-                    <thead>
-                      <tr>
-                        <th style="width:50px; text-align:center;">No</th>
-                        <th>근태유형명</th>
-                        <th style="width:110px; text-align:center;">색상</th>
-                        <th style="width:130px; text-align:center;">사용일수 기준</th>
-                        <th style="width:90px; text-align:center;">관리</th>
-                      </tr>
-                    </thead>
-                    <tbody id="master-att-types-tbody"></tbody>
-                  </table>
                 </div>
               </div>
             </div>
@@ -2387,6 +2622,49 @@
             </form>
           </div>
         </div>
+
+        <!-- 근태유형 및 색상 관리 팝업 모달 -->
+        <div class="att-modal-overlay" id="att-type-settings-modal-overlay" aria-hidden="true">
+          <div class="att-modal-box" role="dialog" aria-modal="true" aria-labelledby="att-type-modal-title" style="max-width: 680px;">
+            <div class="att-modal-head">
+              <h3 id="att-type-modal-title">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; margin-right:4px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                근태유형 및 색상 관리
+              </h3>
+              <button type="button" class="btn-close-modal" id="btn-close-att-type-modal">×</button>
+            </div>
+            <div class="att-modal-body" style="max-height: 70vh; overflow-y: auto;">
+              <p style="font-size: 12.5px; color: var(--text-muted); margin: 0 0 12px 0;">근태관리 캘린더에 표시할 근태유형(연차, 반차, 외근 등)과 색상을 추가/수정합니다.</p>
+              <form id="form-add-att-type" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:var(--bg-subtle); border-radius:10px; border:1px solid var(--border-light);">
+                <div style="flex:1; min-width:160px;">
+                  <label for="att-type-new-name" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">유형명 *</label>
+                  <input type="text" id="att-type-new-name" class="form-input form-input-sm" placeholder="예: 공가, 병가, 출장" required>
+                </div>
+                <div>
+                  <label for="att-type-new-color" style="display:block; font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">표시 색상</label>
+                  <input type="color" id="att-type-new-color" value="#0ea5e9" style="width:48px; height:32px; padding:2px; border:1px solid var(--border-light); border-radius:6px; background:var(--bg-card); cursor:pointer;">
+                </div>
+                <button type="submit" class="btn btn-sm btn-primary">+ 유형 추가</button>
+              </form>
+
+              <table class="master-table" style="width:100%;">
+                <thead>
+                  <tr>
+                    <th style="width:50px; text-align:center;">No</th>
+                    <th>근태유형명</th>
+                    <th style="width:110px; text-align:center;">색상</th>
+                    <th style="width:130px; text-align:center;">사용일수 기준</th>
+                    <th style="width:90px; text-align:center;">관리</th>
+                  </tr>
+                </thead>
+                <tbody id="master-att-types-tbody"></tbody>
+              </table>
+            </div>
+            <div class="att-modal-footer" style="justify-content: flex-end;">
+              <button type="button" class="btn btn-sm btn-outline" id="btn-close-att-type-modal-footer">닫기</button>
+            </div>
+          </div>
+        </div>
       </section>
 
     </main>
@@ -2763,6 +3041,8 @@
   <!-- Firebase App 및 Cloud Firestore SDK (Compat v10) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="app.js?v=7.6"></script>
+  <script src="app.js?v=9.5"></script>
+  <!-- 수신기계획 명판 인쇄 전용 컨테이너 -->
+  <div id="rp-label-print-area" aria-hidden="true"></div>
 </body>
 </html>

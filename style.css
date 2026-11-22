@@ -3168,13 +3168,25 @@ tr.row-status-failed td {
 .plan-col-model { left: 410px; width: 95px; min-width: 95px; max-width: 95px; overflow: hidden; text-overflow: ellipsis; color: #334155; font-size: 11.5px; }
 .plan-col-price { left: 505px; width: 80px; min-width: 80px; max-width: 80px; text-align: right; color: #475569; font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px; }
 .plan-col-base {
-  left: 585px;
   width: 85px;
   min-width: 85px;
   max-width: 85px;
   text-align: right;
+  color: #475569;
   font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-weight: 600;
+  font-weight: 400;
+}
+.plan-col-minstock,
+.plan-col-maxstock {
+  width: 78px;
+  min-width: 78px;
+  max-width: 78px;
+  text-align: right;
+  color: #475569;
+  font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+}
+.plan-excel-table .plan-fixed-last {
   border-right: 2px solid #94a3b8 !important;
   box-shadow: 2px 0 6px rgba(15, 23, 42, 0.06);
 }
@@ -7266,6 +7278,19 @@ html.dark-mode .ui-custom-select-action:hover {
 /* ==========================================================================
    12. 수신기계획 (.rp-*) & 품목정보 신청유형 배지 (라이트/다크 동시 지원)
    ========================================================================== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .badge-apply-auto {
   background-color: var(--primary-light);
   color: var(--primary);
@@ -7334,8 +7359,24 @@ html.dark-mode .rp-summary-chip.is-urgent {
 
 .rp-excel-table th,
 .rp-excel-table td {
-  padding: 0 4px;
+  padding: 0 7px;
   height: 30px;
+  font-size: 12px;
+}
+
+.rp-excel-table tbody td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-excel-table tbody td.is-mono {
+  font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11.5px;
+}
+
+.rp-excel-table tbody td.rp-col-chk {
+  padding: 0 4px;
+  cursor: default;
 }
 
 .rp-excel-table thead tr.plan-header-row-1 th {
@@ -7355,6 +7396,10 @@ html.dark-mode .rp-summary-chip.is-urgent {
   background-color: var(--th-bg) !important;
 }
 
+.rp-excel-table tbody td.rp-fixed-col.plan-cell-active {
+  z-index: 15 !important;
+}
+
 .rp-col-chk { width: 36px; min-width: 36px; max-width: 36px; text-align: center; }
 .rp-col-no { width: 42px; min-width: 42px; max-width: 42px; text-align: center; color: var(--text-muted); font-weight: 600; }
 .rp-col-req { width: 130px; min-width: 130px; max-width: 130px; }
@@ -7362,46 +7407,50 @@ html.dark-mode .rp-summary-chip.is-urgent {
 .rp-col-fmt { width: 85px; min-width: 85px; max-width: 85px; }
 .rp-col-name { width: 130px; min-width: 130px; max-width: 130px; }
 .rp-col-site { width: 220px; min-width: 220px; max-width: 220px; box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06); }
-.rp-col-status { width: 86px; min-width: 86px; text-align: center; }
-.rp-col-builder { width: 115px; min-width: 115px; }
-.rp-col-client { width: 95px; min-width: 95px; }
-.rp-col-manager { width: 75px; min-width: 75px; }
-.rp-col-date { width: 96px; min-width: 96px; }
-.rp-col-color { width: 120px; min-width: 120px; }
-.rp-col-remark { width: 130px; min-width: 130px; }
-.rp-col-lot { width: 82px; min-width: 82px; }
-.rp-col-ym { width: 68px; min-width: 68px; }
-.rp-col-serial { width: 92px; min-width: 92px; }
+.rp-col-builder { width: 115px; min-width: 115px; max-width: 115px; }
+.rp-col-client { width: 95px; min-width: 95px; max-width: 95px; }
+.rp-col-manager { width: 75px; min-width: 75px; max-width: 75px; }
+.rp-col-date { width: 96px; min-width: 96px; max-width: 96px; }
+.rp-col-color { width: 120px; min-width: 120px; max-width: 120px; }
+.rp-col-remark { width: 130px; min-width: 130px; max-width: 130px; }
+.rp-col-lot { width: 82px; min-width: 82px; max-width: 82px; }
+.rp-col-ym { width: 68px; min-width: 68px; max-width: 68px; }
+.rp-col-serial { width: 92px; min-width: 92px; max-width: 92px; }
 
-.rp-cell-input {
-  width: 100%;
-  height: 26px;
-  padding: 0 5px;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-main);
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.12s, background-color 0.12s;
+/* 제작의뢰번호 좌측 상단 검정상태 작은 원형 표시 */
+.rp-excel-table tbody td.rp-col-req {
+  padding-left: 12px;
 }
 
-.rp-cell-input.is-mono {
-  font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 11.5px;
+.rp-excel-table tbody td.rp-col-req::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
 }
 
-.rp-cell-input:hover {
-  border-color: var(--border-light);
-  background-color: var(--td-hover);
+.rp-excel-table tbody td.rp-col-req.rp-dot-none::before {
+  background-color: #ec4899; /* 미신청 */
 }
 
-.rp-cell-input:focus {
-  border-color: var(--border-focus);
-  background-color: var(--bg-card);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+.rp-excel-table tbody td.rp-col-req.rp-dot-reg::before {
+  background-color: #64748b; /* 검정등록 */
+}
+
+.rp-excel-table tbody td.rp-col-req.rp-dot-apply::before {
+  background-color: #f59e0b; /* 검정신청 */
+}
+
+.rp-excel-table tbody td.rp-col-req.rp-dot-qual::before {
+  background-color: #8b5cf6; /* 품검요청 */
+}
+
+.rp-excel-table tbody td.rp-col-req.rp-dot-done::before {
+  background-color: #10b981; /* 일정완료 */
 }
 
 .rp-excel-table tbody tr:hover td,
@@ -7445,73 +7494,31 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-row-completed td.rp-fixed-col {
   background-color: #102a20;
 }
 
-.rp-excel-table tbody tr.is-rp-row-locked .rp-cell-input {
-  opacity: 0.85;
-  cursor: default;
+.rp-excel-table tbody tr.is-rp-row-locked td {
+  opacity: 0.88;
 }
 
-.rp-excel-table tbody tr.is-rp-due-soon td.rp-col-date-due input {
+.rp-excel-table tbody tr.is-rp-due-soon td.rp-col-date-due {
   color: #d97706;
   font-weight: 700;
 }
 
-.rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due input {
+.rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   color: #dc2626;
   font-weight: 700;
 }
 
-html.dark-mode .rp-excel-table tbody tr.is-rp-due-soon td.rp-col-date-due input {
+html.dark-mode .rp-excel-table tbody tr.is-rp-due-soon td.rp-col-date-due {
   color: #fbbf24;
 }
 
-html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due input {
+html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   color: #f87171;
 }
 
-.rp-cell-input.is-date-error {
-  border-color: #ef4444 !important;
+.rp-excel-table tbody td.is-date-error {
+  box-shadow: inset 0 0 0 1px #ef4444;
   background-color: var(--danger-light) !important;
-}
-
-.rp-status-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.rp-status-badge.is-none {
-  background-color: var(--bg-subtle);
-  color: var(--text-muted);
-  border: 1px solid var(--border-light);
-}
-
-.rp-status-badge.is-registered {
-  background-color: #ecfdf5;
-  color: #047857;
-  border: 1px solid #a7f3d0;
-}
-
-.rp-status-badge.is-applied {
-  background-color: #eff6ff;
-  color: #1d4ed8;
-  border: 1px solid #bfdbfe;
-}
-
-html.dark-mode .rp-status-badge.is-registered {
-  background-color: #064e3b;
-  color: #a7f3d0;
-  border-color: #10b981;
-}
-
-html.dark-mode .rp-status-badge.is-applied {
-  background-color: #172554;
-  color: #93c5fd;
-  border-color: #3b82f6;
 }
 
 .rp-code-autocomplete {
@@ -7747,20 +7754,22 @@ html.dark-mode .wh-st-total-box {
   padding: 16px;
 }
 .auth-card {
+  position: relative;
   width: 410px;
   max-width: 100%;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid var(--border-light);
   border-radius: 12px;
-  padding: 24px 26px;
+  padding: 28px 26px 24px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.25);
 }
 .auth-card-header {
   text-align: center;
-  margin-bottom: 16px;
-}
-.auth-card {
-  position: relative;
+  padding-top: 8px;
+  margin-bottom: 20px;
 }
 .auth-theme-toggle {
   position: absolute;
@@ -7773,7 +7782,7 @@ html.dark-mode .wh-st-total-box {
   justify-content: center;
   height: auto;
   padding: 0;
-  margin: 0 auto 10px;
+  margin: 4px auto 14px;
   border-radius: 0;
   background: transparent;
   border: none;
@@ -9503,4 +9512,272 @@ html.dark-mode .prod-link-action-btn.is-unlink:hover:not(:disabled) {
   background: rgba(220, 38, 38, 0.22);
   border-color: #f87171;
   color: #fca5a5;
+}
+
+/* 검정정산 테이블 정렬: 헤더 가운데, 수량·금액 오른쪽 */
+#tab-cert-settlement .grid-table thead th {
+  text-align: center !important;
+}
+
+#tab-cert-settlement .grid-table td.num-cell {
+  text-align: right !important;
+}
+
+/* 수신기계획 26년 명판 출력 (A4 흑백 라벨용지) */
+#rp-label-print-area {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  body.is-printing-rp-labels {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.is-printing-rp-labels > *:not(#rp-label-print-area) {
+    display: none !important;
+  }
+
+  body.is-printing-rp-labels #rp-label-print-area {
+    display: block !important;
+    width: 100%;
+    background: #ffffff !important;
+    color: #000000 !important;
+    filter: grayscale(100%);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .rp-label-page {
+    width: 100%;
+    height: 190mm;
+    box-sizing: border-box;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .rp-label-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .rp-label-table {
+    width: 100%;
+    height: 190mm;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 2px solid #000000;
+    font-family: 'Malgun Gothic', 'Pretendard', sans-serif;
+    color: #000000;
+    background: #ffffff;
+  }
+
+  .rp-label-table td,
+  .rp-label-table th {
+    border: 1px solid #000000;
+    padding: 4px 10px;
+    vertical-align: middle;
+    text-align: center;
+    color: #000000;
+    background: #ffffff;
+    word-break: break-word;
+  }
+
+  .rp-label-table .lbl-banner {
+    font-size: 26pt;
+    font-weight: 800;
+    letter-spacing: 4px;
+    height: 18mm;
+    background: #f2f2f2 !important;
+  }
+
+  .rp-label-table .lbl-fit-box {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    overflow: hidden;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+  }
+
+  .rp-label-table .lbl-item-name {
+    font-size: 22pt;
+    font-weight: 800;
+    height: 45mm;
+  }
+
+  .rp-label-table .lbl-item-name .lbl-fit-box {
+    max-height: 41mm;
+  }
+
+  .rp-label-table .lbl-sticker {
+    border: none !important;
+    background: #ffffff !important;
+    height: 15mm;
+    padding: 2px 8px;
+    font-size: 11pt;
+    font-weight: 700;
+  }
+
+  .rp-label-table .lbl-sticker-tl { border-top: 1px solid #000000 !important; border-left: 1px solid #000000 !important; }
+  .rp-label-table .lbl-sticker-tr { border-top: 1px solid #000000 !important; border-right: 1px solid #000000 !important; }
+  .rp-label-table .lbl-sticker-ml { border-left: 1px solid #000000 !important; }
+  .rp-label-table .lbl-sticker-mr { border-right: 1px solid #000000 !important; }
+  .rp-label-table .lbl-sticker-b  { border-left: 1px solid #000000 !important; border-right: 1px solid #000000 !important; border-bottom: 1px solid #000000 !important; }
+
+  .rp-label-table .lbl-th {
+    font-size: 11pt;
+    font-weight: 700;
+    background: #f5f5f5 !important;
+  }
+
+  .rp-label-table .lbl-val {
+    font-size: 12pt;
+    font-weight: 700;
+  }
+
+  .rp-label-table .lbl-row-meta {
+    height: 12mm;
+  }
+
+  .rp-label-table .lbl-row-meta .lbl-fit-box {
+    max-height: 10mm;
+  }
+
+  .rp-label-table .lbl-row-info {
+    height: 14mm;
+  }
+
+  .rp-label-table .lbl-row-info .lbl-fit-box {
+    max-height: 12mm;
+  }
+
+  .rp-label-table .lbl-code {
+    font-size: 15pt;
+    font-weight: 800;
+    height: 12mm;
+  }
+
+  .rp-label-table .lbl-site {
+    font-size: 28pt;
+    font-weight: 800;
+    height: 83mm;
+    line-height: 1.35;
+  }
+
+  .rp-label-table .lbl-site .lbl-fit-box {
+    max-height: 77mm;
+    line-height: 1.3;
+  }
+
+  .rp-label-table .lbl-date-th {
+    font-size: 10pt;
+    font-weight: 700;
+    background: #f5f5f5 !important;
+    height: 9mm;
+  }
+
+  .rp-label-table .lbl-date-val {
+    font-size: 11pt;
+    font-weight: 600;
+    height: 9mm;
+  }
+}
+
+/* ==========================================================================
+   헤더 로그인 남은 시간 배지
+   ========================================================================== */
+.header-session-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-sub);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.header-session-timer.is-extendable {
+  cursor: pointer;
+}
+
+.header-session-timer.is-extendable:hover {
+  background: var(--bg-card);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.header-session-timer .session-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: none;
+}
+
+.header-session-timer.is-stage-2h .session-dot {
+  display: inline-block;
+  background-color: #fde047;
+  box-shadow: 0 0 0 1px rgba(202, 138, 4, 0.35);
+}
+
+.header-session-timer.is-stage-1h {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.header-session-timer.is-stage-1h .session-dot {
+  display: inline-block;
+  background-color: #fca5a5;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.3);
+}
+
+.header-session-timer.is-stage-30m {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.header-session-timer.is-stage-30m .session-dot {
+  display: inline-block;
+  background-color: #ef4444;
+  animation: sessionDotPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sessionDotPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55);
+  }
+  50% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 5px rgba(239, 68, 68, 0);
+  }
+}
+
+html.dark-mode .header-session-timer.is-stage-1h {
+  color: #fca5a5;
+  border-color: #7f1d1d;
+}
+
+html.dark-mode .header-session-timer.is-stage-30m {
+  color: #fecaca;
+  background: #450a0a;
+  border-color: #991b1b;
 }

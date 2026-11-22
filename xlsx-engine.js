@@ -611,6 +611,150 @@
     URL.revokeObjectURL(link.href);
   }
 
+  // Export multiple worksheets to a single SpreadsheetML 2003 XML workbook (.xls)
+  function exportMultiSheetWorkbook(sheets, fileName = 'export.xls') {
+    const escXml = (s) => String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    const sanitizeSheetName = (name) => String(name || 'Sheet')
+      .replace(/[\\/*?:[\]]/g, '_')
+      .slice(0, 31);
+
+    const worksheetsXml = (sheets || []).map((sh) => {
+      const colsXml = Array.isArray(sh.colWidths)
+        ? sh.colWidths.map((w) => `<Column ss:AutoFitWidth="0" ss:Width="${w}"/>`).join('')
+        : '';
+
+      const sourceRows = sh.rows || sh.aoa || [];
+      const rowsXml = sourceRows.map((rowObj) => {
+        const isRowObj = rowObj && !Array.isArray(rowObj);
+        const cells = isRowObj ? (rowObj.cells || []) : (rowObj || []);
+        const rowAttr = (isRowObj && rowObj.height) ? ` ss:Height="${rowObj.height}"` : '';
+
+        const cellsXml = cells.map((cell) => {
+          const isObj = cell !== null && typeof cell === 'object' && !Array.isArray(cell);
+          const val = isObj ? cell.v : cell;
+          const styleId = isObj ? cell.style : ((typeof val === 'number' && Number.isFinite(val)) ? 'Num' : '');
+          const attrs = [];
+          if (styleId) attrs.push(`ss:StyleID="${styleId}"`);
+          if (isObj && cell.index) attrs.push(`ss:Index="${cell.index}"`);
+          if (isObj && cell.mergeAcross) attrs.push(`ss:MergeAcross="${cell.mergeAcross}"`);
+          if (isObj && cell.mergeDown) attrs.push(`ss:MergeDown="${cell.mergeDown}"`);
+          const attrStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+          if (val === null || val === undefined || val === '') {
+            return `<Cell${attrStr}><Data ss:Type="String"></Data></Cell>`;
+          }
+          if (typeof val === 'number' && Number.isFinite(val)) {
+            return `<Cell${attrStr}><Data ss:Type="Number">${val}</Data></Cell>`;
+          }
+          return `<Cell${attrStr}><Data ss:Type="String">${escXml(val)}</Data></Cell>`;
+        }).join('');
+        return `<Row${rowAttr}>${cellsXml}</Row>`;
+      }).join('');
+
+      return `<Worksheet ss:Name="${escXml(sanitizeSheetName(sh.name))}"><Table>${colsXml}${rowsXml}</Table></Worksheet>`;
+    }).join('');
+
+    const thinBorder = (color) => `
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="${color}"/>
+      </Borders>`;
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:x="urn:schemas-microsoft-com:office:excel"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Styles>
+    <Style ss:ID="Default" ss:Name="Normal">
+      <Alignment ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+    </Style>
+    <Style ss:ID="Num">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+      <NumberFormat ss:Format="#,##0"/>
+    </Style>
+    <Style ss:ID="Title">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="14" ss:Bold="1"/>
+    </Style>
+    <Style ss:ID="SubLabel">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1"/>
+    </Style>
+    <Style ss:ID="SubVal">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1"/>
+    </Style>
+    <Style ss:ID="Th">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#0F172A"/>
+      <Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+    <Style ss:ID="CellText">
+      <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+    <Style ss:ID="CellCenter">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+    <Style ss:ID="CellNum">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+      <NumberFormat ss:Format="#,##0"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+    <Style ss:ID="CellNeg">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Color="#DC2626"/>
+      <NumberFormat ss:Format="#,##0"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+    <Style ss:ID="SumText">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#0F172A"/>
+      <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
+      ${thinBorder('#94A3B8')}
+    </Style>
+    <Style ss:ID="SumNum">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#0F172A"/>
+      <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
+      <NumberFormat ss:Format="#,##0"/>
+      ${thinBorder('#94A3B8')}
+    </Style>
+    <Style ss:ID="NoteBox">
+      <Alignment ss:Horizontal="Left" ss:Vertical="Top" ss:WrapText="1"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="9.5"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
+  </Styles>
+  ${worksheetsXml}
+</Workbook>`;
+
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
   // Export public API
   root.XLSXEngine = {
     colNameToIndex,
@@ -621,7 +765,8 @@
     parseSpreadsheetFile,
     exportToCSV,
     exportToTSV,
-    exportToExcelXML
+    exportToExcelXML,
+    exportMultiSheetWorkbook
   };
 
 })(typeof window !== 'undefined' ? window : this);
