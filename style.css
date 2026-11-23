@@ -93,7 +93,8 @@ body {
 .app-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background-color: var(--bg-app);
   padding-bottom: 48px;
   transition: max-width 0.25s ease, margin 0.25s ease;
@@ -183,7 +184,8 @@ body.view-mode-wide .app-container {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
+  min-width: 72px;
   padding: 4px 11px;
   font-size: 11.5px;
   font-weight: 700;
@@ -191,6 +193,20 @@ body.view-mode-wide .app-container {
   user-select: none;
   white-space: nowrap;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.status-dot-left {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: currentColor;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.global-dirty-status-pill.is-dirty .status-dot-left,
+.date-status-pill .status-dot-left.is-pulsing {
+  animation: pulse-dot 1.2s ease-in-out infinite;
 }
 
 .global-dirty-status-pill.is-saved {
@@ -781,10 +797,12 @@ html.dark-mode .user-role-circle.role-viewer {
    ========================================================================== */
 .main-content {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
-  overflow-y: visible;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 10px 14px 18px;
   background-color: var(--bg-app);
 }
@@ -2068,9 +2086,8 @@ html.dark-mode .user-role-circle.role-viewer {
 }
 
 @keyframes pulse-dot {
-  0% { transform: scale(0.9); opacity: 0.8; }
-  50% { transform: scale(1.3); opacity: 1; }
-  100% { transform: scale(0.9); opacity: 0.8; }
+  0%, 100% { transform: scale(0.75); opacity: 0.75; }
+  50% { transform: scale(1.35); opacity: 1; }
 }
 
 /* ==========================================================================
@@ -2413,6 +2430,8 @@ html.dark-mode .user-role-circle.role-viewer {
   background-color: #ffffff;
   transition: background-color 0.1s ease;
 }
+.certification-table td.text-center { text-align: center; }
+.certification-table td.text-right { text-align: right; }
 
 /* 행 호버 시 전체 행 하이라이트 */
 .certification-table tbody tr:hover td {
@@ -2888,51 +2907,54 @@ html.dark-mode .user-role-circle.role-viewer {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 8px;
+  gap: 3px;
+  min-width: 76px;
+  padding: 3px 6px;
   font-size: 11px;
   font-weight: 700;
   border-radius: 12px;
   letter-spacing: -0.2px;
+  white-space: nowrap;
 }
 .cert-status-badge.status-registered {
-  background-color: #f1f5f9;
-  color: #475569;
-  border: 1px solid #cbd5e1;
+  background-color: #e2e8f0;
+  color: #334155;
+  border: 1px solid #94a3b8;
 }
 .cert-status-badge.status-applied {
-  background-color: #e0e7ff;
-  color: #3730a3;
-  border: 1px solid #a5b4fc;
+  background-color: #c7d2fe;
+  color: #312e81;
+  border: 1px solid #818cf8;
 }
 .cert-status-badge.status-requested {
-  background-color: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background-color: #fde68a;
+  color: #78350f;
+  border: 1px solid #f59e0b;
 }
 .cert-status-badge.status-completed {
-  background-color: #dcfce7;
-  color: #166534;
-  border: 1px solid #86efac;
+  background-color: #bbf7d0;
+  color: #14532d;
+  border: 1px solid #22c55e;
 }
 .cert-status-badge.status-failed {
-  background-color: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fca5a5;
+  background-color: #fecaca;
+  color: #991b1b;
+  border: 1px solid #ef4444;
 }
 
 /* 행 상태별 배경 틴트 */
 tr.row-status-applied td {
-  background-color: #f8faff !important;
+  background-color: #eef2ff !important;
 }
 tr.row-status-requested td {
-  background-color: #fffdf5 !important;
+  background-color: #fef9c3 !important;
 }
 tr.row-status-completed td {
-  background-color: #f4fbf7 !important;
+  background-color: #e6f9ed !important;
   color: #64748b;
 }
 tr.row-status-failed td {
-  background-color: #fef2f2 !important;
+  background-color: #fee2e2 !important;
 }
 
 .quality-table-scroll-container {
@@ -3082,12 +3104,16 @@ tr.row-status-failed td {
   padding: 0;
   overflow: hidden;
   border: 1px solid #cbd5e1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .plan-grid-scroll-wrap {
   width: 100%;
-  max-height: calc(100vh - 245px);
-  min-height: 420px;
+  flex: 1;
+  min-height: 180px;
   overflow: auto;
   position: relative;
   outline: none;
@@ -3207,6 +3233,19 @@ tr.row-status-failed td {
 .plan-col-compare { background-color: #f8fafc; color: #475569; }
 .plan-col-diff { background-color: #f8fafc; color: #475569; }
 .plan-col-stock { background-color: #eff6ff; font-weight: 700; color: #1e40af; }
+
+.plan-amt-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+}
+.plan-amt-won {
+  font-weight: 600;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
 
 .plan-stock-negative {
   color: #dc2626 !important;
@@ -4970,10 +5009,10 @@ tr.plan-group-summary-row:hover td {
   cursor: pointer;
 }
 #att-year-select {
-  min-width: 94px;
+  min-width: 104px;
 }
 #att-month-select {
-  min-width: 78px;
+  min-width: 92px;
 }
 
 .att-main-grid {
@@ -5464,9 +5503,10 @@ tr.plan-group-summary-row:hover td {
 
 .att-worker-days-badge {
   font-size: 12px;
-  font-weight: 800;
-  color: #1d4ed8;
-  background: #dbeafe;
+  font-weight: 700;
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -6891,7 +6931,7 @@ html.dark-mode .att-worker-chevron {
 
 html.dark-mode .att-worker-days-badge {
   background-color: #1e293b;
-  color: #93c5fd;
+  color: #e2e8f0;
   border-color: #334155;
 }
 
@@ -7352,9 +7392,72 @@ html.dark-mode .rp-summary-chip.is-urgent {
 }
 
 .rp-grid-scroll-wrap {
-  height: calc(100vh - 215px);
-  max-height: calc(100vh - 215px);
-  min-height: 360px;
+  flex: 1;
+  min-height: 180px;
+  height: auto;
+  max-height: none;
+}
+
+/* 화면 꽉 채움(Flexbox 자동 높이) 탭: 바깥 스크롤 없이 표 박스만 모니터 크기에 맞게 조절 */
+.rp-ime-proxy {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  ime-mode: active;
+}
+
+.plan-cell-editor {
+  ime-mode: active;
+}
+
+#tab-plan.tab-pane.active,
+#tab-receiver-plan.tab-pane.active,
+#tab-certification.tab-pane.active,
+#tab-cert-settlement.tab-pane.active,
+#tab-quality.tab-pane.active {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#tab-plan .plan-container,
+#tab-receiver-plan .plan-container,
+#tab-certification .certification-view-layout,
+#tab-cert-settlement .plan-container,
+#tab-quality .certification-view-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+#tab-cert-settlement .cs-view-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#tab-cert-settlement .cs-view-panel .table-container {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+}
+
+#tab-quality .quality-grid-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#tab-quality .quality-table-scroll-container {
+  flex: 1;
+  min-height: 160px;
+  max-height: none;
+  overflow: auto;
 }
 
 .rp-excel-table th,
@@ -7405,6 +7508,7 @@ html.dark-mode .rp-summary-chip.is-urgent {
 .rp-col-req { width: 130px; min-width: 130px; max-width: 130px; }
 .rp-col-code { width: 110px; min-width: 110px; max-width: 110px; }
 .rp-col-fmt { width: 85px; min-width: 85px; max-width: 85px; }
+.rp-col-group { width: 95px; min-width: 95px; max-width: 95px; text-align: center; }
 .rp-col-name { width: 130px; min-width: 130px; max-width: 130px; }
 .rp-col-site { width: 220px; min-width: 220px; max-width: 220px; box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06); }
 .rp-col-builder { width: 115px; min-width: 115px; max-width: 115px; }
@@ -7870,8 +7974,43 @@ html.dark-mode .wh-st-total-box {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+.auth-checks-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.auth-guest-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.auth-guest-btn:hover {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+html.dark-mode .auth-guest-btn {
+  color: #cbd5e1;
+  background: #1e293b;
+  border-color: #475569;
+}
+html.dark-mode .auth-guest-btn:hover {
+  color: #93c5fd;
+  background: #172554;
+  border-color: #3b82f6;
 }
 .auth-chk-label {
   display: inline-flex;
@@ -8028,6 +8167,7 @@ html.dark-mode .wh-st-total-box {
 .auth-readonly-pane #btn-prod-load-plan,
 .auth-readonly-pane #btn-quality-pass,
 .auth-readonly-pane #btn-quality-fail,
+.auth-readonly-pane #btn-quality-cancel-pass,
 .auth-readonly-pane .btn-add-row,
 .auth-readonly-pane .btn-delete-row,
 .auth-readonly-pane .btn-edit-inline-cert {
@@ -8038,6 +8178,73 @@ html.dark-mode .wh-st-total-box {
 .auth-readonly-pane tbody textarea {
   pointer-events: none;
   opacity: 0.78;
+}
+
+/* 게스트 접속(조회 전용): 모든 등록/수정/삭제/저장/업로드 버튼 숨김 및 입력/체크박스 잠금 */
+html.guest-readonly .btn-save-primary,
+html.guest-readonly .btn-save-success,
+html.guest-readonly #btn-plan-save,
+html.guest-readonly #btn-plan-upload-forecast,
+html.guest-readonly #btn-plan-upload-weekly,
+html.guest-readonly #btn-plan-upload-stock-limits,
+html.guest-readonly #btn-plan-add-week,
+html.guest-readonly #btn-rp-save,
+html.guest-readonly #btn-rp-send-cert,
+html.guest-readonly #btn-rp-upload-excel,
+html.guest-readonly #btn-rp-add-row,
+html.guest-readonly #btn-rp-clone-row,
+html.guest-readonly #btn-rp-delete-rows,
+html.guest-readonly #btn-rp-bulk-edit,
+html.guest-readonly #btn-insp-add-day,
+html.guest-readonly #btn-insp-save,
+html.guest-readonly #btn-cert-add-row,
+html.guest-readonly #btn-cert-del-row,
+html.guest-readonly #btn-cert-save,
+html.guest-readonly #btn-cert-apply-inspection,
+html.guest-readonly #btn-cert-request-quality,
+html.guest-readonly #btn-cert-complete-production,
+html.guest-readonly #btn-cert-edit-saved,
+html.guest-readonly #btn-cert-cancel-saved,
+html.guest-readonly #btn-cert-del-saved-selected,
+html.guest-readonly #btn-cs-upload-kfi,
+html.guest-readonly #btn-save-daily-v2,
+html.guest-readonly #btn-prod-save,
+html.guest-readonly #btn-prod-add-adhoc,
+html.guest-readonly #btn-prod-load-plan,
+html.guest-readonly #btn-wh-st-config,
+html.guest-readonly #btn-att-new-event,
+html.guest-readonly #btn-att-save-db,
+html.guest-readonly #btn-att-goto-settings,
+html.guest-readonly #att-mode-actions .att-tip-text,
+html.guest-readonly #btn-quality-pass,
+html.guest-readonly #btn-quality-fail,
+html.guest-readonly #btn-quality-cancel-pass,
+html.guest-readonly .btn-add-row,
+html.guest-readonly .btn-delete-row,
+html.guest-readonly .btn-del-cert-saved,
+html.guest-readonly .btn-edit-inline-cert {
+  display: none !important;
+}
+
+#quality-view-mode-group .plan-seg-btn.active {
+  background-color: #e2e8f0;
+  color: #1e293b;
+  box-shadow: inset 0 0 0 1px #cbd5e1;
+}
+
+html.dark-mode #quality-view-mode-group .plan-seg-btn.active {
+  background-color: #334155;
+  color: #f1f5f9;
+  box-shadow: inset 0 0 0 1px #475569;
+}
+
+html.guest-readonly .main-content input[type="checkbox"],
+html.guest-readonly tbody input,
+html.guest-readonly tbody select,
+html.guest-readonly tbody textarea,
+html.guest-readonly [contenteditable="true"] {
+  pointer-events: none !important;
+  opacity: 0.65;
 }
 
 html.dark-mode .auth-card {
@@ -8809,6 +9016,17 @@ html.dark-mode .rpt-dropzone.is-dragover {
   cursor: help;
   animation: inspMismatchPulse 1.5s ease-in-out infinite;
 }
+.insp-pending-dot {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #f59e0b;
+  z-index: 3;
+  cursor: help;
+}
 .insp-match-dot {
   position: absolute;
   top: 4px;
@@ -8820,6 +9038,17 @@ html.dark-mode .rpt-dropzone.is-dragover {
   z-index: 3;
   cursor: help;
 }
+.insp-filter-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.insp-filter-dot.is-pending { background-color: #f59e0b; }
+.insp-filter-dot.is-mismatch { background-color: #ef4444; }
+.insp-filter-dot.is-done { background-color: #10b981; }
 html.dark-mode .insp-v2-date-cell.is-limit-error {
   background-color: rgba(220, 38, 38, 0.18);
 }
@@ -8919,7 +9148,8 @@ html.dark-mode .insp-v2-date-cell.is-limit-error {
   border-left-color: #3b82f6;
   background: #eff6ff;
 }
-.cal-sched-chip.is-dimmed {
+.cal-sched-chip.is-dimmed,
+.att-event-chip.is-dimmed {
   opacity: 0.22;
 }
 
@@ -9005,8 +9235,6 @@ html.dark-mode .insp-v2-date-cell.is-limit-error {
   padding: 10px 12px;
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
-  max-height: 230px;
-  overflow-y: auto;
   flex-shrink: 0;
 }
 .cal-detail-header {
@@ -9014,6 +9242,22 @@ html.dark-mode .insp-v2-date-cell.is-limit-error {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 6px;
+}
+.cal-detail-header-jump-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.cal-detail-header-jump-btn:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-color: #94a3b8;
 }
 .cal-detail-title {
   font-size: 12px;
@@ -9145,6 +9389,8 @@ html.dark-mode .cal-week-summary-head { background: #0f172a; border-color: #3341
 html.dark-mode .cal-week-group-row { color: #cbd5e1; }
 html.dark-mode .cal-week-group-qty { color: #f8fafc; }
 html.dark-mode .cal-sched-day-detail { background: #0f172a; border-color: #334155; }
+html.dark-mode .cal-detail-header-jump-btn { background: #1e293b; color: #cbd5e1; border-color: #334155; }
+html.dark-mode .cal-detail-header-jump-btn:hover { background: #334155; color: #f8fafc; }
 html.dark-mode .cal-detail-item { background: #1e293b; border-color: #334155; }
 html.dark-mode .cal-detail-item-name { color: #f1f5f9; }
 
@@ -9780,4 +10026,38 @@ html.dark-mode .header-session-timer.is-stage-30m {
   color: #fecaca;
   background: #450a0a;
   border-color: #991b1b;
+}
+
+/* 수신기계획 행 드래그 순서 변경 (수정 권한 있을 때만 NO 열에서 드래그) */
+html:not(.guest-readonly) #tab-receiver-plan:not(.auth-readonly-pane) td.rp-col-no {
+  cursor: grab;
+}
+html:not(.guest-readonly) #tab-receiver-plan:not(.auth-readonly-pane) td.rp-col-no:active {
+  cursor: grabbing;
+}
+#rp-excel-tbody tr.rp-row-dragging {
+  opacity: 0.45;
+}
+#rp-excel-tbody tr.rp-drop-above td {
+  border-top: 2px solid #2563eb !important;
+}
+#rp-excel-tbody tr.rp-drop-below td {
+  border-bottom: 2px solid #2563eb !important;
+}
+
+/* 수신기계획 열 헤더 드래그 순서 변경 */
+html:not(.guest-readonly) #tab-receiver-plan:not(.auth-readonly-pane) #rp-excel-table thead th[data-col-key] {
+  cursor: grab;
+}
+html:not(.guest-readonly) #tab-receiver-plan:not(.auth-readonly-pane) #rp-excel-table thead th[data-col-key]:active {
+  cursor: grabbing;
+}
+#rp-excel-table thead th.rp-col-dragging {
+  opacity: 0.45;
+}
+#rp-excel-table thead th.rp-col-drop-left {
+  border-left: 2px solid #2563eb !important;
+}
+#rp-excel-table thead th.rp-col-drop-right {
+  border-right: 2px solid #2563eb !important;
 }

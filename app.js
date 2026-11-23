@@ -265,6 +265,7 @@
 
     // 품질검사 상태 (검정현황 연동)
     qualityRows: [],
+    qualityViewMode: 'pending', // 'pending' | 'passed'
     qualityFilterDate: localStorage.getItem(STORAGE_KEYS.QUALITY_FILTER_DATE) || '',
 
     // 생산계획 상태
@@ -291,6 +292,7 @@
 
     // 일정계획 v2 & 생산일보 v2 상태
     inspLineFilter: 'ALL',
+    inspStatusFilter: 'ALL',
     inspExpandedIds: [], // 펼쳐진 certRowId 목록
     inspV2Data: { startDate: getTodayDateString(), dayCount: 10, items: {} },
     lineProcConfig: (() => {
@@ -480,10 +482,10 @@
 
     if (state.isDirty) {
       pill.className = 'global-dirty-status-pill is-dirty';
-      pill.innerHTML = '● 미저장 변경사항<span class="dirty-indicator-dot"></span>';
+      pill.innerHTML = '<span class="status-dot-left"></span><span>미저장</span>';
     } else {
       pill.className = 'global-dirty-status-pill is-saved';
-      pill.textContent = '● 저장됨';
+      pill.innerHTML = '<span class="status-dot-left"></span><span>저장됨</span>';
     }
   }
 
@@ -516,7 +518,7 @@
     const inspPill = document.getElementById('insp-date-status-pill');
     if (inspPill) {
       if (state.isDirty && state.currentTab === 'tab-inspection') {
-        inspPill.innerHTML = '● 미저장 변경사항<span class="dirty-indicator-dot"></span>';
+        inspPill.innerHTML = '<span class="status-dot-left is-pulsing"></span><span>미저장</span>';
         inspPill.className = 'date-status-pill';
         inspPill.style.backgroundColor = '#fef2f2';
         inspPill.style.color = '#dc2626';
@@ -525,7 +527,7 @@
         const hasInspData = (state.inspectionData.process && Object.keys(state.inspectionData.process).length > 0) ||
                             (state.inspectionData.assembly && Object.keys(state.inspectionData.assembly).length > 0);
         if (hasInspData) {
-          inspPill.textContent = '● 데이터 저장됨';
+          inspPill.textContent = '● 저장됨';
           inspPill.className = 'date-status-pill has-data';
           inspPill.removeAttribute('style');
         } else {
@@ -540,7 +542,7 @@
     const prodPill = document.getElementById('prod-date-status-pill');
     if (prodPill) {
       if (state.isDirty && state.currentTab === 'tab-production') {
-        prodPill.innerHTML = '● 미저장 변경사항<span class="dirty-indicator-dot"></span>';
+        prodPill.innerHTML = '<span class="status-dot-left is-pulsing"></span><span>미저장</span>';
         prodPill.className = 'date-status-pill';
         prodPill.style.backgroundColor = '#fef2f2';
         prodPill.style.color = '#dc2626';
@@ -550,7 +552,7 @@
           Object.values(sec).some(r => r && (r.qty > 0 || r.lotNo || r.note || Object.values(r.workerHours || {}).some(h => h > 0)))
         );
         if (hasProdData) {
-          prodPill.textContent = '● 데이터 저장됨';
+          prodPill.textContent = '● 저장됨';
           prodPill.className = 'date-status-pill has-data';
           prodPill.removeAttribute('style');
         } else {
@@ -852,6 +854,7 @@
   }
 
   async function saveMasterToDb(silent = false) {
+    if (isGuestReadOnly(!silent)) return;
     saveLocalMasterData();
     if (typeof saveLocalCertData === 'function') saveLocalCertData();
     if (typeof saveLocalAttendanceData === 'function') saveLocalAttendanceData();
@@ -2412,7 +2415,7 @@
         } else if (tabId === 'tab-certification') {
           if ((state.certMode || 'auto') === 'auto' && !(state.certDraftRows || []).some(r => r.sourceWeekId || (r.name && r.name.trim()))) {
             populateCertPlanWeekSelect();
-            loadCertDraftFromPlanWeek(state.certSelectedWeekId || 'W1', state.certAutoLineFilter || 'ALL');
+            loadCertDraftFromPlanWeek(state.certSelectedWeekId || '', state.certAutoLineFilter || 'ALL');
           }
           renderCertificationModule();
         } else if (tabId === 'tab-cert-settlement') {
@@ -3393,7 +3396,8 @@
       const dd = String(now.getDate()).padStart(2, '0');
       const hh = String(now.getHours()).padStart(2, '0');
       const min = String(now.getMinutes()).padStart(2, '0');
-      clockEl.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      clockEl.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
     }
     update();
     setInterval(update, 1000);
@@ -3749,6 +3753,7 @@
   }
 
   async function saveCertDataToDb(silent = false) {
+    if (isGuestReadOnly(!silent)) return;
     saveLocalCertData();
     if (!isFirestoreActive || !db) {
       if (!silent) showToast('로컬에 저장되었습니다');
@@ -4031,30 +4036,61 @@
     return map;
   }
 
+  function hasUnregisteredCertPlanForWeek(weekId, pd, regMap, targetLine) {
+    if (!weekId || !pd || !pd.rowsByCode) return false;
+    return (state.certMasterItems || []).some(item => {
+      if ((item.useYn || '사용') !== '사용') return false;
+      if (getDefaultItemApplyType(item) === '수동') return false;
+      if ((item.inspectType || '') === '-') return false;
+      if (targetLine !== 'ALL' && (item.group || '').trim() !== targetLine) return false;
+
+      const savedPlan = pd.rowsByCode[item.code];
+      const prodRaw = savedPlan && savedPlan.weeks && savedPlan.weeks[weekId] ? savedPlan.weeks[weekId].prod : '';
+      const planQty = parsePlanNum(prodRaw);
+      if (planQty <= 0) return false;
+
+      const regQty = regMap[`${item.code}__${weekId}`] || 0;
+      return (planQty - regQty) > 0;
+    });
+  }
+
   function populateCertPlanWeekSelect() {
     const sel = document.getElementById('cert-plan-week-select');
     if (!sel) return;
     if (!state.planData) loadLocalPlanData();
     const pd = state.planData || getDefaultPlanData();
-    const prevVal = state.certSelectedWeekId || sel.value || 'W1';
+    const prevVal = state.certSelectedWeekId || sel.value || '';
 
     sel.innerHTML = '';
     const { weeks } = getPlanPeriodWeeksAndMonths();
-    const list = weeks.length > 0 ? weeks : (pd.weeks || []);
-    list.forEach(w => {
-      const dates = getPlanWeekFridayDates(pd.year, w.id);
-      const opt = document.createElement('option');
-      opt.value = w.id;
-      opt.textContent = `${w.id} (${dates.weekDate})`;
-      sel.appendChild(opt);
-    });
+    const baseList = weeks.length > 0 ? weeks : (pd.weeks || []);
+    const regMap = getCertRegisteredQtyMap();
+    const targetLine = state.certAutoLineFilter || 'ALL';
+    const list = baseList.filter(w => hasUnregisteredCertPlanForWeek(w.id, pd, regMap, targetLine));
 
-    if (list.some(w => w.id === prevVal)) {
-      sel.value = prevVal;
-      state.certSelectedWeekId = prevVal;
-    } else if (list.length > 0) {
-      sel.value = list[0].id;
-      state.certSelectedWeekId = list[0].id;
+    if (list.length === 0) {
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '미등록 주차 없음';
+      sel.appendChild(emptyOpt);
+      sel.value = '';
+      state.certSelectedWeekId = '';
+    } else {
+      list.forEach(w => {
+        const dates = getPlanWeekFridayDates(pd.year, w.id);
+        const opt = document.createElement('option');
+        opt.value = w.id;
+        opt.textContent = `${w.id} (${dates.weekDate})`;
+        sel.appendChild(opt);
+      });
+
+      if (list.some(w => w.id === prevVal)) {
+        sel.value = prevVal;
+        state.certSelectedWeekId = prevVal;
+      } else {
+        sel.value = list[0].id;
+        state.certSelectedWeekId = list[0].id;
+      }
     }
     syncCustomSelect('cert-plan-week-select');
   }
@@ -4285,7 +4321,7 @@
       const emptyMsg = (state.certMode || 'auto') === 'auto'
         ? '선택한 주차에 미신청 생산계획 수량이 없습니다.'
         : '작성 중인 행이 없습니다. [+ 행 추가]를 눌러 작성하세요.';
-      tbody.innerHTML = `<tr><td colspan="21" style="text-align: center; padding: 25px; color: #94a3b8;">${emptyMsg}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="14" style="text-align: center; padding: 25px; color: #94a3b8;">${emptyMsg}</td></tr>`;
       return;
     }
 
@@ -4370,30 +4406,6 @@
         <td class="col-cert-to num-cell cell-readonly">
           <input type="text" tabindex="-1" class="cell-input text-right font-bold text-slate-700" readonly value="${row.to || ''}">
         </td>
-        <td class="col-cert-passno cell-readonly">
-          <input type="text" tabindex="-1" class="cell-input" readonly value="${row.passNo || ''}">
-        </td>
-        <td class="col-cert-site">
-          <input type="text" class="cell-input cert-input-field" data-field="site" data-id="${row.id}" value="${row.site || ''}" title="${row.site || ''}">
-        </td>
-        <td class="col-cert-color">
-          <input type="text" class="cell-input cert-input-field" data-field="color" data-id="${row.id}" value="${row.color || ''}">
-        </td>
-        <td class="col-cert-dept">
-          <select class="cell-input cert-select-dept" data-id="${row.id}" style="padding: 2px 4px; font-size: 11px;">
-            <option value=""></option>
-            ${deptOptions}
-          </select>
-        </td>
-        <td class="col-cert-sensor cell-readonly">
-          <input type="text" tabindex="-1" class="cell-input text-center" readonly value="${row.sensor || ''}">
-        </td>
-        <td class="col-cert-ctrl cell-readonly">
-          <input type="text" tabindex="-1" class="cell-input text-center" readonly value="${row.ctrl || ''}">
-        </td>
-        <td class="col-cert-gas cell-readonly">
-          <input type="text" tabindex="-1" class="cell-input text-center" readonly value="${row.gas || ''}">
-        </td>
       `;
 
       tbody.appendChild(tr);
@@ -4448,7 +4460,7 @@
     let totalSavedQty = 0;
 
     if (filteredRows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="23" style="text-align: center; padding: 25px; color: #94a3b8;">조건에 맞는 등록 내역이 없습니다. (총 누적: ${allSaved.length}건)</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="22" style="text-align: center; padding: 25px; color: #94a3b8;">조건에 맞는 등록 내역이 없습니다. (총 누적: ${allSaved.length}건)</td></tr>`;
     } else {
       filteredRows.forEach((row, idx) => {
         const qtyNum = parseSafeInt(row.qty);
@@ -4471,16 +4483,13 @@
           statusBadge = `<span class="cert-status-badge status-failed">부적합</span>`;
           rowClass = 'row-status-failed';
         } else if (status === '일정완료') {
-          statusBadge = `<span class="cert-status-badge status-completed">🔒 일정완료</span>`;
+          statusBadge = `<span class="cert-status-badge status-completed"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>일정완료</span>`;
           rowClass = 'row-status-completed';
         } else {
           statusBadge = `<span class="cert-status-badge status-registered">등록완료</span>`;
         }
 
         const checkCell = `<input type="checkbox" class="check-cert-saved-row" data-id="${row.id}" ${isCompleted ? 'disabled title="일정완료된 일정은 선택 불가"' : ''}>`;
-        const actionCell = isCompleted 
-          ? `<span style="font-size: 11px; color: #16a34a; font-weight: 700;">완료(잠금)</span>`
-          : `<button type="button" class="btn btn-xs btn-outline text-danger btn-del-cert-saved" data-id="${row.id}" title="이 내역 삭제">삭제</button>`;
 
         const tr = document.createElement('tr');
         tr.dataset.id = row.id;
@@ -4494,22 +4503,21 @@
           <td class="col-cert-name font-bold text-primary">${getDisplayNameByCode(row.code, row.name) || '-'}</td>
           <td class="col-cert-spec text-slate-600" title="${row.spec || ''}">${row.spec || '-'}</td>
           <td class="col-cert-format text-center">${row.formatNo || '-'}</td>
-          <td class="col-cert-type text-center"><span class="badge" style="background:#f1f5f9; color:#334155;">${row.type || '-'}</span></td>
+          <td class="col-cert-type text-center" style="text-align: center;">${row.type || '-'}</td>
           <td class="col-cert-date text-center">${row.writeDate || '-'}</td>
           <td class="col-cert-date text-center">${row.inspectDate || '-'}</td>
           <td class="col-cert-date text-center">${row.weekDate || '-'}</td>
-          <td class="col-cert-qty num-cell text-right font-bold text-primary" style="padding-right: 8px;">${formatNumberDisplay(qtyNum)}</td>
+          <td class="col-cert-qty num-cell text-right font-bold text-primary" style="text-align: right; padding-right: 8px;">${formatNumberDisplay(qtyNum)}</td>
           <td class="col-cert-lot text-center font-bold text-slate-800">${row.lotNo || '-'}</td>
-          <td class="col-cert-from num-cell text-right" style="padding-right: 8px;">${row.from ? formatNumberDisplay(row.from) : '-'}</td>
-          <td class="col-cert-to num-cell text-right" style="padding-right: 8px;">${row.to ? formatNumberDisplay(row.to) : '-'}</td>
+          <td class="col-cert-from num-cell text-right" style="text-align: right; padding-right: 8px;">${row.from ? formatNumberDisplay(row.from) : '-'}</td>
+          <td class="col-cert-to num-cell text-right" style="text-align: right; padding-right: 8px;">${row.to ? formatNumberDisplay(row.to) : '-'}</td>
           <td class="col-cert-passno font-bold text-emerald-700">${row.passNo || '-'}</td>
           <td class="col-cert-site text-slate-700" title="${row.site || ''}">${row.site || '-'}</td>
           <td class="col-cert-color text-center">${row.color || '-'}</td>
-          <td class="col-cert-dept text-center"><span class="badge" style="background:#e0f2fe; color:#0369a1;">${row.dept || '-'}</span></td>
+          <td class="col-cert-dept text-center" style="text-align: center;">${row.dept || '-'}</td>
           <td class="col-cert-sensor text-center">${row.sensor || '-'}</td>
           <td class="col-cert-ctrl text-center">${row.ctrl || '-'}</td>
           <td class="col-cert-gas text-center">${row.gas || '-'}</td>
-          <td class="col-cert-action" style="text-align: center;">${actionCell}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -4535,7 +4543,41 @@
     if (!tbody) return;
 
     tbody.innerHTML = '';
-    const allQuality = state.qualityRows || [];
+    const viewMode = state.qualityViewMode === 'passed' ? 'passed' : 'pending';
+    document.querySelectorAll('#quality-view-mode-group .plan-seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.qmode === viewMode);
+    });
+    const btnPass = document.getElementById('btn-quality-pass');
+    const btnFail = document.getElementById('btn-quality-fail');
+    const btnCancelPass = document.getElementById('btn-quality-cancel-pass');
+    if (btnPass) btnPass.style.display = viewMode === 'pending' ? '' : 'none';
+    if (btnFail) btnFail.style.display = viewMode === 'pending' ? '' : 'none';
+    if (btnCancelPass) btnCancelPass.style.display = viewMode === 'passed' ? '' : 'none';
+
+    const statusPill = document.getElementById('quality-filter-status-pill');
+    if (statusPill) {
+      statusPill.innerHTML = viewMode === 'passed'
+        ? '<span>합격완료 이력 조회 (최근 30일)</span>'
+        : '<span>전체 품검 대기 조회</span>';
+    }
+
+    const thirtyDaysAgoMs = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const isWithinLast30Days = (r) => {
+      if (r.completedAt) return Number(r.completedAt) >= thirtyDaysAgoMs;
+      const fallbackDate = r.inspectDate || r.writeDate || r.weekDate || '';
+      if (fallbackDate) {
+        const ts = new Date(fallbackDate + 'T00:00:00').getTime();
+        if (Number.isFinite(ts)) return ts >= thirtyDaysAgoMs;
+      }
+      return false;
+    };
+
+    const allQuality = viewMode === 'passed'
+      ? (state.certSavedRows || [])
+          .filter(r => (r.type || '').trim() === '품질' && r.status === '일정완료' && isWithinLast30Days(r))
+          .slice()
+          .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
+      : (state.qualityRows || []);
     const filterDate = state.qualityFilterDate || '';
 
     // 생산주차 필터 드롭다운 옵션 구성
@@ -4579,8 +4621,11 @@
 
     let totalQty = 0;
     if (filtered.length === 0) {
+      const emptyGuide = viewMode === 'passed'
+        ? '합격완료 처리된 품질검사 내역이 없습니다.'
+        : '품검 요청된 일정이 없습니다. [검정현황] 화면에서 일정을 선택 후 <strong>[품검요청]</strong>을 누르면 이 화면에 추가됩니다.';
       tbody.innerHTML = `<tr><td colspan="23" style="text-align: center; padding: 35px; color: #94a3b8; font-size: 13.5px;">
-        <svg style="width:15px;height:15px;vertical-align:-2px;margin-right:4px;opacity:0.75;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>품검 요청된 일정이 없습니다. [검정현황] 화면에서 일정을 선택 후 <strong>[품검요청]</strong>을 누르면 이 화면에 추가됩니다.
+        <svg style="width:15px;height:15px;vertical-align:-2px;margin-right:4px;opacity:0.75;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>${emptyGuide}
       </td></tr>`;
     } else {
       filtered.forEach((row, idx) => {
@@ -4592,6 +4637,9 @@
 
         const reqCnt = parseSafeInt(row.requestCount);
         const qualStatusLabel = reqCnt > 1 ? `품검요청 (${reqCnt})` : '품검요청';
+        const statusBadgeHtml = viewMode === 'passed'
+          ? '<span class="cert-status-badge status-completed"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>일정완료</span>'
+          : `<span class="cert-status-badge status-requested">${qualStatusLabel}</span>`;
 
         tr.innerHTML = `
           <td class="col-cert-check" style="text-align: center;">
@@ -4599,9 +4647,9 @@
           </td>
           <td class="col-cert-no" style="text-align: center; color: #64748b; font-weight: 600;">${idx + 1}</td>
           <td class="col-cert-status" style="text-align: center;">
-            <span class="cert-status-badge status-requested">${qualStatusLabel}</span>
+            ${statusBadgeHtml}
           </td>
-          <td class="col-cert-type text-center"><span class="badge" style="background:#fef3c7; color:#92400e; font-weight:700;">${row.type || '품질'}</span></td>
+          <td class="col-cert-type text-center" style="text-align: center;">${row.type || '품질'}</td>
           <td class="col-cert-group text-center font-bold text-slate-700">${row.group || '-'}</td>
           <td class="col-cert-code text-center font-bold text-slate-700">${row.code || '-'}</td>
           <td class="col-cert-name font-bold text-primary">${getDisplayNameByCode(row.code, row.name) || '-'}</td>
@@ -4610,14 +4658,14 @@
           <td class="col-cert-date text-center">${row.writeDate || '-'}</td>
           <td class="col-cert-date text-center">${row.inspectDate || '-'}</td>
           <td class="col-cert-date text-center">${row.weekDate || '-'}</td>
-          <td class="col-cert-qty num-cell text-right font-bold text-primary" style="padding-right: 8px;">${formatNumberDisplay(qtyNum)}</td>
+          <td class="col-cert-qty num-cell text-right font-bold text-primary" style="text-align: right; padding-right: 8px;">${formatNumberDisplay(qtyNum)}</td>
           <td class="col-cert-lot text-center font-bold text-slate-800">${row.lotNo || '-'}</td>
-          <td class="col-cert-from num-cell text-right" style="padding-right: 8px;">${row.from ? formatNumberDisplay(row.from) : '-'}</td>
-          <td class="col-cert-to num-cell text-right" style="padding-right: 8px;">${row.to ? formatNumberDisplay(row.to) : '-'}</td>
+          <td class="col-cert-from num-cell text-right" style="text-align: right; padding-right: 8px;">${row.from ? formatNumberDisplay(row.from) : '-'}</td>
+          <td class="col-cert-to num-cell text-right" style="text-align: right; padding-right: 8px;">${row.to ? formatNumberDisplay(row.to) : '-'}</td>
           <td class="col-cert-passno font-bold text-emerald-700">${row.passNo || '-'}</td>
           <td class="col-cert-site text-slate-700" title="${row.site || ''}">${row.site || '-'}</td>
           <td class="col-cert-color text-center">${row.color || '-'}</td>
-          <td class="col-cert-dept text-center"><span class="badge" style="background:#e0f2fe; color:#0369a1;">${row.dept || '-'}</span></td>
+          <td class="col-cert-dept text-center" style="text-align: center;">${row.dept || '-'}</td>
           <td class="col-cert-sensor text-center">${row.sensor || '-'}</td>
           <td class="col-cert-ctrl text-center">${row.ctrl || '-'}</td>
           <td class="col-cert-gas text-center">${row.gas || '-'}</td>
@@ -5047,7 +5095,7 @@
         state.certMode = mode;
         if (mode === 'auto') {
           populateCertPlanWeekSelect();
-          loadCertDraftFromPlanWeek(state.certSelectedWeekId || 'W1', state.certAutoLineFilter || 'ALL');
+          loadCertDraftFromPlanWeek(state.certSelectedWeekId || '', state.certAutoLineFilter || 'ALL');
         } else {
           state.certDraftRows = [createNewDraftRow()];
           saveLocalCertData();
@@ -5057,11 +5105,12 @@
     });
 
     document.getElementById('btn-cert-refresh-week')?.addEventListener('click', () => {
-      const targetWeek = state.certSelectedWeekId || document.getElementById('cert-plan-week-select')?.value || 'W1';
-      state.certSelectedWeekId = targetWeek;
       if ((state.certMode || 'auto') === 'auto') {
+        populateCertPlanWeekSelect();
+        const targetWeek = state.certSelectedWeekId || document.getElementById('cert-plan-week-select')?.value || '';
+        state.certSelectedWeekId = targetWeek;
         loadCertDraftFromPlanWeek(targetWeek, state.certAutoLineFilter || 'ALL');
-        showToast(`${targetWeek} 주차를 다시 불러왔습니다.`);
+        showToast(targetWeek ? `${targetWeek} 주차를 다시 불러왔습니다.` : '미등록 생산계획 주차가 없습니다.');
       }
     });
 
@@ -5085,7 +5134,8 @@
     document.getElementById('cert-auto-line-filter')?.addEventListener('change', (e) => {
       state.certAutoLineFilter = e.target.value;
       if ((state.certMode || 'auto') === 'auto') {
-        loadCertDraftFromPlanWeek(state.certSelectedWeekId || 'W1', state.certAutoLineFilter);
+        populateCertPlanWeekSelect();
+        loadCertDraftFromPlanWeek(state.certSelectedWeekId || '', state.certAutoLineFilter);
       }
     });
 
@@ -5642,6 +5692,45 @@
       });
     }
 
+    // 3-D1. [생산완료] 버튼 (구분이 '생산'인 것만 '일정완료' 처리, '품질' 등 타 구분은 제외)
+    const btnCompleteProduction = document.getElementById('btn-cert-complete-production');
+    if (btnCompleteProduction) {
+      btnCompleteProduction.addEventListener('click', async () => {
+        if (isGuestReadOnly(true)) return;
+        const checkedBoxes = Array.from(document.querySelectorAll('#cert-saved-tbody .check-cert-saved-row:checked'));
+        if (checkedBoxes.length === 0) {
+          alert('생산완료 처리할 일정을 1건 이상 선택해 주세요.');
+          return;
+        }
+
+        const checkedIds = checkedBoxes.map(cb => cb.dataset.id);
+        const selectedRows = state.certSavedRows.filter(r => checkedIds.includes(r.id));
+        const prodTargetRows = selectedRows.filter(r => (r.type || '').trim() === '생산' && r.status !== '일정완료');
+        const excludedCount = selectedRows.length - prodTargetRows.length;
+
+        if (prodTargetRows.length === 0) {
+          alert('구분이 [생산]인 미완료 항목만 생산완료 처리할 수 있습니다.');
+          return;
+        }
+
+        let confirmMsg = `선택한 [생산] 항목 ${prodTargetRows.length}건을 완료(일정완료) 처리하시겠습니까?\n완료 처리된 일정은 잠금 상태가 됩니다.`;
+        if (excludedCount > 0) {
+          confirmMsg += `\n(※ 구분이 [생산]이 아닌 ${excludedCount}건은 제외됩니다.)`;
+        }
+        if (!confirm(confirmMsg)) return;
+
+        prodTargetRows.forEach(row => {
+          row.status = '일정완료';
+          row.completedAt = Date.now();
+        });
+
+        await saveCertDataToDb(true);
+        renderCertSavedTable();
+        showToast(`생산 ${prodTargetRows.length}건이 완료(일정완료) 처리되었습니다.${excludedCount > 0 ? ` (제외 ${excludedCount}건)` : ''}`);
+        if (checkAllCertSaved) checkAllCertSaved.checked = false;
+      });
+    }
+
     const isCertSavedLocked = (row) => {
       const s = (row?.status || '등록완료').trim();
       return s === '품검요청' || s === '일정완료' || s === '검정신청';
@@ -5828,6 +5917,14 @@
       });
     }
 
+    document.querySelectorAll('#quality-view-mode-group .plan-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.qualityViewMode = btn.dataset.qmode === 'passed' ? 'passed' : 'pending';
+        if (checkAllQuality) checkAllQuality.checked = false;
+        renderQualityTable();
+      });
+    });
+
     const btnQualityPass = document.getElementById('btn-quality-pass');
     if (btnQualityPass) {
       btnQualityPass.addEventListener('click', async () => {
@@ -5862,6 +5959,53 @@
         renderCertSavedTable();
 
         showToast(`선택한 ${checkedBoxes.length}건이 [합격] 처리되어 검정현황의 일정이 완료되었습니다`);
+        if (checkAllQuality) checkAllQuality.checked = false;
+      });
+    }
+
+    const btnQualityCancelPass = document.getElementById('btn-quality-cancel-pass');
+    if (btnQualityCancelPass) {
+      btnQualityCancelPass.addEventListener('click', async () => {
+        if (isGuestReadOnly(true)) return;
+        const checkedBoxes = Array.from(document.querySelectorAll('#quality-tbody .check-quality-row:checked'));
+        if (checkedBoxes.length === 0) {
+          alert('합격취소할 일정을 1건 이상 선택해 주세요.');
+          return;
+        }
+
+        const certIds = checkedBoxes.map(cb => cb.dataset.certId || cb.dataset.id);
+        if (!confirm(`선택한 ${checkedBoxes.length}건의 합격을 취소하시겠습니까?\n검정현황 잠금이 해제되고 품질검사 [대기중] 목록으로 복원됩니다.`)) {
+          return;
+        }
+
+        let restoredCount = 0;
+        if (!state.qualityRows) state.qualityRows = [];
+        state.certSavedRows.forEach(row => {
+          if (!certIds.includes(row.id) || row.status !== '일정완료') return;
+          row.status = '품검요청';
+          delete row.completedAt;
+          const existsInQuality = state.qualityRows.some(q => (q.certRowId === row.id || q.id === row.id));
+          if (!existsInQuality) {
+            state.qualityRows.push({
+              ...row,
+              certRowId: row.id,
+              status: '품검요청',
+              requestCount: row.requestCount || 1,
+              requestedAt: Date.now()
+            });
+          }
+          restoredCount++;
+        });
+
+        await saveCertDataToDb(true);
+        await saveQualityRowsToDb();
+        if (typeof appendAdminAuditLog === 'function' && restoredCount > 0) {
+          await appendAdminAuditLog('합격취소', '품질검사', `${restoredCount}건 합격취소 (품검요청 복원)`);
+        }
+
+        renderQualityTable();
+        renderCertSavedTable();
+        showToast(`선택한 ${restoredCount}건의 합격이 취소되어 품검 대기 목록으로 복원되었습니다.`);
         if (checkAllQuality) checkAllQuality.checked = false;
       });
     }
@@ -6181,7 +6325,7 @@
         tr.innerHTML = `
           <td style="text-align:center;">
             <div class="action-btn-group">
-              <button type="button" class="btn btn-xs btn-primary btn-save-inline-cert" data-id="${item.id}">저장</button>
+              <button type="button" class="btn btn-xs btn-save-success btn-save-inline-cert" data-id="${item.id}"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>저장</button>
               <button type="button" class="btn btn-xs btn-outline btn-cancel-inline-cert">취소</button>
             </div>
           </td>
@@ -7767,8 +7911,11 @@
       hidePriceCol: false,
       hideBaseCol: false,
       hideMinMaxCols: false,
+      hideActualCol: false,
       hideCompareCols: false,
       shortageOnly: false,
+      showStockAmount: false,
+      stockAmountUnit: '만원',
       autoGreenOnMove: true,
       colorFilter: 'ALL',
       mergedItemGroups: [],
@@ -7822,8 +7969,11 @@
       hidePriceCol: raw.hidePriceCol !== undefined ? Boolean(raw.hidePriceCol) : Boolean(raw.hideSpecCols),
       hideBaseCol: raw.hideBaseCol !== undefined ? Boolean(raw.hideBaseCol) : Boolean(raw.hideSpecCols),
       hideMinMaxCols: raw.hideMinMaxCols !== undefined ? Boolean(raw.hideMinMaxCols) : Boolean(raw.hideSpecCols),
+      hideActualCol: Boolean(raw.hideActualCol),
       hideCompareCols: Boolean(raw.hideCompareCols),
       shortageOnly: Boolean(raw.shortageOnly),
+      showStockAmount: Boolean(raw.showStockAmount),
+      stockAmountUnit: ['만원', '백만원', '천만원'].includes(raw.stockAmountUnit) ? raw.stockAmountUnit : '만원',
       autoGreenOnMove: raw.autoGreenOnMove !== undefined ? Boolean(raw.autoGreenOnMove) : true,
       colorFilter: raw.colorFilter || 'ALL',
       mergedItemGroups: Array.isArray(raw.mergedItemGroups) ? raw.mergedItemGroups : [],
@@ -7902,6 +8052,7 @@
   }
 
   async function savePlanToDb() {
+    if (isGuestReadOnly(true)) return;
     if (!state.planData) state.planData = getDefaultPlanData();
     saveLocalPlanData();
     let dbSaved = false;
@@ -8032,7 +8183,7 @@
     });
 
     const { months, weeks } = getPlanPeriodWeeksAndMonths();
-    const subCount = pd.hideCompareCols ? 4 : 6;
+    const subCount = (pd.hideCompareCols ? 4 : 6) - (pd.hideActualCol ? 1 : 0);
     const dynamicCols = [];
     const groupHeaders = []; // { type: 'week'|'month', id, label, colspan }
 
@@ -8040,12 +8191,14 @@
       groupHeaders.push({ type: 'week', id: w.id, label: w.label, colspan: subCount });
       dynamicCols.push({ key: `${w.id}:prod`, weekId: w.id, field: 'prod', label: '생산', fixed: false, editable: true, cls: 'plan-col-week plan-col-prod', isNum: true });
       dynamicCols.push({ key: `${w.id}:forecast`, weekId: w.id, field: 'forecast', label: '출고예정', fixed: false, editable: false, cls: 'plan-col-week plan-col-forecast plan-cell-readonly', isNum: true });
-      dynamicCols.push({ key: `${w.id}:actual`, weekId: w.id, field: 'actual', label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-actual plan-cell-readonly', isNum: true });
+      if (!pd.hideActualCol) {
+        dynamicCols.push({ key: `${w.id}:actual`, weekId: w.id, field: 'actual', label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-actual plan-cell-readonly', isNum: true });
+      }
       if (!pd.hideCompareCols) {
         dynamicCols.push({ key: `${w.id}:compare`, weekId: w.id, field: 'compare', label: '입고비교', fixed: false, editable: false, cls: 'plan-col-week plan-col-compare plan-cell-readonly', isNum: true });
         dynamicCols.push({ key: `${w.id}:diff`, weekId: w.id, field: 'diff', label: '차이수량', fixed: false, editable: false, cls: 'plan-col-week plan-col-diff plan-cell-readonly', isNum: true });
       }
-      dynamicCols.push({ key: `${w.id}:stock`, weekId: w.id, field: 'stock', label: '재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-stock plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${w.id}:stock`, weekId: w.id, field: 'stock', label: pd.showStockAmount ? '재고금액' : '재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-stock plan-cell-readonly', isNum: true });
     };
 
     const pushMonthCols = (m) => {
@@ -8053,12 +8206,14 @@
       groupHeaders.push({ type: 'month', id: mId, label: `${m}월 합계`, colspan: subCount });
       dynamicCols.push({ key: `${mId}:prod`, month: m, field: 'prod', isMonth: true, label: '생산', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
       dynamicCols.push({ key: `${mId}:forecast`, month: m, field: 'forecast', isMonth: true, label: '출고예정', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
-      dynamicCols.push({ key: `${mId}:actual`, month: m, field: 'actual', isMonth: true, label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
+      if (!pd.hideActualCol) {
+        dynamicCols.push({ key: `${mId}:actual`, month: m, field: 'actual', isMonth: true, label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
+      }
       if (!pd.hideCompareCols) {
         dynamicCols.push({ key: `${mId}:compare`, month: m, field: 'compare', isMonth: true, label: '입고비교', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
         dynamicCols.push({ key: `${mId}:diff`, month: m, field: 'diff', isMonth: true, label: '차이수량', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
       }
-      dynamicCols.push({ key: `${mId}:stock`, month: m, field: 'stock', isMonth: true, label: '기말재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-col-stock plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${mId}:stock`, month: m, field: 'stock', isMonth: true, label: pd.showStockAmount ? '재고금액' : '기말재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-col-stock plan-cell-readonly', isNum: true });
     };
 
     if (pd.viewMode === 'month') {
@@ -8249,13 +8404,16 @@
         if (row.itemGroup && mergedSet.has(row.itemGroup)) {
           let grp = groupBuckets.get(row.itemGroup);
           if (!grp) {
+            const unitPriceNum = parsePlanNum(row.unitPrice);
             const cloneWeeks = {};
             Object.keys(row.weeks || {}).forEach(wk => {
-              cloneWeeks[wk] = { ...row.weeks[wk] };
+              const rw = row.weeks[wk] || {};
+              cloneWeeks[wk] = { ...rw, stockAmountWon: parsePlanNum(rw.stock) * unitPriceNum };
             });
             const cloneMonths = {};
             Object.keys(row.months || {}).forEach(mk => {
-              cloneMonths[mk] = { ...row.months[mk] };
+              const rm = row.months[mk] || {};
+              cloneMonths[mk] = { ...rm, stockAmountWon: parsePlanNum(rm.stock) * unitPriceNum };
             });
             grp = {
               code: '[그룹]',
@@ -8282,8 +8440,9 @@
             if (row.minStock !== null) grp.minStock = (grp.minStock || 0) + row.minStock;
             if (row.maxStock !== null) grp.maxStock = (grp.maxStock || 0) + row.maxStock;
 
+            const unitPriceNum = parsePlanNum(row.unitPrice);
             Object.keys(row.weeks || {}).forEach(wk => {
-              const gw = grp.weeks[wk] || (grp.weeks[wk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: 0 });
+              const gw = grp.weeks[wk] || (grp.weeks[wk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: 0, stockAmountWon: 0 });
               const rw = row.weeks[wk] || {};
               gw.prod = addNumOrEmpty(gw.prod, rw.prod);
               gw.forecast = addNumOrEmpty(gw.forecast, rw.forecast);
@@ -8291,10 +8450,11 @@
               gw.compare = addNumOrEmpty(gw.compare, rw.compare);
               gw.diff = addNumOrEmpty(gw.diff, rw.diff);
               gw.stock = parsePlanNum(gw.stock) + parsePlanNum(rw.stock);
+              gw.stockAmountWon = (gw.stockAmountWon || 0) + (parsePlanNum(rw.stock) * unitPriceNum);
             });
 
             Object.keys(row.months || {}).forEach(mk => {
-              const gm = grp.months[mk] || (grp.months[mk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: '' });
+              const gm = grp.months[mk] || (grp.months[mk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: '', stockAmountWon: 0 });
               const rm = row.months[mk] || {};
               gm.prod = addNumOrEmpty(gm.prod, rm.prod);
               gm.forecast = addNumOrEmpty(gm.forecast, rm.forecast);
@@ -8302,6 +8462,7 @@
               gm.compare = addNumOrEmpty(gm.compare, rm.compare);
               gm.diff = addNumOrEmpty(gm.diff, rm.diff);
               gm.stock = addNumOrEmpty(gm.stock, rm.stock);
+              gm.stockAmountWon = (gm.stockAmountWon || 0) + (parsePlanNum(rm.stock) * unitPriceNum);
             });
 
             Object.keys(row.colors || {}).forEach(ck => {
@@ -8484,10 +8645,23 @@
 
   function buildPlanSummaryRowHtml(rows, cols, fixedCount) {
     const pd = state.planData || getDefaultPlanData();
+    const showAmt = Boolean(pd.showStockAmount);
+    const unitDivisor = pd.stockAmountUnit === '천만원' ? 10000000 : (pd.stockAmountUnit === '백만원' ? 1000000 : 10000);
+    const getRowStockWon = (row, col) => {
+      if (row.isGroupRow) {
+        if (col.isMonth && col.month) return Number(row.months?.[`M${col.month}`]?.stockAmountWon || 0);
+        if (col.weekId) return Number(row.weeks?.[col.weekId]?.stockAmountWon || 0);
+        return 0;
+      }
+      return parsePlanNum(getPlanCellRawValue(row, col)) * parsePlanNum(row.unitPrice);
+    };
+
     const totals = new Array(cols.length).fill(0);
     rows.forEach(row => {
       cols.forEach((col, cIdx) => {
-        if (col.key === 'baseStock' || col.weekId || col.isMonth) {
+        if (showAmt && col.field === 'stock') {
+          totals[cIdx] += getRowStockWon(row, col);
+        } else if (col.key === 'baseStock' || col.weekId || col.isMonth) {
           totals[cIdx] += parsePlanNum(getPlanCellRawValue(row, col));
         }
       });
@@ -8510,11 +8684,15 @@
       } else if (cIdx < fixedCount && col.key !== 'baseStock') {
         html += `<td class="${col.cls}${fixedCls}"${fixedStyle}></td>`;
       } else {
-        const negCls = (col.field === 'stock' && totals[cIdx] < 0) ? ' plan-stock-negative' : '';
+        const dispTotal = (showAmt && col.field === 'stock') ? Math.round(totals[cIdx] / unitDivisor) : totals[cIdx];
+        const negCls = (col.field === 'stock' && dispTotal < 0) ? ' plan-stock-negative' : '';
         const diffCls = (col.field === 'diff')
-          ? (totals[cIdx] < 0 ? ' plan-diff-neg' : (totals[cIdx] > 0 ? ' plan-diff-pos' : ''))
+          ? (dispTotal < 0 ? ' plan-diff-neg' : (dispTotal > 0 ? ' plan-diff-pos' : ''))
           : '';
-        html += `<td class="${col.cls}${fixedCls}${negCls}${diffCls}"${fixedStyle}>${totals[cIdx].toLocaleString('ko-KR')}</td>`;
+        const totalHtml = (showAmt && col.field === 'stock')
+          ? `<span class="plan-amt-cell"><span class="plan-amt-won">₩</span><span>${dispTotal.toLocaleString('ko-KR')}</span></span>`
+          : dispTotal.toLocaleString('ko-KR');
+        html += `<td class="${col.cls}${fixedCls}${negCls}${diffCls}"${fixedStyle}>${totalHtml}</td>`;
       }
     });
     html += '</tr>';
@@ -8559,7 +8737,7 @@
 
     syncCustomSelect('plan-group-filter');
 
-    document.querySelectorAll('.plan-seg-btn').forEach(btn => {
+    document.querySelectorAll('.plan-seg-btn[data-view]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.view === pd.viewMode);
     });
 
@@ -8575,10 +8753,19 @@
     if (chkBase) chkBase.checked = Boolean(pd.hideBaseCol);
     const chkMM = document.getElementById('chk-plan-hide-minmax');
     if (chkMM) chkMM.checked = Boolean(pd.hideMinMaxCols);
+    const chkActual = document.getElementById('chk-plan-hide-actual');
+    if (chkActual) chkActual.checked = Boolean(pd.hideActualCol);
     const chkComp = document.getElementById('chk-plan-hide-compare');
     if (chkComp) chkComp.checked = Boolean(pd.hideCompareCols);
     const chkShort = document.getElementById('chk-plan-shortage-only');
     if (chkShort) chkShort.checked = Boolean(pd.shortageOnly);
+    const chkStockAmt = document.getElementById('chk-plan-stock-amount');
+    if (chkStockAmt) chkStockAmt.checked = Boolean(pd.showStockAmount);
+    const unitBtn = document.getElementById('btn-plan-amount-unit');
+    if (unitBtn) {
+      unitBtn.style.display = pd.showStockAmount ? 'inline-flex' : 'none';
+      unitBtn.textContent = `[단위 : ${pd.stockAmountUnit || '만원'}]`;
+    }
     const chkAutoG = document.getElementById('chk-plan-auto-green');
     if (chkAutoG) chkAutoG.checked = Boolean(pd.autoGreenOnMove);
 
@@ -8732,6 +8919,7 @@
       return;
     }
 
+    const unitDivisor = pd.stockAmountUnit === '천만원' ? 10000000 : (pd.stockAmountUnit === '백만원' ? 1000000 : 10000);
     const regMap = getCertRegisteredQtyMap();
     let bodyHtml = '';
     rows.forEach((row, rIdx) => {
@@ -8739,7 +8927,19 @@
       bodyHtml += `<tr data-r="${rIdx}" data-code="${escapeHtmlPlan(row.code)}"${grpRowCls}>`;
       cols.forEach((col, cIdx) => {
         const raw = getPlanCellRawValue(row, col);
-        const disp = col.isNum ? formatPlanCellDisplay(raw) : escapeHtmlPlan(raw);
+        let disp = col.isNum ? formatPlanCellDisplay(raw) : escapeHtmlPlan(raw);
+        let stockWon = 0;
+        if (pd.showStockAmount && col.field === 'stock' && raw !== '') {
+          if (row.isGroupRow) {
+            stockWon = (col.isMonth && col.month)
+              ? Number(row.months?.[`M${col.month}`]?.stockAmountWon || 0)
+              : Number(row.weeks?.[col.weekId]?.stockAmountWon || 0);
+          } else {
+            stockWon = parsePlanNum(raw) * parsePlanNum(row.unitPrice);
+          }
+          const amtNumStr = Math.round(stockWon / unitDivisor).toLocaleString('ko-KR');
+          disp = `<span class="plan-amt-cell"><span class="plan-amt-won">₩</span><span>${amtNumStr}</span></span>`;
+        }
         const fixedCls = col.fixed ? ` plan-fixed-col${col.isLastFixed ? ' plan-fixed-last' : ''}` : '';
         const fixedStyle = col.fixed ? ` style="left:${col.left}px;"` : '';
 
@@ -8768,6 +8968,10 @@
           } else if ((row.minStock !== null && row.minStock > 0) || (row.maxStock !== null && row.maxStock > 0)) {
             stockCls = ' plan-stock-ok';
             titleText = `적정 (${(row.minStock || 0).toLocaleString()} ~ ${(row.maxStock || '-').toLocaleString()})`;
+          }
+          if (pd.showStockAmount) {
+            const amtLabel = `수량: ${sn.toLocaleString()} / 금액: ${stockWon.toLocaleString()}원`;
+            titleText = titleText ? `${titleText} · ${amtLabel}` : amtLabel;
           }
         }
 
@@ -9543,7 +9747,7 @@
     });
 
     // 월 / 주차 / 전체 세그먼트
-    document.querySelectorAll('.plan-seg-btn').forEach(btn => {
+    document.querySelectorAll('.plan-seg-btn[data-view]').forEach(btn => {
       btn.addEventListener('click', () => {
         if (!state.planData) loadLocalPlanData();
         state.planData.viewMode = btn.dataset.view;
@@ -9710,6 +9914,13 @@
         renderPlanModule();
       });
     });
+    document.getElementById('chk-plan-hide-actual')?.addEventListener('change', (e) => {
+      state.planData.hideActualCol = e.target.checked;
+      planGridState.anchor = null;
+      planGridState.focus = null;
+      saveLocalPlanData();
+      renderPlanModule();
+    });
     document.getElementById('chk-plan-hide-compare')?.addEventListener('change', (e) => {
       state.planData.hideCompareCols = e.target.checked;
       saveLocalPlanData();
@@ -9719,6 +9930,19 @@
       state.planData.shortageOnly = e.target.checked;
       planGridState.anchor = null;
       planGridState.focus = null;
+      saveLocalPlanData();
+      renderPlanModule();
+    });
+    document.getElementById('chk-plan-stock-amount')?.addEventListener('change', (e) => {
+      state.planData.showStockAmount = e.target.checked;
+      saveLocalPlanData();
+      renderPlanModule();
+    });
+    document.getElementById('btn-plan-amount-unit')?.addEventListener('click', () => {
+      const order = ['만원', '백만원', '천만원'];
+      const cur = state.planData.stockAmountUnit || '만원';
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      state.planData.stockAmountUnit = next;
       saveLocalPlanData();
       renderPlanModule();
     });
@@ -10321,6 +10545,7 @@
   }
 
   async function saveInspectionV2ToDb() {
+    if (isGuestReadOnly(true)) return;
     const weekDate = state.inspectionTargetDate;
     if (!weekDate) return;
     const meta = getInspV2PlanMeta(state.inspV2Data, weekDate);
@@ -10417,6 +10642,7 @@
   }
 
   async function saveDailyV2ToDb() {
+    if (isGuestReadOnly(true)) return;
     const dateStr = state.productionDate;
     if (!dateStr) return;
     saveLocalDailyV2();
@@ -10624,6 +10850,20 @@
     ];
   }
 
+  function getInspCellDotMeta(val, actualOnDay, dateStr, todayStr) {
+    if (!dateStr || dateStr > todayStr) return null;
+    if (val > 0 && actualOnDay >= val) {
+      return { status: 'done', cls: 'insp-match-dot', title: `생산완료 (${actualOnDay.toLocaleString()})` };
+    }
+    if (val > 0 && actualOnDay === 0) {
+      return { status: 'pending', cls: 'insp-pending-dot', title: '일보 미작성 (실적 0)' };
+    }
+    if (actualOnDay > 0 && val !== actualOnDay) {
+      return { status: 'mismatch', cls: 'insp-mismatch-dot', title: `수량 불일치 (계획: ${val.toLocaleString()} / 실적: ${actualOnDay.toLocaleString()}) · 더블클릭 시 실적에 맞춤` };
+    }
+    return null;
+  }
+
   function renderInspectionV2() {
     const container = document.getElementById('insp-line-tables-container');
     if (!container) return;
@@ -10640,6 +10880,9 @@
 
     document.querySelectorAll('#insp-line-filter-group .plan-seg-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.line === (state.inspLineFilter || 'ALL'));
+    });
+    document.querySelectorAll('#insp-status-filter-group .plan-seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.status === (state.inspStatusFilter || 'ALL'));
     });
 
     const subDayBtn = document.getElementById('btn-insp-sub-day');
@@ -10674,8 +10917,26 @@
 
     container.innerHTML = '';
 
+    const statusFilter = state.inspStatusFilter || 'ALL';
     visibleLines.forEach(lineName => {
-      const lineRows = certRowsForWeek.filter(r => (r.group || '').trim() === lineName);
+      const allLineRows = certRowsForWeek.filter(r => (r.group || '').trim() === lineName);
+      const lineRows = statusFilter === 'ALL'
+        ? allLineRows
+        : allLineRows.filter(cRow => {
+            const itemState = (state.inspV2Data.items && state.inspV2Data.items[cRow.id]) || { dailyPlans: {}, excludedProcs: {} };
+            const excl = itemState.excludedProcs || {};
+            const dailyPlans = itemState.dailyPlans || {};
+            return ['assembly', 'inspect', 'pack'].some(procKey => {
+              if (excl[procKey]) return false;
+              return dateCols.some(dc => {
+                if (dc.isOffDay) return false;
+                const val = dailyPlans[dc.dateStr] ? parseSafeInt(dailyPlans[dc.dateStr][procKey]) : 0;
+                const actualOnDay = dailyActualMap[cRow.id]?.[dc.dateStr]?.[procKey] || 0;
+                const meta = getInspCellDotMeta(val, actualOnDay, dc.dateStr, todayStr);
+                return meta && meta.status === statusFilter;
+              });
+            });
+          });
       const card = document.createElement('div');
       card.className = 'table-section-card';
 
@@ -10685,7 +10946,10 @@
 
       let tbodyHtml = '';
       if (lineRows.length === 0) {
-        tbodyHtml = `<tr><td colspan="${8 + dayCount}" style="text-align:center; padding: 20px; color:#94a3b8;">해당 생산주차(${targetDate || '-'})에 등록된 [${lineName}] 검정 내역이 없습니다.</td></tr>`;
+        const emptyText = allLineRows.length === 0
+          ? `해당 생산주차(${targetDate || '-'})에 등록된 [${lineName}] 검정 내역이 없습니다.`
+          : `선택한 상태 조건에 해당하는 [${lineName}] 품목이 없습니다.`;
+        tbodyHtml = `<tr><td colspan="${8 + dayCount}" style="text-align:center; padding: 20px; color:#94a3b8;">${emptyText}</td></tr>`;
       } else {
         const procDefs = [
           { key: 'assembly', label: '조립', cls: 'is-assembly', stField: 'stAssembly' },
@@ -10752,17 +11016,15 @@
                 const pObj = dailyPlans[dc.dateStr];
                 const val = pObj ? parseSafeInt(pObj[pd.key]) : 0;
                 const actualOnDay = dailyActualMap[cRow.id]?.[dc.dateStr]?.[pd.key] || 0;
-                const isPastOrToday = dc.dateStr <= todayStr;
-                const isMismatch = isPastOrToday && (val > actualOnDay);
-                const isMatch = isPastOrToday && (val > 0) && (actualOnDay >= val);
                 if (val > 0) {
                   procPlanSum += val;
                   if (pd.key === 'assembly') dailyQtySums[dIdx] += val;
                   dailyStSeconds[dIdx] += (val * stMap[pd.key]);
                 }
-                const subActualHtml = isMismatch
-                  ? `<span class="insp-mismatch-dot" title="생산일보 실적: ${actualOnDay.toLocaleString()}"></span>`
-                  : (isMatch ? `<span class="insp-match-dot" title="실적 일치 (${actualOnDay.toLocaleString()})"></span>` : '');
+                const dotMeta = getInspCellDotMeta(val, actualOnDay, dc.dateStr, todayStr);
+                const subActualHtml = dotMeta
+                  ? `<span class="${dotMeta.cls}" title="${dotMeta.title}"></span>`
+                  : '';
                 dateCellsHtml += `<td class="insp-v2-date-cell">${subActualHtml}<input type="number" min="${actualOnDay}" class="insp-inline-num insp-v2-date-input" data-row-id="${cRow.id}" data-date="${dc.dateStr}" data-proc="${pd.key}" data-line="${lineName}" data-target="${targetQty}" data-actual="${actualOnDay}" value="${val > 0 ? val : ''}"></td>`;
               }
             });
@@ -10775,7 +11037,7 @@
             const rptTitle = isReportPrinted
               ? '공정검사보고서 출력 완료 (클릭 시 다시 다운로드)'
               : '공정검사보고서 출력 (클릭하여 .xlsx 다운로드)';
-            const rptBadge = isReportPrinted ? '<span aria-hidden="true">✓</span>' : '<span>출력</span>';
+            const rptBadge = isReportPrinted ? '<span>완료</span>' : '<span>출력</span>';
             const rptBtnHtml = `
               <button type="button" class="insp-report-btn ${rptCls}" data-cert-row-id="${escapeHtmlPlan(cRow.id)}" title="${escapeHtmlPlan(rptTitle)}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
@@ -10816,10 +11078,8 @@
 
       const tfootDateTds = dateCols.map((dc, dIdx) => {
         if (dc.isOffDay) return `<td style="background:${dc.offReason ? 'var(--danger-light)' : 'var(--bg-subtle)'};"></td>`;
-        const q = dailyQtySums[dIdx];
         const h = dailyStSeconds[dIdx] / 3600;
         return `<td class="num-cell text-center" data-tfoot-date="${lineName}__${dc.dateStr}">
-          ${q > 0 ? `<strong>${q.toLocaleString()}</strong>` : ''}
           ${h > 0 ? `<span class="insp-st-hours">${h.toFixed(1)}h</span>` : ''}
         </td>`;
       }).join('');
@@ -10924,6 +11184,13 @@
     document.querySelectorAll('#insp-line-filter-group .plan-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         state.inspLineFilter = btn.dataset.line;
+        renderInspectionV2();
+      });
+    });
+
+    document.querySelectorAll('#insp-status-filter-group .plan-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.inspStatusFilter = btn.dataset.status || 'ALL';
         renderInspectionV2();
       });
     });
@@ -11068,14 +11335,30 @@
         }
       });
 
+      const todayStr = getTodayDateString();
+      const updateInspCellDot = (cellTd, cellVal, cellActual, cellDateStr) => {
+        if (!cellTd) return;
+        const dotMeta = getInspCellDotMeta(cellVal, cellActual, cellDateStr, todayStr);
+        let dotEl = cellTd.querySelector('.insp-mismatch-dot, .insp-pending-dot, .insp-match-dot');
+        if (dotMeta) {
+          if (!dotEl) {
+            dotEl = document.createElement('span');
+            cellTd.prepend(dotEl);
+          }
+          dotEl.className = dotMeta.cls;
+          dotEl.title = dotMeta.title;
+        } else if (dotEl) {
+          dotEl.remove();
+        }
+      };
+
       const td = inp.closest('td.insp-v2-date-cell');
       if (isCommit && otherDaysSum + val > targetQty) {
         inp.value = prevVal > 0 ? prevVal : '';
         if (td) {
           td.classList.add('is-limit-error');
           setTimeout(() => td.classList.remove('is-limit-error'), 1500);
-          const staleDot = td.querySelector('.insp-mismatch-dot');
-          if (staleDot && !(dateStr <= getTodayDateString() && prevVal > actualOnDay)) staleDot.remove();
+          updateInspCellDot(td, prevVal, actualOnDay, dateStr);
         }
         const remainCap = Math.max(0, targetQty - otherDaysSum);
         showToast(`로트수량(${targetQty.toLocaleString()})을 초과할 수 없습니다. (입력 가능: ${remainCap.toLocaleString()})`);
@@ -11109,6 +11392,7 @@
             dailyPlans[dateStr][dp] = appliedDpVal;
             if (dpInput) {
               dpInput.value = appliedDpVal > 0 ? appliedDpVal : '';
+              updateInspCellDot(dpInput.closest('td.insp-v2-date-cell'), appliedDpVal, dpActual, dateStr);
             }
             const dpSumTd = container.querySelector(`td[data-row-plan-sum="${rowId}__${dp}"]`);
             if (dpSumTd) {
@@ -11123,33 +11407,14 @@
       }
 
       // 계획 vs 실적 일치/불일치(오늘 이하) 왼쪽 상단 점 UI 즉시 갱신
-      const todayStr = getTodayDateString();
-      const isPastOrToday = dateStr <= todayStr;
-      const isMismatch = isPastOrToday && (val > actualOnDay);
-      const isMatch = isPastOrToday && (val > 0) && (actualOnDay >= val);
-      if (td) {
-        let dotEl = td.querySelector('.insp-mismatch-dot, .insp-match-dot');
-        if (isMismatch || isMatch) {
-          if (!dotEl) {
-            dotEl = document.createElement('span');
-            td.prepend(dotEl);
-          }
-          dotEl.className = isMismatch ? 'insp-mismatch-dot' : 'insp-match-dot';
-          dotEl.title = isMismatch
-            ? `생산일보 실적: ${actualOnDay.toLocaleString()}`
-            : `실적 일치 (${actualOnDay.toLocaleString()})`;
-        } else if (dotEl) {
-          dotEl.remove();
-        }
-      }
+      updateInspCellDot(td, val, actualOnDay, dateStr);
 
       saveLocalInspectionV2();
       markAsDirty(true);
 
-      // 해당 일자 tfoot 합계 갱신 (조립 기준 수량합)
+      // 해당 일자 tfoot 예상공수 갱신
       const masterMap = new Map((state.certMasterItems || []).map(it => [it.code, it]));
       const certRowsForLine = (state.certSavedRows || []).filter(r => r.weekDate === state.inspectionTargetDate && (r.group || '').trim() === lineName);
-      let dQty = 0;
       let dSec = 0;
       certRowsForLine.forEach(cr => {
         const itSt = state.inspV2Data.items[cr.id];
@@ -11157,18 +11422,14 @@
         const pOnDay = itSt && itSt.dailyPlans && itSt.dailyPlans[dateStr];
         if (!pOnDay) return;
         const mIt = masterMap.get(cr.code) || {};
-        if (!excl.assembly) {
-          const av = parseSafeInt(pOnDay.assembly);
-          dQty += av;
-          dSec += av * parseSafeInt(mIt.stAssembly);
-        }
+        if (!excl.assembly) dSec += parseSafeInt(pOnDay.assembly) * parseSafeInt(mIt.stAssembly);
         if (!excl.inspect) dSec += parseSafeInt(pOnDay.inspect) * parseSafeInt(mIt.stInspect);
         if (!excl.pack) dSec += parseSafeInt(pOnDay.pack) * parseSafeInt(mIt.stPack);
       });
       const tfootTd = container.querySelector(`td[data-tfoot-date="${lineName}__${dateStr}"]`);
       if (tfootTd) {
         const h = dSec / 3600;
-        tfootTd.innerHTML = `${dQty > 0 ? `<strong>${dQty.toLocaleString()}</strong>` : ''}${h > 0 ? `<span class="insp-st-hours">${h.toFixed(1)}h</span>` : ''}`;
+        tfootTd.innerHTML = h > 0 ? `<span class="insp-st-hours">${h.toFixed(1)}h</span>` : '';
       }
 
       // 해당 행 합계 & 반 전체 합계 열 실시간 갱신
@@ -11201,6 +11462,25 @@
       if (e.target.classList.contains('insp-v2-date-input')) {
         handleInspInputUpdate(e.target, true);
       }
+    });
+
+    // 수량 불일치(빨간 점) 셀 더블클릭 시 생산일보 실적 수량으로 즉시 맞춤
+    container.addEventListener('dblclick', (e) => {
+      if (isGuestReadOnly(true)) return;
+      const td = e.target.closest('td.insp-v2-date-cell');
+      if (!td) return;
+      const inp = td.querySelector('.insp-v2-date-input');
+      if (!inp) return;
+
+      const dateStr = inp.dataset.date;
+      const actualOnDay = parseSafeInt(inp.dataset.actual);
+      const curVal = parseSafeInt(inp.value);
+      const dotMeta = getInspCellDotMeta(curVal, actualOnDay, dateStr, getTodayDateString());
+      if (!dotMeta || dotMeta.status !== 'mismatch') return;
+
+      inp.value = actualOnDay > 0 ? actualOnDay : '';
+      handleInspInputUpdate(inp, true);
+      showToast(`일보 실적(${actualOnDay.toLocaleString()})에 맞춰 수량을 변경했습니다.`);
     });
 
     // Tab: 우측 셀 이동(브라우저 기본), Enter/Shift+Enter: 아래/위 같은 날짜 셀 이동
@@ -13123,6 +13403,7 @@
   }
 
   async function saveAttendanceToDb(silent = false) {
+    if (isGuestReadOnly(!silent)) return;
     saveLocalAttendanceData();
     if (!isFirestoreActive || !db) {
       if (!silent) showToast('근태 정보가 로컬에 저장되었습니다.');
@@ -13190,7 +13471,15 @@
     return 0;
   }
 
-  const CAL_SCHED_MAX_PREVIEW = 3;
+  function getCalSchedMaxPreview(weekCount) {
+    const calBody = document.getElementById('att-cal-body');
+    const bodyH = (calBody && calBody.clientHeight > 100)
+      ? calBody.clientHeight
+      : Math.max(420, window.innerHeight - 230);
+    const rowH = bodyH / Math.max(weekCount || 5, 5);
+    const availableForChips = rowH - 32;
+    return Math.max(2, Math.min(14, Math.floor(availableForChips / 21)));
+  }
 
   function normalizeCalSchedStatus(rawStatus) {
     const s = String(rawStatus || '').trim();
@@ -13332,10 +13621,12 @@
       }
       yearSel.innerHTML = yHtml;
       yearSel.value = String(yearNum);
+      if (typeof syncCustomSelect === 'function') syncCustomSelect('att-year-select');
     }
     const monthSel = document.getElementById('att-month-select');
     if (monthSel) {
       monthSel.value = String(monthNum).padStart(2, '0');
+      if (typeof syncCustomSelect === 'function') syncCustomSelect('att-month-select');
     }
 
     if (isSched) {
@@ -13348,10 +13639,12 @@
 
     // 범례 렌더링
     const legendEl = document.getElementById('att-legend-wrap');
+    const typeFilter = state.attendanceTypeFilter || 'ALL';
     if (legendEl) {
-      const typePills = (state.attendanceTypes || []).map(t =>
-        `<span class="att-legend-pill"><span class="att-legend-dot" style="background:${t.color};"></span>${t.name}</span>`
-      ).join('');
+      const typePills = (state.attendanceTypes || []).map(t => {
+        const isActive = typeFilter === t.id;
+        return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-att-type-id="${t.id}" title="클릭 시 [${t.name}]만 필터링 (다시 클릭 시 전체)"><span class="att-legend-dot" style="background:${t.color};"></span>${t.name}</span>`;
+      }).join('');
       legendEl.innerHTML = `${typePills}<span class="att-legend-pill" style="background:#fef2f2; color:#b91c1c; border-color:#fecaca;">국경일</span><span class="att-legend-pill" style="background:#f5f3ff; color:#6d28d9; border-color:#ddd6fe;">회사휴무</span>`;
     }
 
@@ -13421,8 +13714,9 @@
             const w = workersMap.get(r.workerId);
             const t = getAttendanceTypeById(r.typeId);
             const wName = w ? w.name : '미상';
+            const isDimmed = typeFilter !== 'ALL' && r.typeId !== typeFilter;
             return `
-              <div class="att-event-chip" draggable="true" data-rec-id="${r.id}" data-date="${ds}" style="background:${t.color || '#2563eb'};" title="${wName} - ${t.name}${r.memo ? ' (' + r.memo + ')' : ''}">
+              <div class="att-event-chip ${isDimmed ? 'is-dimmed' : ''}" draggable="true" data-rec-id="${r.id}" data-date="${ds}" style="background:${t.color || '#2563eb'};" title="${wName} - ${t.name}${r.memo ? ' (' + r.memo + ')' : ''}">
                 <span class="att-event-chip-label">${wName}</span>
                 <span class="att-event-chip-type">${t.name}</span>
               </div>
@@ -13473,11 +13767,15 @@
         const isActive = statusFilter === sd.key;
         return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-status="${sd.key}" title="클릭 시 [${sd.label}] 상태만 강조">${`<span class="cal-status-dot ${sd.cls}"></span>`}${sd.label}</span>`;
       }).join('');
-      const linePills = `
-        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#ef4444;"></span>감지기반</span>
-        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#10b981;"></span>유도등반</span>
-        <span class="att-legend-pill"><span class="att-legend-dot" style="background:#3b82f6;"></span>수신기반</span>
-      `;
+      const lineDefs = [
+        { key: '감지기반', color: '#ef4444' },
+        { key: '유도등반', color: '#10b981' },
+        { key: '수신기반', color: '#3b82f6' }
+      ];
+      const linePills = lineDefs.map(ld => {
+        const isActive = lineFilter === ld.key;
+        return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-line="${ld.key}" title="클릭 시 [${ld.key}]만 필터링 (다시 클릭 시 전체)"><span class="att-legend-dot" style="background:${ld.color};"></span>${ld.key}</span>`;
+      }).join('');
       legendEl.innerHTML = `${linePills}<span style="color:#cbd5e1; margin:0 2px;">|</span>${statusPills}`;
     }
 
@@ -13493,6 +13791,8 @@
     const todayStr = getTodayDateString();
     const statusFilter = state.calSchedStatusFilter || 'ALL';
     const expandedIdx = state.calSchedExpandedWeekIdx;
+    const totalWeeks = Math.max(5, Math.round((endSaturday - startSunday) / (7 * 86400000)) + 1);
+    const maxPreview = getCalSchedMaxPreview(totalWeeks);
 
     const weeksData = [];
     const cursor = new Date(startSunday);
@@ -13510,8 +13810,8 @@
         const ds = formatDateYMD(cursor);
         const rawItems = dateMap.get(ds) || [];
         const filteredItems = rawItems.filter(it => lineFilter === 'ALL' || it.lineName === lineFilter);
-        if (filteredItems.length > CAL_SCHED_MAX_PREVIEW) {
-          maxOverflow = Math.max(maxOverflow, filteredItems.length - CAL_SCHED_MAX_PREVIEW);
+        if (filteredItems.length > maxPreview) {
+          maxOverflow = Math.max(maxOverflow, filteredItems.length - Math.max(1, maxPreview - 1));
         }
 
         filteredItems.forEach(it => {
@@ -13602,8 +13902,9 @@
             tagHtml = `<span class="att-day-tag tag-closed" title="${status.closedReason}">휴무: ${status.closedReason}</span>`;
           }
 
-          const visibleItems = isExpanded ? day.items : day.items.slice(0, CAL_SCHED_MAX_PREVIEW);
-          const hiddenCount = isExpanded ? 0 : Math.max(0, day.items.length - CAL_SCHED_MAX_PREVIEW);
+          const dayLimit = day.items.length <= maxPreview ? maxPreview : Math.max(1, maxPreview - 1);
+          const visibleItems = isExpanded ? day.items : day.items.slice(0, dayLimit);
+          const hiddenCount = isExpanded ? 0 : Math.max(0, day.items.length - dayLimit);
 
           const chipsHtml = visibleItems.map(it => {
             const lineCls = getCalSchedLineClass(it.lineName);
@@ -13660,11 +13961,18 @@
       } else {
         const items = (dateMap.get(selDate) || []).filter(it => lineFilter === 'ALL' || it.lineName === lineFilter);
         detailEl.style.display = 'block';
+        const headerWeekDate = items.length > 0 ? items[0].weekDate : '';
+        const headerJumpBtnHtml = headerWeekDate
+          ? `<button type="button" class="cal-detail-header-jump-btn" data-jump-tab="tab-inspection" data-week-date="${headerWeekDate}" title="해당 주차 일정계획 화면으로 이동">일정계획 바로가기</button>`
+          : '';
         let dHtml = `
           <div class="cal-detail-header">
-            <span class="cal-detail-title">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              ${selDate} 상세 (${items.length}건)
+            <span class="cal-detail-title" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+              <span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                ${selDate} 상세 (${items.length}건)
+              </span>
+              ${headerJumpBtnHtml}
             </span>
             <button type="button" class="cal-detail-close" id="btn-cal-detail-close" title="상세 닫기">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events:none;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -13678,6 +13986,8 @@
             const lineCls = getCalSchedLineClass(it.lineName);
             const stMeta = getCalSchedStatusMeta(it.status);
             const pct = it.planQty > 0 ? Math.round((it.actualQty / it.planQty) * 100) : 0;
+            const isPrinted = !!(state.reportPrintedMap && state.reportPrintedMap[it.certRowId]);
+            const rptStyle = isPrinted ? ' style="background:#dcfce7; color:#15803d; border-color:#86efac;"' : '';
             return `
               <div class="cal-detail-item ${lineCls}">
                 <div class="cal-detail-item-main">
@@ -13686,7 +13996,7 @@
                     ${it.lineName} · 로트 ${it.lotNo || '-'} (${it.lotQty.toLocaleString()}) · 계획 <strong>${it.planQty.toLocaleString()}</strong> / 실적 ${it.actualQty.toLocaleString()} (${pct}%) · <span class="cal-status-dot ${stMeta.dotCls}" style="vertical-align:middle;"></span> ${stMeta.label}
                   </div>
                 </div>
-                <button type="button" class="cal-detail-jump-btn" data-jump-tab="tab-inspection" data-week-date="${it.weekDate}" title="일정계획에서 보기">일정</button>
+                <button type="button" class="cal-detail-jump-btn" data-report-cert-id="${it.certRowId}"${rptStyle} title="${isPrinted ? '공정검사보고서 출력 완료 (클릭 시 다시 다운로드)' : '공정검사보고서 출력 (.xlsx 다운로드)'}">${isPrinted ? '완료' : '출력'}</button>
               </div>
             `;
           }).join('');
@@ -13907,6 +14217,7 @@
   };
 
   function openAttendanceModal({ editId = '', startDate = '', endDate = '', mode = 'worker' } = {}) {
+    if (isGuestReadOnly(true)) return;
     const overlay = document.getElementById('att-modal-overlay');
     if (!overlay) return;
 
@@ -14161,9 +14472,24 @@
       renderAttendanceModule();
     });
 
-    // 생산일정 캘린더: 상단 상태 범례 클릭 필터
+    // 생산일정 / 근태관리 캘린더: 상단 범례 클릭 필터
     document.getElementById('att-legend-wrap')?.addEventListener('click', (e) => {
-      if (state.calendarMode !== 'schedule') return;
+      if (state.calendarMode !== 'schedule') {
+        const typePill = e.target.closest('[data-att-type-id]');
+        if (!typePill) return;
+        const typeId = typePill.dataset.attTypeId;
+        state.attendanceTypeFilter = (state.attendanceTypeFilter === typeId) ? 'ALL' : typeId;
+        renderAttendanceModule();
+        return;
+      }
+      const linePill = e.target.closest('[data-cal-line]');
+      if (linePill) {
+        const ln = linePill.dataset.calLine;
+        state.calSchedLineFilter = (state.calSchedLineFilter === ln) ? 'ALL' : ln;
+        state.calSchedExpandedWeekIdx = null;
+        renderAttendanceModule();
+        return;
+      }
       const pill = e.target.closest('[data-cal-status]');
       if (!pill) return;
       const st = pill.dataset.calStatus;
@@ -14186,6 +14512,15 @@
       }
     });
 
+    let calResizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (state.currentTab !== 'tab-attendance' || state.calendarMode !== 'schedule') return;
+      clearTimeout(calResizeTimer);
+      calResizeTimer = setTimeout(() => {
+        renderAttendanceModule();
+      }, 150);
+    });
+
     // 생산일정 캘린더: 일정계획 바로가기
     document.getElementById('btn-cal-goto-insp')?.addEventListener('click', () => {
       activateTab('tab-inspection');
@@ -14196,6 +14531,14 @@
       if (e.target.closest('#btn-cal-detail-close')) {
         state.calSchedSelectedDate = null;
         renderAttendanceModule();
+        return;
+      }
+      const reportBtn = e.target.closest('[data-report-cert-id]');
+      if (reportBtn) {
+        const certRowId = reportBtn.dataset.reportCertId;
+        if (certRowId && typeof exportProcessInspectionReport === 'function') {
+          exportProcessInspectionReport(certRowId);
+        }
         return;
       }
       const jumpBtn = e.target.closest('[data-jump-tab]');
@@ -14601,6 +14944,23 @@
         }
       });
     }
+
+    document.getElementById('btn-apply-att-type-modal')?.addEventListener('click', () => {
+      if (attTypesTbody) {
+        attTypesTbody.querySelectorAll('tr[data-type-id]').forEach(tr => {
+          const id = tr.dataset.typeId;
+          const item = (state.attendanceTypes || []).find(t => t.id === id);
+          if (!item) return;
+          const nameInp = tr.querySelector('.att-setting-name-input');
+          const colorInp = tr.querySelector('.att-setting-color-input');
+          if (nameInp && nameInp.value.trim()) item.name = nameInp.value.trim();
+          if (colorInp && colorInp.value) item.color = colorInp.value;
+        });
+      }
+      saveAttendanceToDb(true);
+      renderAttendanceModule();
+      showToast('근태유형 및 색상이 캘린더에 적용되었습니다.');
+    });
   }
 
   function initWorkGroupModalEvents() {
@@ -14716,6 +15076,7 @@
       reqNo: '',
       code: '',
       formatNo: '',
+      itemGroup: '',
       name: '',
       siteName: '',
       builder: '',
@@ -14776,6 +15137,13 @@
     return adjustBusinessDayBackward(nextFriday);
   }
 
+  function calcReceiverMfgYmFromWeekDate(weekDateStr) {
+    const normalized = parseShortDateInput(weekDateStr);
+    const m = String(normalized || '').trim().match(/^(\d{4})-(\d{2})-/);
+    if (!m) return '';
+    return `${m[1].slice(2, 4)}${m[2]}`;
+  }
+
   function loadLocalReceiverPlanData() {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.RECEIVER_PLAN);
@@ -14807,6 +15175,10 @@
       const doc = await db.collection('pms_data').doc('receiver_plan').get();
       if (doc.exists && Array.isArray(doc.data()?.rows)) {
         state.receiverPlanRows = doc.data().rows.map(r => trimRpRow(createEmptyReceiverPlanRow(r)));
+        if (Array.isArray(doc.data()?.colOrder)) {
+          rpGridState.columns = loadRpOrderedColumns(doc.data().colOrder);
+          saveRpColumnOrder(rpGridState.columns);
+        }
         saveLocalReceiverPlanData();
         return;
       }
@@ -14815,6 +15187,10 @@
       const fbDoc = await db.collection('pms_metadata').doc('receiver_plan').get();
       if (fbDoc.exists && Array.isArray(fbDoc.data()?.rows)) {
         state.receiverPlanRows = fbDoc.data().rows.map(r => trimRpRow(createEmptyReceiverPlanRow(r)));
+        if (Array.isArray(fbDoc.data()?.colOrder)) {
+          rpGridState.columns = loadRpOrderedColumns(fbDoc.data().colOrder);
+          saveRpColumnOrder(rpGridState.columns);
+        }
         saveLocalReceiverPlanData();
       }
     } catch (err) {
@@ -14823,12 +15199,14 @@
   }
 
   async function saveReceiverPlanToDb(silent = false) {
+    if (isGuestReadOnly(!silent)) return;
     saveLocalReceiverPlanData();
     const cleanRows = JSON.parse(JSON.stringify(state.receiverPlanRows || []));
     let dbSaved = false;
     if (isFirestoreActive && db) {
       const payload = {
         rows: cleanRows,
+        colOrder: (rpGridState?.columns || RP_GRID_COLUMNS).slice(2).map(c => c.key),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       };
       try {
@@ -14970,8 +15348,11 @@
         changed = true;
       }
       if (overwriteExisting || !String(row.mfgYm || '').trim()) {
-        row.mfgYm = refDate.length >= 7 ? `${refDate.slice(2, 4)}${refDate.slice(5, 7)}` : ymDefault;
-        changed = true;
+        const calcYm = calcReceiverMfgYmFromWeekDate(row.weekDate);
+        if (calcYm) {
+          row.mfgYm = calcYm;
+          changed = true;
+        }
       }
       if (overwriteExisting || !String(row.serialFrom || '').trim()) {
         const nextSerial = (maxSerialByFmtYear.get(key) || 0) + 1;
@@ -14990,18 +15371,21 @@
 
   function populateReceiverPlanFilterOptions() {
     const rows = state.receiverPlanRows || [];
-    const fillSelect = (id, allLabel, values) => {
+    const fillSelect = (id, allLabel, values, labelFormatter = null) => {
       const sel = document.getElementById(id);
       if (!sel) return;
       const prev = sel.value || 'ALL';
       const uniq = Array.from(new Set(values.map(v => String(v || '').trim()).filter(Boolean))).sort();
       sel.innerHTML = `<option value="ALL">${allLabel}</option>` +
-        uniq.map(v => `<option value="${v.replace(/"/g, '&quot;')}">${v}</option>`).join('');
+        uniq.map(v => {
+          const label = typeof labelFormatter === 'function' ? labelFormatter(v) : v;
+          return `<option value="${v.replace(/"/g, '&quot;')}">${String(label).replace(/</g, '&lt;')}</option>`;
+        }).join('');
       sel.value = uniq.includes(prev) ? prev : 'ALL';
       if (typeof syncCustomSelect === 'function') syncCustomSelect(id);
     };
 
-    fillSelect('rp-filter-week', '전체 생산주차', rows.map(r => r.weekDate));
+    fillSelect('rp-filter-week', '전체 생산주차', rows.map(r => r.weekDate), v => formatCertWeekOptionLabel(v));
     fillSelect('rp-filter-item', '전체 품명', rows.map(r => r.name));
     fillSelect('rp-filter-builder', '전체 건설사', rows.map(r => r.builder));
     fillSelect('rp-filter-client', '전체 거래선', rows.map(r => r.client));
@@ -15045,33 +15429,137 @@
     return '';
   }
 
+  const RP_COL_ORDER_STORAGE_KEY = 'pms_rp_col_order_v1';
+  const RP_DISPLAY_OPTS_STORAGE_KEY = 'pms_rp_display_opts_v1';
+  const RP_DATE_HIDE_KEYS = new Set(['issueReqDate', 'weekDate', 'inspectDate']);
+
+  function loadRpDisplayOpts() {
+    try {
+      const raw = localStorage.getItem(RP_DISPLAY_OPTS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          hideCode: !!parsed.hideCode,
+          hideFormat: !!parsed.hideFormat,
+          hideGroup: !!parsed.hideGroup,
+          hideName: !!parsed.hideName,
+          hideDates: !!parsed.hideDates
+        };
+      }
+    } catch (e) { /* ignore */ }
+    return { hideCode: false, hideFormat: false, hideGroup: false, hideName: false, hideDates: false };
+  }
+
+  function saveRpDisplayOpts(opts) {
+    try {
+      localStorage.setItem(RP_DISPLAY_OPTS_STORAGE_KEY, JSON.stringify({
+        hideCode: !!opts.hideCode,
+        hideFormat: !!opts.hideFormat,
+        hideGroup: !!opts.hideGroup,
+        hideName: !!opts.hideName,
+        hideDates: !!opts.hideDates
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function filterVisibleRpColumns(cols, opts = loadRpDisplayOpts()) {
+    const filtered = (cols || []).filter(c => {
+      if (opts.hideCode && c.key === 'code') return false;
+      if (opts.hideFormat && c.key === 'formatNo') return false;
+      if (opts.hideGroup && c.key === 'itemGroup') return false;
+      if (opts.hideName && c.key === 'name') return false;
+      if (opts.hideDates && RP_DATE_HIDE_KEYS.has(c.key)) return false;
+      return true;
+    });
+    return recalcRpFixedCols(filtered);
+  }
+
   const RP_GRID_COLUMNS = [
-    { key: '_chk', label: '선택', editable: false, cls: 'rp-fixed-col rp-col-chk', fixedLeft: 0 },
-    { key: '_no', label: 'NO', editable: false, cls: 'rp-fixed-col rp-col-no', fixedLeft: 36 },
-    { key: 'reqNo', field: 'reqNo', label: '제작의뢰번호', editable: true, cls: 'rp-fixed-col rp-col-req is-mono', fixedLeft: 78 },
-    { key: 'code', field: 'code', label: '품목코드', editable: true, cls: 'rp-fixed-col rp-col-code is-mono', fixedLeft: 208 },
-    { key: 'formatNo', field: 'formatNo', label: '형식번호', editable: true, cls: 'rp-fixed-col rp-col-fmt', fixedLeft: 318 },
-    { key: 'name', field: 'name', label: '품명', editable: true, cls: 'rp-fixed-col rp-col-name', fixedLeft: 403 },
-    { key: 'siteName', field: 'siteName', label: '현장명', editable: true, cls: 'rp-fixed-col rp-col-site', fixedLeft: 533 },
-    { key: 'builder', field: 'builder', label: '건설사', editable: true, cls: 'rp-col-builder' },
-    { key: 'client', field: 'client', label: '거래선', editable: true, cls: 'rp-col-client' },
-    { key: 'manager', field: 'manager', label: '담당자', editable: true, cls: 'rp-col-manager text-center' },
-    { key: 'receiptDate', field: 'receiptDate', label: '접수일', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center' },
-    { key: 'dueDate', field: 'dueDate', label: '납기일자', editable: true, isDate: true, cls: 'rp-col-date rp-col-date-due is-mono text-center' },
-    { key: 'issueReqDate', field: 'issueReqDate', label: '불출요청일', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center' },
-    { key: 'weekDate', field: 'weekDate', label: '생산주차', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center' },
-    { key: 'inspectDate', field: 'inspectDate', label: '수검일자', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center' },
-    { key: 'colorInfo', field: 'colorInfo', label: '외함색상', editable: true, cls: 'rp-col-color' },
-    { key: 'remark', field: 'remark', label: '비고', editable: true, cls: 'rp-col-remark' },
-    { key: 'lotNo', field: 'lotNo', label: '로트번호', editable: true, cls: 'rp-col-lot is-mono text-center' },
-    { key: 'mfgYm', field: 'mfgYm', label: '제조년월', editable: true, cls: 'rp-col-ym is-mono text-center' },
-    { key: 'serialFrom', field: 'serialFrom', label: '제조번호 FROM', editable: true, cls: 'rp-col-serial is-mono text-center' },
-    { key: 'serialTo', field: 'serialTo', label: '제조번호 TO', editable: true, cls: 'rp-col-serial is-mono text-center' }
+    { key: '_chk', label: '선택', editable: false, cls: 'rp-col-chk', width: 36, fixedLeft: 0 },
+    { key: '_no', label: 'NO', editable: false, cls: 'rp-col-no', width: 42, fixedLeft: 36 },
+    { key: 'reqNo', field: 'reqNo', label: '제작의뢰번호', editable: true, cls: 'rp-col-req is-mono', width: 130, fixedLeft: 78 },
+    { key: 'code', field: 'code', label: '품목코드', editable: true, cls: 'rp-col-code is-mono', width: 110, fixedLeft: 208 },
+    { key: 'formatNo', field: 'formatNo', label: '형식번호', editable: true, cls: 'rp-col-fmt', width: 85, fixedLeft: 318 },
+    { key: 'itemGroup', field: 'itemGroup', label: '품목그룹', editable: true, cls: 'rp-col-group text-center', width: 95, fixedLeft: 403 },
+    { key: 'name', field: 'name', label: '품명', editable: true, cls: 'rp-col-name', width: 130, fixedLeft: 498 },
+    { key: 'siteName', field: 'siteName', label: '현장명', editable: true, cls: 'rp-col-site', width: 220, fixedLeft: 628 },
+    { key: 'builder', field: 'builder', label: '건설사', editable: true, cls: 'rp-col-builder', width: 115 },
+    { key: 'client', field: 'client', label: '거래선', editable: true, cls: 'rp-col-client', width: 95 },
+    { key: 'manager', field: 'manager', label: '담당자', editable: true, cls: 'rp-col-manager text-center', width: 75 },
+    { key: 'receiptDate', field: 'receiptDate', label: '접수일', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center', width: 96 },
+    { key: 'dueDate', field: 'dueDate', label: '납기일자', editable: true, isDate: true, cls: 'rp-col-date rp-col-date-due is-mono text-center', width: 96 },
+    { key: 'issueReqDate', field: 'issueReqDate', label: '불출일', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center', width: 96 },
+    { key: 'weekDate', field: 'weekDate', label: '생산주차', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center', width: 96 },
+    { key: 'inspectDate', field: 'inspectDate', label: '수검일자', editable: true, isDate: true, cls: 'rp-col-date is-mono text-center', width: 96 },
+    { key: 'colorInfo', field: 'colorInfo', label: '외함색상', editable: true, cls: 'rp-col-color', width: 120 },
+    { key: 'remark', field: 'remark', label: '비고', editable: true, cls: 'rp-col-remark', width: 130 },
+    { key: 'lotNo', field: 'lotNo', label: '로트번호', editable: true, cls: 'rp-col-lot is-mono text-center', width: 82 },
+    { key: 'mfgYm', field: 'mfgYm', label: '제조년월', editable: true, cls: 'rp-col-ym is-mono text-center', width: 68 },
+    { key: 'serialFrom', field: 'serialFrom', label: '제조번호 FROM', editable: true, cls: 'rp-col-serial is-mono text-center', width: 92 },
+    { key: 'serialTo', field: 'serialTo', label: '제조번호 TO', editable: true, cls: 'rp-col-serial is-mono text-center', width: 92 }
   ];
+
+  function recalcRpFixedCols(cols) {
+    const toggleableFixed = ['code', 'formatNo', 'itemGroup', 'name'];
+    const hiddenFixedCnt = toggleableFixed.reduce((cnt, k) => cnt + (cols.some(c => c.key === k) ? 0 : 1), 0);
+    const fixedLimit = Math.max(2, 8 - hiddenFixedCnt);
+    let left = 0;
+    cols.forEach((col, idx) => {
+      if (idx < fixedLimit) {
+        col.isFixed = true;
+        col.fixedLeft = left;
+        left += Number(col.width || 100);
+      } else {
+        col.isFixed = false;
+        col.fixedLeft = undefined;
+      }
+    });
+    return cols;
+  }
+
+  function loadRpOrderedColumns(overrideKeys = null) {
+    const base = RP_GRID_COLUMNS.map(c => ({ ...c }));
+    try {
+      let savedKeys = Array.isArray(overrideKeys) ? overrideKeys : null;
+      if (!savedKeys) {
+        const raw = localStorage.getItem(RP_COL_ORDER_STORAGE_KEY);
+        if (raw) savedKeys = JSON.parse(raw);
+      }
+      if (Array.isArray(savedKeys) && savedKeys.length > 0) {
+        const pinned = base.slice(0, 2);
+        const dataCols = base.slice(2);
+        const byKey = new Map(dataCols.map(c => [c.key, c]));
+        const ordered = [];
+        savedKeys.forEach(k => {
+          if (byKey.has(k)) {
+            ordered.push(byKey.get(k));
+            byKey.delete(k);
+          }
+        });
+        byKey.forEach(c => ordered.push(c));
+        return recalcRpFixedCols([...pinned, ...ordered]);
+      }
+    } catch (e) { /* ignore */ }
+    return recalcRpFixedCols(base);
+  }
+
+  function saveRpColumnOrder(cols) {
+    try {
+      const visibleKeys = (cols || []).slice(2).map(c => c.key);
+      const visibleSet = new Set(visibleKeys);
+      const prevRaw = localStorage.getItem(RP_COL_ORDER_STORAGE_KEY);
+      const prevKeys = prevRaw ? JSON.parse(prevRaw) : RP_GRID_COLUMNS.slice(2).map(c => c.key);
+      const missingKeys = (Array.isArray(prevKeys) ? prevKeys : []).filter(k => !visibleSet.has(k));
+      RP_GRID_COLUMNS.slice(2).forEach(c => {
+        if (!visibleSet.has(c.key) && !missingKeys.includes(c.key)) missingKeys.push(c.key);
+      });
+      localStorage.setItem(RP_COL_ORDER_STORAGE_KEY, JSON.stringify([...visibleKeys, ...missingKeys]));
+    } catch (e) { /* ignore */ }
+  }
 
   const rpGridState = {
     rows: [],
-    columns: RP_GRID_COLUMNS,
+    columns: filterVisibleRpColumns(loadRpOrderedColumns()),
     anchor: null,
     focus: null,
     isDragging: false,
@@ -15084,11 +15572,12 @@
     if (rpGridState.rows.length === 0) return null;
     const maxR = rpGridState.rows.length - 1;
     const maxC = rpGridState.columns.length - 1;
+    const minDataC = Math.min(2, maxC);
     return {
       r1: Math.max(0, Math.min(maxR, Math.min(rpGridState.anchor.r, rpGridState.focus.r))),
       r2: Math.max(0, Math.min(maxR, Math.max(rpGridState.anchor.r, rpGridState.focus.r))),
-      c1: Math.max(0, Math.min(maxC, Math.min(rpGridState.anchor.c, rpGridState.focus.c))),
-      c2: Math.max(0, Math.min(maxC, Math.max(rpGridState.anchor.c, rpGridState.focus.c)))
+      c1: Math.max(minDataC, Math.min(maxC, Math.min(rpGridState.anchor.c, rpGridState.focus.c))),
+      c2: Math.max(minDataC, Math.min(maxC, Math.max(rpGridState.anchor.c, rpGridState.focus.c)))
     };
   }
 
@@ -15161,9 +15650,50 @@
     return null;
   }
 
+  function canEditReceiverPlan() {
+    const u = state.currentUser;
+    if (!u || u.isGuest) return false;
+    const perms = u.permissions || {};
+    const perm = perms.receiverPlan || perms.plan || 'view';
+    return perm === 'edit';
+  }
+
+  function renderReceiverPlanHeader() {
+    const theadRow = document.querySelector('#rp-excel-table thead tr.plan-header-row-1');
+    if (!theadRow) return;
+    const canEdit = canEditReceiverPlan();
+    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+    theadRow.innerHTML = rpGridState.columns.map(col => {
+      const fixedCls = col.isFixed ? 'rp-fixed-col ' : '';
+      const styleAttr = (col.isFixed && col.fixedLeft !== undefined) ? ` style="left: ${col.fixedLeft}px;"` : '';
+      if (col.key === '_chk') {
+        return `<th class="${fixedCls}${col.cls}"${styleAttr}><input type="checkbox" id="chk-rp-all" title="현재 필터 목록 전체 선택"></th>`;
+      }
+      if (col.key === '_no') {
+        return `<th class="${fixedCls}${col.cls}"${styleAttr}>NO</th>`;
+      }
+      const dragAttr = canEdit ? ' draggable="true" title="드래그하여 열 순서 변경"' : '';
+      return `<th class="${fixedCls}${col.cls}"${styleAttr} data-col-key="${col.key}"${dragAttr}>${esc(col.label)}</th>`;
+    }).join('');
+  }
+
   function renderReceiverPlanModule() {
     if (!Array.isArray(state.receiverPlanRows)) loadLocalReceiverPlanData();
+    const rpOpts = loadRpDisplayOpts();
+    const chkRpCode = document.getElementById('chk-rp-hide-code');
+    const chkRpFmt = document.getElementById('chk-rp-hide-format');
+    const chkRpGroup = document.getElementById('chk-rp-hide-group');
+    const chkRpName = document.getElementById('chk-rp-hide-name');
+    const chkRpDates = document.getElementById('chk-rp-hide-dates');
+    if (chkRpCode) chkRpCode.checked = rpOpts.hideCode;
+    if (chkRpFmt) chkRpFmt.checked = rpOpts.hideFormat;
+    if (chkRpGroup) chkRpGroup.checked = rpOpts.hideGroup;
+    if (chkRpName) chkRpName.checked = rpOpts.hideName;
+    if (chkRpDates) chkRpDates.checked = rpOpts.hideDates;
+
     populateReceiverPlanFilterOptions();
+    renderReceiverPlanHeader();
 
     const tbody = document.getElementById('rp-excel-tbody');
     if (!tbody) return;
@@ -15205,7 +15735,7 @@
     if (filtered.length === 0) {
       rpGridState.anchor = null;
       rpGridState.focus = null;
-      tbody.innerHTML = `<tr><td colspan="21" style="text-align:center; padding:32px; color:var(--text-muted);">표시할 수신기계획 데이터가 없습니다. [+ 행 추가] 또는 [엑셀 입출력 ▾]에서 파일을 업로드하세요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${rpGridState.columns.length}" style="text-align:center; padding:32px; color:var(--text-muted);">표시할 수신기계획 데이터가 없습니다. [+ 행 추가] 또는 [엑셀 관리 ▾]에서 파일을 업로드하세요.</td></tr>`;
       applyRpSelectionClasses();
       return;
     }
@@ -15225,21 +15755,30 @@
       const dueCls = getRpDueClass(row.dueDate, st.isSent);
       const dateErrCls = (row.receiptDate && row.dueDate && row.dueDate < row.receiptDate) ? 'is-date-error' : '';
 
-      const cellsHtml = RP_GRID_COLUMNS.map((col, cIdx) => {
-        const styleAttr = col.fixedLeft !== undefined ? ` style="left: ${col.fixedLeft}px;"` : '';
+      const cellsHtml = rpGridState.columns.map((col, cIdx) => {
+        const fixedCls = col.isFixed ? 'rp-fixed-col ' : '';
+        const fullCls = `${fixedCls}${col.cls}`;
+        const styleAttr = (col.isFixed && col.fixedLeft !== undefined) ? ` style="left: ${col.fixedLeft}px;"` : '';
         if (col.key === '_chk') {
-          return `<td class="${col.cls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"><input type="checkbox" class="chk-rp-row" data-rp-id="${row.id}" ${isChecked ? 'checked' : ''}></td>`;
+          return `<td class="${fullCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"><input type="checkbox" class="chk-rp-row" data-rp-id="${row.id}" ${isChecked ? 'checked' : ''}></td>`;
         }
         if (col.key === '_no') {
-          return `<td class="${col.cls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}">${rIdx + 1}</td>`;
+          const noTitle = canEditReceiverPlan() ? ' title="드래그하여 행 순서 변경"' : '';
+          return `<td class="${fullCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"${noTitle}>${rIdx + 1}</td>`;
         }
-        const val = row[col.field] ?? '';
+        let val = row[col.field] ?? '';
+        if (col.key === 'itemGroup' && !val && row.code) {
+          const mItem = (state.certMasterItems || []).find(i =>
+            String(i.code || '').trim().toLowerCase() === String(row.code || '').trim().toLowerCase()
+          );
+          if (mItem && mItem.itemGroup && mItem.itemGroup !== '-') val = mItem.itemGroup;
+        }
         const escVal = esc(val);
         if (col.key === 'reqNo') {
           const titleText = st.isLocked
             ? `${st.label} (수정 불가)${val ? ' · ' + escVal : ''}`
             : `${st.label}${val ? ' · ' + escVal : ''}`;
-          return `<td class="${col.cls} ${st.dotCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}" title="${titleText}">${escVal}</td>`;
+          return `<td class="${fullCls} ${st.dotCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}" title="${titleText}">${escVal}</td>`;
         }
         const errCls = (col.key === 'dueDate' && dateErrCls) ? ` ${dateErrCls}` : '';
         let titleAttr = '';
@@ -15250,7 +15789,7 @@
         } else if (escVal) {
           titleAttr = ` title="${escVal}"`;
         }
-        return `<td class="${col.cls}${errCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"${titleAttr}>${escVal}</td>`;
+        return `<td class="${fullCls}${errCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"${titleAttr}>${escVal}</td>`;
       }).join('');
 
       return `<tr data-rp-id="${row.id}" data-r="${rIdx}" class="${st.rowCls} ${isChecked ? 'is-rp-selected' : ''} ${dueCls}">${cellsHtml}</tr>`;
@@ -15260,6 +15799,173 @@
   }
 
   function initReceiverPlanEvents() {
+    // 수신기계획 열 헤더 드래그 순서 변경 (수정 권한 있는 사용자만 가능)
+    const rpThead = document.querySelector('#rp-excel-table thead');
+    if (rpThead) {
+      let draggingColKey = null;
+
+      const clearColDragVisuals = () => {
+        rpThead.querySelectorAll('th').forEach(th => {
+          th.classList.remove('rp-col-dragging', 'rp-col-drop-left', 'rp-col-drop-right');
+        });
+      };
+
+      rpThead.addEventListener('dragstart', (e) => {
+        const th = e.target.closest('th[data-col-key]');
+        if (!th || !canEditReceiverPlan()) {
+          e.preventDefault();
+          return;
+        }
+        draggingColKey = th.dataset.colKey;
+        th.classList.add('rp-col-dragging');
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggingColKey);
+        }
+      });
+
+      rpThead.addEventListener('dragover', (e) => {
+        if (!draggingColKey || !canEditReceiverPlan()) return;
+        const targetTh = e.target.closest('th[data-col-key]');
+        if (!targetTh || targetTh.dataset.colKey === draggingColKey) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+
+        rpThead.querySelectorAll('th').forEach(th => th.classList.remove('rp-col-drop-left', 'rp-col-drop-right'));
+        const rect = targetTh.getBoundingClientRect();
+        const isLeft = e.clientX < rect.left + rect.width / 2;
+        targetTh.classList.add(isLeft ? 'rp-col-drop-left' : 'rp-col-drop-right');
+      });
+
+      rpThead.addEventListener('drop', (e) => {
+        if (!draggingColKey || !canEditReceiverPlan()) return;
+        e.preventDefault();
+        const targetTh = e.target.closest('th[data-col-key]');
+        const draggedKey = draggingColKey;
+        draggingColKey = null;
+        const wasLeft = targetTh && targetTh.classList.contains('rp-col-drop-left');
+        clearColDragVisuals();
+
+        if (!targetTh || targetTh.dataset.colKey === draggedKey) return;
+        const targetKey = targetTh.dataset.colKey;
+        const cols = rpGridState.columns;
+        const fromIdx = cols.findIndex(c => c.key === draggedKey);
+        if (fromIdx < 2) return;
+
+        const [moved] = cols.splice(fromIdx, 1);
+        let toIdx = cols.findIndex(c => c.key === targetKey);
+        if (toIdx < 2) {
+          cols.splice(fromIdx, 0, moved);
+          return;
+        }
+        if (!wasLeft) toIdx += 1;
+        cols.splice(toIdx, 0, moved);
+
+        recalcRpFixedCols(cols);
+        saveRpColumnOrder(cols);
+        markAsDirty(true);
+        rpGridState.anchor = null;
+        rpGridState.focus = null;
+        renderReceiverPlanModule();
+        showToast('열 순서가 변경되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
+      });
+
+      rpThead.addEventListener('dragend', () => {
+        draggingColKey = null;
+        clearColDragVisuals();
+      });
+    }
+
+    // 수신기계획 행 드래그 순서 변경 (수정 권한 있는 사용자만 가능)
+    const rpTbody = document.getElementById('rp-excel-tbody');
+    if (rpTbody) {
+      let draggingRowId = null;
+
+      const clearRpDragVisuals = () => {
+        rpTbody.querySelectorAll('tr').forEach(r => {
+          r.classList.remove('rp-row-dragging', 'rp-drop-above', 'rp-drop-below');
+          r.draggable = false;
+        });
+      };
+
+      rpTbody.addEventListener('mousedown', (e) => {
+        const noCell = e.target.closest('td.rp-col-no');
+        if (!noCell) return;
+        const tr = noCell.closest('tr[data-rp-id]');
+        if (!tr) return;
+        if (!canEditReceiverPlan()) return;
+        tr.draggable = true;
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!draggingRowId) {
+          rpTbody.querySelectorAll('tr[draggable="true"]').forEach(r => { r.draggable = false; });
+        }
+      });
+
+      rpTbody.addEventListener('dragstart', (e) => {
+        const tr = e.target.closest('tr[data-rp-id]');
+        if (!tr || !canEditReceiverPlan()) {
+          e.preventDefault();
+          return;
+        }
+        draggingRowId = tr.dataset.rpId;
+        tr.classList.add('rp-row-dragging');
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggingRowId);
+        }
+      });
+
+      rpTbody.addEventListener('dragover', (e) => {
+        if (!draggingRowId || !canEditReceiverPlan()) return;
+        const targetTr = e.target.closest('tr[data-rp-id]');
+        if (!targetTr || targetTr.dataset.rpId === draggingRowId) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+
+        rpTbody.querySelectorAll('tr').forEach(r => r.classList.remove('rp-drop-above', 'rp-drop-below'));
+        const rect = targetTr.getBoundingClientRect();
+        const isAbove = e.clientY < rect.top + rect.height / 2;
+        targetTr.classList.add(isAbove ? 'rp-drop-above' : 'rp-drop-below');
+      });
+
+      rpTbody.addEventListener('drop', (e) => {
+        if (!draggingRowId || !canEditReceiverPlan()) return;
+        e.preventDefault();
+        const targetTr = e.target.closest('tr[data-rp-id]');
+        const draggedId = draggingRowId;
+        draggingRowId = null;
+        const wasAbove = targetTr && targetTr.classList.contains('rp-drop-above');
+        clearRpDragVisuals();
+
+        if (!targetTr || targetTr.dataset.rpId === draggedId) return;
+        const targetId = targetTr.dataset.rpId;
+        const list = state.receiverPlanRows || [];
+        const fromIdx = list.findIndex(r => r.id === draggedId);
+        if (fromIdx < 0) return;
+
+        const [moved] = list.splice(fromIdx, 1);
+        let toIdx = list.findIndex(r => r.id === targetId);
+        if (toIdx < 0) {
+          list.splice(fromIdx, 0, moved);
+          return;
+        }
+        if (!wasAbove) toIdx += 1;
+        list.splice(toIdx, 0, moved);
+
+        saveLocalReceiverPlanData();
+        markAsDirty(true);
+        renderReceiverPlanModule();
+        showToast('행 순서가 변경되었습니다. [저장] 버튼을 눌러 반영하세요.');
+      });
+
+      rpTbody.addEventListener('dragend', () => {
+        draggingRowId = null;
+        clearRpDragVisuals();
+      });
+    }
+
     let acPopup = null;
     function closeRpAutocomplete() {
       if (acPopup) {
@@ -15304,6 +16010,7 @@
           pushRpUndoSnapshot();
           row.code = mItem.code || '';
           row.formatNo = mItem.formatNo && mItem.formatNo !== '-' ? mItem.formatNo : (row.formatNo || '');
+          row.itemGroup = mItem.itemGroup && mItem.itemGroup !== '-' ? mItem.itemGroup : (row.itemGroup || '');
           row.name = getDisplayItemName(mItem);
           recommendReceiverLotAndSerial([row], false);
           rpGridState.editing = null;
@@ -15350,8 +16057,9 @@
       renderReceiverPlanModule();
     });
 
-    // 전체 선택 체크박스
-    document.getElementById('chk-rp-all')?.addEventListener('change', (e) => {
+    // 전체 선택 체크박스 (헤더 재렌더링 대응 위임)
+    document.querySelector('#rp-excel-table thead')?.addEventListener('change', (e) => {
+      if (!e.target || e.target.id !== 'chk-rp-all') return;
       if (!(state.rpSelectedIds instanceof Set)) state.rpSelectedIds = new Set();
       const filtered = getFilteredReceiverPlanRows();
       if (e.target.checked) filtered.forEach(r => state.rpSelectedIds.add(r.id));
@@ -15380,6 +16088,7 @@
         if (mItem) {
           row.code = mItem.code;
           if (!row.formatNo && mItem.formatNo && mItem.formatNo !== '-') row.formatNo = mItem.formatNo;
+          if (!row.itemGroup && mItem.itemGroup && mItem.itemGroup !== '-') row.itemGroup = mItem.itemGroup;
           if (!row.name) row.name = getDisplayItemName(mItem);
           recommendReceiverLotAndSerial([row], false);
         }
@@ -15388,6 +16097,8 @@
       if (col.field === 'weekDate' && nextVal) {
         const calcInspect = calcReceiverInspectDateFromWeekDate(nextVal);
         if (calcInspect) row.inspectDate = calcInspect;
+        const calcYm = calcReceiverMfgYmFromWeekDate(nextVal);
+        if (calcYm) row.mfgYm = calcYm;
       }
 
       if (col.field === 'serialFrom' && nextVal && !row.serialTo) {
@@ -15430,6 +16141,40 @@
       renderReceiverPlanModule();
     }
 
+    let rpImeProxy = scrollWrap ? scrollWrap.querySelector('#rp-ime-proxy') : null;
+    if (scrollWrap && !rpImeProxy) {
+      rpImeProxy = document.createElement('input');
+      rpImeProxy.type = 'text';
+      rpImeProxy.id = 'rp-ime-proxy';
+      rpImeProxy.className = 'rp-ime-proxy';
+      rpImeProxy.lang = 'ko';
+      rpImeProxy.autocomplete = 'off';
+      rpImeProxy.setAttribute('aria-hidden', 'true');
+      rpImeProxy.tabIndex = -1;
+      scrollWrap.appendChild(rpImeProxy);
+    }
+
+    function focusRpGrid() {
+      if (rpImeProxy) {
+        rpImeProxy.value = '';
+        rpImeProxy.focus({ preventScroll: true });
+      } else {
+        scrollWrap?.focus({ preventScroll: true });
+      }
+    }
+
+    if (rpImeProxy) {
+      rpImeProxy.addEventListener('input', () => {
+        const txt = rpImeProxy.value;
+        rpImeProxy.value = '';
+        if (!txt || rpGridState.editing || !rpGridState.anchor) return;
+        const col = rpGridState.columns[rpGridState.anchor.c];
+        if (col && col.editable) {
+          startRpCellEdit(rpGridState.anchor.r, rpGridState.anchor.c, txt, true);
+        }
+      });
+    }
+
     function startRpCellEdit(r, c, initialText, replaceMode) {
       if (rpGridState.editing) commitRpCellEdit(true);
 
@@ -15450,6 +16195,8 @@
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'plan-cell-editor';
+      input.lang = 'ko';
+      input.style.imeMode = 'active';
       input.value = replaceMode ? (initialText !== undefined ? initialText : '') : String(origVal);
 
       td.innerHTML = '';
@@ -15477,7 +16224,7 @@
           rpGridState.focus = { r: nextR, c };
           applyRpSelectionClasses();
           scrollRpCellIntoView(nextR, c);
-          scrollWrap?.focus({ preventScroll: true });
+          focusRpGrid();
         } else if (e.key === 'Tab') {
           e.preventDefault();
           commitRpCellEdit(true);
@@ -15488,11 +16235,11 @@
             applyRpSelectionClasses();
             scrollRpCellIntoView(next.r, next.c);
           }
-          scrollWrap?.focus({ preventScroll: true });
+          focusRpGrid();
         } else if (e.key === 'Escape') {
           e.preventDefault();
           commitRpCellEdit(false);
-          scrollWrap?.focus({ preventScroll: true });
+          focusRpGrid();
         }
       });
 
@@ -15672,6 +16419,8 @@
 
         const r = Number(td.dataset.r);
         const c = Number(td.dataset.c);
+        const colDef = rpGridState.columns[c];
+        if (!colDef || colDef.key === '_chk' || colDef.key === '_no') return;
 
         if (e.shiftKey && rpGridState.anchor) {
           rpGridState.focus = { r, c };
@@ -15681,8 +16430,9 @@
           rpGridState.isDragging = true;
         }
 
+        e.preventDefault();
         applyRpSelectionClasses();
-        scrollWrap.focus({ preventScroll: true });
+        focusRpGrid();
       });
 
       tbody.addEventListener('mouseover', (e) => {
@@ -15690,7 +16440,9 @@
         const td = e.target.closest('td[data-r][data-c]');
         if (!td) return;
         const r = Number(td.dataset.r);
-        const c = Number(td.dataset.c);
+        const c = Math.max(2, Number(td.dataset.c));
+        const colDef = rpGridState.columns[c];
+        if (!colDef || colDef.key === '_chk' || colDef.key === '_no') return;
         if (!rpGridState.focus || rpGridState.focus.r !== r || rpGridState.focus.c !== c) {
           rpGridState.focus = { r, c };
           applyRpSelectionClasses();
@@ -15707,6 +16459,8 @@
         if (!td) return;
         const r = Number(td.dataset.r);
         const c = Number(td.dataset.c);
+        const colDef = rpGridState.columns[c];
+        if (!colDef || colDef.key === '_chk' || colDef.key === '_no') return;
         startRpCellEdit(r, c, undefined, false);
       });
 
@@ -15739,7 +16493,7 @@
           let nc = cur.c;
           if (e.key === 'ArrowUp') nr = Math.max(0, nr - 1);
           if (e.key === 'ArrowDown') nr = Math.min(maxR, nr + 1);
-          if (e.key === 'ArrowLeft') nc = Math.max(0, nc - 1);
+          if (e.key === 'ArrowLeft') nc = Math.max(2, nc - 1);
           if (e.key === 'ArrowRight') nc = Math.min(maxC, nc + 1);
 
           if (e.shiftKey) {
@@ -15936,6 +16690,8 @@
         if (!selIds.includes(r.id)) return;
         if (wVal) {
           r.weekDate = wVal;
+          const calcYm = calcReceiverMfgYmFromWeekDate(wVal);
+          if (calcYm) r.mfgYm = calcYm;
           if (!iVal) {
             const calcInspect = calcReceiverInspectDateFromWeekDate(wVal);
             if (calcInspect) r.inspectDate = calcInspect;
@@ -15950,10 +16706,41 @@
       showToast(`${selIds.length}개 행이 일괄 수정되었습니다.`);
     });
 
-    // 엑셀 입출력 드롭다운
+    // 표시 옵션 드롭다운 (품목코드 / 형식번호 / 날짜 일괄 숨김)
+    const rpOptWrap = document.getElementById('rp-opt-dropdown-wrap');
     const rpFileWrap = document.getElementById('rp-file-dropdown-wrap');
+    document.getElementById('btn-rp-options')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      rpFileWrap?.classList.remove('is-open');
+      rpOptWrap?.classList.toggle('is-open');
+    });
+    rpOptWrap?.querySelector('.plan-dropdown-menu')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+    const onRpDisplayOptChange = () => {
+      const opts = {
+        hideCode: !!document.getElementById('chk-rp-hide-code')?.checked,
+        hideFormat: !!document.getElementById('chk-rp-hide-format')?.checked,
+        hideGroup: !!document.getElementById('chk-rp-hide-group')?.checked,
+        hideName: !!document.getElementById('chk-rp-hide-name')?.checked,
+        hideDates: !!document.getElementById('chk-rp-hide-dates')?.checked
+      };
+      saveRpDisplayOpts(opts);
+      rpGridState.columns = filterVisibleRpColumns(loadRpOrderedColumns(), opts);
+      rpGridState.anchor = null;
+      rpGridState.focus = null;
+      renderReceiverPlanModule();
+    };
+    document.getElementById('chk-rp-hide-code')?.addEventListener('change', onRpDisplayOptChange);
+    document.getElementById('chk-rp-hide-format')?.addEventListener('change', onRpDisplayOptChange);
+    document.getElementById('chk-rp-hide-group')?.addEventListener('change', onRpDisplayOptChange);
+    document.getElementById('chk-rp-hide-name')?.addEventListener('change', onRpDisplayOptChange);
+    document.getElementById('chk-rp-hide-dates')?.addEventListener('change', onRpDisplayOptChange);
+
+    // 엑셀 입출력 드롭다운
     document.getElementById('btn-rp-file-menu')?.addEventListener('click', (e) => {
       e.stopPropagation();
+      rpOptWrap?.classList.remove('is-open');
       rpFileWrap?.classList.toggle('is-open');
     });
     document.getElementById('btn-rp-upload-excel')?.addEventListener('click', () => {
@@ -16003,6 +16790,7 @@
               reqNo: pick(obj, ['제작의뢰번호']),
               code,
               formatNo: fmt,
+              itemGroup: pick(obj, ['품목그룹', '그룹']) || (mItem && mItem.itemGroup && mItem.itemGroup !== '-' ? mItem.itemGroup : ''),
               name,
               siteName: pick(obj, ['현장명']),
               builder: pick(obj, ['건설사']),
@@ -16016,7 +16804,7 @@
               colorInfo: pick(obj, ['외함색상', '색상정보']),
               remark: pick(obj, ['비고']),
               lotNo: pick(obj, ['로트번호', 'Lot no.', 'LOT NO']),
-              mfgYm: pick(obj, ['제조년월']),
+              mfgYm: pick(obj, ['제조년월']) || (weekDate ? calcReceiverMfgYmFromWeekDate(weekDate) : ''),
               serialFrom: sFrom,
               serialTo: sTo
             }));
@@ -16047,6 +16835,7 @@
         '제작의뢰번호': r.reqNo || '',
         '품목코드': r.code || '',
         '형식번호': r.formatNo || '',
+        '품목그룹': r.itemGroup || '',
         '품명': r.name || '',
         '현장명': r.siteName || '',
         '검정상태': getReceiverPlanCertStatus(r).label,
@@ -16500,8 +17289,43 @@
   const AUTH_SESSION_DURATION_MS = 4 * 60 * 60 * 1000; // 최초 로그인/재로그인 4시간
   const AUTH_EXTEND_DURATION_MS = 1 * 60 * 60 * 1000;  // 작업 중 만료 시 1시간 연장
   const AUTH_ACTIVE_WINDOW_MS = 30 * 60 * 1000;      // 최근 사용시간 30분 이내
+  const GUEST_SESSION_TIMEOUT_MS = 10 * 60 * 1000;   // 게스트 화면전환 미사용 10분 타임아웃
+  const GUEST_LOGIN_ID = '__guest__';
   let lastAuthActivityAt = Date.now();
   let authSessionTimerId = null;
+
+  function createGuestUser() {
+    return {
+      id: GUEST_LOGIN_ID,
+      loginId: GUEST_LOGIN_ID,
+      name: 'Guest',
+      dept: '',
+      role: 'guest',
+      status: 'active',
+      canApprove: false,
+      mustChangePassword: false,
+      isGuest: true,
+      permissions: {
+        plan: 'view',
+        receiverPlan: 'view',
+        cert: 'view',
+        inspection: 'view',
+        production: 'view',
+        workhours: 'view',
+        attendance: 'view',
+        quality: 'view',
+        settings: 'none'
+      }
+    };
+  }
+
+  function isGuestReadOnly(showMsg = false) {
+    if (state.currentUser && state.currentUser.isGuest) {
+      if (showMsg) showToast('게스트 계정은 조회 전용이므로 등록·수정·저장이 불가합니다.');
+      return true;
+    }
+    return false;
+  }
 
   function parseAuthSessionRaw(raw) {
     if (!raw) return null;
@@ -16589,6 +17413,17 @@
     const remainText = formatSessionRemainText(remainMs);
     el.innerHTML = `<span class="session-dot"></span><span class="session-text">${remainText}</span>`;
 
+    if (state.currentUser.isGuest) {
+      const isUrgent = remainMs <= 3 * 60 * 1000;
+      const isWarn = !isUrgent && remainMs <= 5 * 60 * 1000;
+      el.classList.toggle('is-stage-30m', isUrgent);
+      el.classList.toggle('is-stage-1h', isWarn);
+      el.classList.remove('is-stage-2h', 'is-extendable');
+      el.title = '게스트 남은 시간 (10분간 화면 전환이 없으면 자동 종료됩니다)';
+      el.style.display = 'inline-flex';
+      return;
+    }
+
     const is30m = remainMs <= 30 * 60 * 1000;
     const is1h = !is30m && remainMs <= 60 * 60 * 1000;
     const is2h = !is30m && !is1h && remainMs <= 2 * 60 * 60 * 1000;
@@ -16656,6 +17491,7 @@
     const headerLogoutBtn = document.getElementById('btn-header-logout');
 
     if (!u) {
+      document.documentElement.classList.remove('guest-readonly');
       if (roleEl) roleEl.textContent = '-';
       if (nameEl) nameEl.textContent = '로그인 대기';
       if (alertEl) alertEl.style.display = 'none';
@@ -16667,6 +17503,19 @@
     }
 
     if (headerLogoutBtn) headerLogoutBtn.style.display = 'inline-flex';
+
+    if (u.isGuest) {
+      if (roleEl) {
+        roleEl.textContent = 'G';
+        roleEl.title = '게스트 (조회 전용)';
+      }
+      if (nameEl) nameEl.textContent = 'Guest (조회전용)';
+      if (navUsersBtn) navUsersBtn.style.display = 'none';
+      if (navDataAdminBtn) navDataAdminBtn.style.display = 'none';
+      if (alertEl) alertEl.style.display = 'none';
+      if (navBadge) navBadge.style.display = 'none';
+      return;
+    }
 
     const roleMap = getAuthRolePresetsMap();
     const preset = roleMap[u.role] || roleMap.viewer || AUTH_ROLE_PRESETS.viewer;
@@ -16698,25 +17547,27 @@
 
   function applyAuthPermissions() {
     const u = state.currentUser;
+    document.documentElement.classList.toggle('guest-readonly', !!(u && u.isGuest));
     updateHeaderAuthUI();
     if (!u) return;
 
+    const isAdminRole = u.role === 'admin';
     const perms = u.permissions || {};
-    const planPerm = perms.plan || 'view';
-    const recvPerm = perms.receiverPlan || planPerm;
-    const prodPerm = perms.production || 'view';
-    const whPerm = perms.workhours || 'view';
-    const settingsPerm = (perms.settings && perms.settings !== 'none') ? perms.settings : (u.canApprove ? 'edit' : 'none');
+    const planPerm = isAdminRole ? 'edit' : (perms.plan || 'view');
+    const recvPerm = isAdminRole ? 'edit' : (perms.receiverPlan || planPerm);
+    const prodPerm = isAdminRole ? 'edit' : (perms.production || 'view');
+    const whPerm = isAdminRole ? 'edit' : (perms.workhours || 'view');
+    const settingsPerm = isAdminRole ? 'edit' : ((perms.settings && perms.settings !== 'none') ? perms.settings : (u.canApprove ? 'edit' : 'none'));
 
     const tabMap = {
       'tab-plan': (planPerm === 'none' && recvPerm === 'none') ? 'none' : (planPerm === 'edit' || recvPerm === 'edit' ? 'edit' : 'view'),
       'tab-receiver-plan': recvPerm,
-      'tab-certification': perms.cert || 'view',
-      'tab-cert-settlement': perms.cert || 'view',
-      'tab-inspection': perms.inspection || 'view',
+      'tab-certification': isAdminRole ? 'edit' : (perms.cert || 'view'),
+      'tab-cert-settlement': isAdminRole ? 'edit' : (perms.cert || 'view'),
+      'tab-inspection': isAdminRole ? 'edit' : (perms.inspection || 'view'),
       'tab-production': (prodPerm === 'none' && whPerm === 'none') ? 'none' : (prodPerm === 'edit' || whPerm === 'edit' ? 'edit' : 'view'),
-      'tab-attendance': perms.attendance || 'view',
-      'tab-quality': perms.quality || 'view',
+      'tab-attendance': isAdminRole ? 'edit' : (perms.attendance || 'view'),
+      'tab-quality': isAdminRole ? 'edit' : (perms.quality || 'view'),
       'tab-settings': settingsPerm
     };
 
@@ -16766,6 +17617,10 @@
   function openUserAccountModal() {
     const u = state.currentUser;
     if (!u) return;
+    if (u.isGuest) {
+      showToast('게스트 계정은 조회 전용입니다.');
+      return;
+    }
     const modal = document.getElementById('modal-user-account');
     if (!modal) return;
     const roleMap = getAuthRolePresetsMap();
@@ -16916,6 +17771,13 @@
   function syncAuthAfterDbLoad() {
     const sid = getSavedSessionLoginId();
     if (sid) {
+      if (sid === GUEST_LOGIN_ID) {
+        state.currentUser = createGuestUser();
+        setAuthOverlayVisible(false);
+        applyAuthPermissions();
+        updateSessionTimerUI();
+        return;
+      }
       const found = (state.authUsers || []).find(u => u.loginId === sid && u.status === 'active');
       if (found) {
         state.currentUser = found;
@@ -16950,6 +17812,37 @@
       btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab));
     });
     document.getElementById('btn-go-reset-tab')?.addEventListener('click', () => switchAuthTab('reset'));
+
+    // Guest 접속 (가입 없이 조회 전용 · sessionStorage만 유지 · 화면 전환 10분 타임아웃)
+    document.getElementById('btn-auth-guest-login')?.addEventListener('click', () => {
+      saveAuthSession(GUEST_LOGIN_ID, false, Date.now() + GUEST_SESSION_TIMEOUT_MS);
+      lastAuthActivityAt = Date.now();
+      state.currentUser = createGuestUser();
+      setAuthMsg('auth-login-msg', '');
+      setAuthOverlayVisible(false);
+      applyAuthPermissions();
+      updateSessionTimerUI();
+      showToast('Guest(조회 전용) 모드로 접속했습니다.');
+    });
+
+    // 게스트 화면 전환 시 10분 타임아웃 갱신
+    const refreshGuestOnScreenSwitch = (e) => {
+      if (!state.currentUser || !state.currentUser.isGuest) return;
+      if (e && e.target && !e.target.closest('.nav-tab, .nav-dropdown-item, .plan-seg-btn, .auth-tab-btn')) return;
+      saveAuthSession(GUEST_LOGIN_ID, false, Date.now() + GUEST_SESSION_TIMEOUT_MS);
+      updateSessionTimerUI();
+    };
+    document.addEventListener('click', refreshGuestOnScreenSwitch);
+
+    // 게스트 모드: 메인 영역 내 모든 체크박스 선택 차단
+    document.addEventListener('click', (e) => {
+      if (!state.currentUser || !state.currentUser.isGuest) return;
+      const chk = e.target && e.target.closest && e.target.closest('.main-content input[type="checkbox"]');
+      if (chk) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
 
     // 1) 로그인
     document.getElementById('form-auth-login')?.addEventListener('submit', (e) => {
@@ -17098,7 +17991,9 @@
         return;
       }
       if (Date.now() >= sess.expiresAt) {
-        if (isUserCurrentlyWorking()) {
+        if (state.currentUser.isGuest) {
+          performAuthLogout('10분간 화면 전환이 없어 게스트 접속이 종료되었습니다.');
+        } else if (isUserCurrentlyWorking()) {
           extendAuthSession(AUTH_EXTEND_DURATION_MS);
           updateSessionTimerUI();
           showToast('작업 중이므로 로그인 시간이 1시간 연장되었습니다.');
@@ -17117,6 +18012,10 @@
     });
     document.getElementById('header-session-timer')?.addEventListener('click', () => {
       if (!state.currentUser) return;
+      if (state.currentUser.isGuest) {
+        showToast('게스트는 화면 전환 시 시간이 자동 갱신됩니다.');
+        return;
+      }
       const sess = getSavedAuthSession();
       if (!sess) return;
       const remainMs = sess.expiresAt - Date.now();
@@ -18340,12 +19239,23 @@
       } catch (e) { /* ignore */ }
     };
 
+    const getPlanRowCount = (pd) => {
+      if (!pd || typeof pd !== 'object') return 0;
+      if (pd.rowsByYear && typeof pd.rowsByYear === 'object') {
+        const sum = Object.values(pd.rowsByYear).reduce((acc, yrObj) => (
+          acc + (yrObj && typeof yrObj === 'object' ? Object.keys(yrObj).length : 0)
+        ), 0);
+        if (sum > 0) return sum;
+      }
+      return (pd.rowsByCode && typeof pd.rowsByCode === 'object') ? Object.keys(pd.rowsByCode).length : 0;
+    };
+
     const renderAdminDataStats = () => {
       const tbody = document.getElementById('admin-data-stats-tbody');
       if (!tbody) return;
       const inspCount = getLocalPrefixKeys(STORAGE_KEYS.INSP_V2_PREFIX).length;
       const dailyCount = getLocalPrefixKeys(STORAGE_KEYS.DAILY_V2_PREFIX).length;
-      const planCount = Array.isArray(state.planData?.rows) ? state.planData.rows.length : 0;
+      const planCount = getPlanRowCount(state.planData);
       const rpCount = Array.isArray(state.receiverPlanRows) ? state.receiverPlanRows.length : 0;
       const attCount = Array.isArray(state.attendanceRecords) ? state.attendanceRecords.length : 0;
       const certCount = Array.isArray(state.certSavedRows) ? state.certSavedRows.length : 0;
@@ -18425,9 +19335,8 @@
         if (typeof renderDailyV2 === 'function') renderDailyV2();
         await appendAdminAuditLog('전체 초기화', '생산일보', `${keys.length}일 데이터 초기화`);
       } else if (modKey === 'plan') {
-        const prevCount = Array.isArray(state.planData?.rows) ? state.planData.rows.length : 0;
+        const prevCount = getPlanRowCount(state.planData);
         state.planData = getDefaultPlanData();
-        state.planData.rows = [];
         await savePlanToDb();
         renderPlanModule();
         await appendAdminAuditLog('전체 초기화', '생산계획', `${prevCount}행 초기화`);
