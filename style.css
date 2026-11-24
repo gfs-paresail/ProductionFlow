@@ -404,19 +404,17 @@ body.view-mode-wide .app-container {
   color: var(--primary);
   font-weight: 700;
 }
-
-/* 상위 메뉴 옆 하위 메뉴 배지 칩 (X 없이 깔끔한 텍스트 칩) */
-.nav-sub-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
+.nav-dropdown-item.active::after {
+  content: '✓';
+  margin-left: auto;
   font-size: 11px;
-  font-weight: 700;
-  border-radius: 10px;
-  background: #e0e7ff;
-  color: #3730a3;
-  margin-left: 2px;
-  letter-spacing: -0.2px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+/* 상위 메뉴 옆 하위 메뉴 배지 칩: 상단 바 공간 절약을 위해 숨김 (드롭다운 ✓ 표시로 대체) */
+.nav-tabs .nav-sub-chip {
+  display: none !important;
 }
 
 .line-dot {
@@ -2922,14 +2920,14 @@ html.dark-mode .user-role-circle.role-viewer {
   border: 1px solid #94a3b8;
 }
 .cert-status-badge.status-applied {
-  background-color: #c7d2fe;
-  color: #312e81;
-  border: 1px solid #818cf8;
-}
-.cert-status-badge.status-requested {
   background-color: #fde68a;
   color: #78350f;
   border: 1px solid #f59e0b;
+}
+.cert-status-badge.status-requested {
+  background-color: #ddd6fe;
+  color: #4c1d95;
+  border: 1px solid #8b5cf6;
 }
 .cert-status-badge.status-completed {
   background-color: #bbf7d0;
@@ -2944,10 +2942,10 @@ html.dark-mode .user-role-circle.role-viewer {
 
 /* 행 상태별 배경 틴트 */
 tr.row-status-applied td {
-  background-color: #eef2ff !important;
+  background-color: #fef9c3 !important;
 }
 tr.row-status-requested td {
-  background-color: #fef9c3 !important;
+  background-color: #f3e8ff !important;
 }
 tr.row-status-completed td {
   background-color: #e6f9ed !important;
@@ -3485,6 +3483,90 @@ tr.row-status-failed td {
   border-color: #1e293b;
 }
 
+.plan-hint-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-legend-divider {
+  color: #cbd5e1;
+  font-size: 12px;
+  user-select: none;
+}
+
+/* 생산계획 상태필터: 생산일정 칩 형태 (왼쪽 컬러 바 + 연한 배경) */
+#plan-legend-filters .plan-legend-chip[data-color="yellow"],
+#plan-legend-filters .plan-legend-chip[data-color="pink"],
+#plan-legend-filters .plan-legend-chip[data-color="green"],
+#plan-legend-filters .plan-legend-chip[data-color="blue"],
+#plan-legend-filters .plan-legend-chip[data-color="orange"] {
+  border-radius: 5px;
+  border-left-width: 3px;
+  font-weight: 600;
+  color: #1e293b;
+}
+#plan-legend-filters .plan-legend-chip[data-color="yellow"] {
+  border-color: #fde047;
+  border-left-color: #eab308;
+  background: #fefce8;
+}
+#plan-legend-filters .plan-legend-chip[data-color="pink"] {
+  border-color: #fbcfe8;
+  border-left-color: #ec4899;
+  background: #fdf2f8;
+}
+#plan-legend-filters .plan-legend-chip[data-color="green"] {
+  border-color: #bbf7d0;
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+#plan-legend-filters .plan-legend-chip[data-color="blue"] {
+  border-color: #bfdbfe;
+  border-left-color: #3b82f6;
+  background: #eff6ff;
+}
+#plan-legend-filters .plan-legend-chip[data-color="orange"] {
+  border-color: #fed7aa;
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+#plan-legend-filters .plan-legend-chip[data-color]:not([data-color="ALL"]):hover {
+  filter: brightness(0.97);
+}
+#plan-legend-filters .plan-legend-chip[data-color]:not([data-color="ALL"]).active {
+  box-shadow: 0 0 0 1.5px #1e293b;
+  font-weight: 700;
+}
+
+/* 생산 셀 왼쪽 상단 작은 원형 점 범례 */
+.plan-cell-dot-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.plan-cell-dot-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #475569;
+}
+.plan-cell-dot-sample {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.plan-cell-dot-sample.is-reg { background-color: #64748b; }
+.plan-cell-dot-sample.is-apply { background-color: #f59e0b; }
+.plan-cell-dot-sample.is-qual { background-color: #8b5cf6; }
+.plan-cell-dot-sample.is-done { background-color: #16a34a; }
+
 .plan-dot {
   width: 8px;
   height: 8px;
@@ -3850,7 +3932,10 @@ tr.row-status-failed td {
   box-shadow: 0 0 0 1px #2563eb;
 }
 
-/* 생산계획 셀 검정 등록 상태 표시 점 (좌측 상단) */
+/* 생산계획 셀 검정 진행 상태 표시 점 (좌측 상단 4단계) */
+.plan-excel-table tbody td.plan-cert-reg::before,
+.plan-excel-table tbody td.plan-cert-apply::before,
+.plan-excel-table tbody td.plan-cert-qual::before,
 .plan-excel-table tbody td.plan-cert-done::before,
 .plan-excel-table tbody td.plan-cert-partial::before {
   content: '';
@@ -3863,12 +3948,21 @@ tr.row-status-failed td {
   pointer-events: none;
 }
 
-.plan-excel-table tbody td.plan-cert-done::before {
-  background-color: #16a34a;
+.plan-excel-table tbody td.plan-cert-reg::before,
+.plan-excel-table tbody td.plan-cert-partial::before {
+  background-color: #64748b;
 }
 
-.plan-excel-table tbody td.plan-cert-partial::before {
+.plan-excel-table tbody td.plan-cert-apply::before {
   background-color: #f59e0b;
+}
+
+.plan-excel-table tbody td.plan-cert-qual::before {
+  background-color: #8b5cf6;
+}
+
+.plan-excel-table tbody td.plan-cert-done::before {
+  background-color: #16a34a;
 }
 
 
@@ -6255,13 +6349,13 @@ html.dark-mode .certification-table th {
 }
 
 html.dark-mode tr.row-status-applied td {
-  background-color: #17233b !important;
-  color: #e2e8f0 !important;
+  background-color: #262112 !important;
+  color: #f8fafc !important;
 }
 
 html.dark-mode tr.row-status-requested td {
-  background-color: #262112 !important;
-  color: #f8fafc !important;
+  background-color: #24193b !important;
+  color: #f3e8ff !important;
 }
 
 html.dark-mode tr.row-status-completed td {
@@ -6281,15 +6375,15 @@ html.dark-mode .cert-status-badge.status-registered {
 }
 
 html.dark-mode .cert-status-badge.status-applied {
-  background-color: #1e3a8a;
-  color: #bfdbfe;
-  border-color: #3b82f6;
-}
-
-html.dark-mode .cert-status-badge.status-requested {
   background-color: #78350f;
   color: #fde68a;
   border-color: #d97706;
+}
+
+html.dark-mode .cert-status-badge.status-requested {
+  background-color: #4c1d95;
+  color: #ddd6fe;
+  border-color: #8b5cf6;
 }
 
 html.dark-mode .cert-status-badge.status-completed {
@@ -8985,6 +9079,16 @@ html.dark-mode .rpt-dropzone.is-dragover {
   justify-content: flex-start;
   padding-left: 6px;
 }
+.rpt-pos-pin.is-defect {
+  background: rgba(220, 38, 38, 0.20);
+  border: 1.5px dashed #dc2626;
+  color: #7f1d1d;
+}
+.rpt-pos-pin.is-inspect {
+  background: rgba(124, 58, 237, 0.20);
+  border: 1.5px dashed #7c3aed;
+  color: #4c1d95;
+}
 .insp-v2-date-cell {
   position: relative;
 }
@@ -9228,6 +9332,70 @@ html.dark-mode .insp-v2-date-cell.is-limit-error {
   background: #dbeafe;
   color: #1e40af;
   font-weight: 700;
+}
+
+/* 생산일정 상단 작업반 칩 (캘린더 칩과 동일한 모양) */
+.att-legend-pill.cal-line-chip {
+  border-radius: 5px;
+  border-left-width: 3px;
+  padding: 2px 9px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.att-legend-pill.cal-line-chip.line-sensor {
+  border-color: #fecaca;
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+.att-legend-pill.cal-line-chip.line-guide {
+  border-color: #a7f3d0;
+  border-left-color: #10b981;
+  background: #ecfdf5;
+}
+.att-legend-pill.cal-line-chip.line-receiver {
+  border-color: #bfdbfe;
+  border-left-color: #3b82f6;
+  background: #eff6ff;
+}
+.att-legend-pill.cal-line-chip:hover {
+  filter: brightness(0.97);
+}
+.att-legend-pill.cal-line-chip.is-active-filter {
+  box-shadow: 0 0 0 1.5px #1e293b;
+  font-weight: 700;
+}
+html.dark-mode .att-legend-pill.cal-line-chip {
+  color: #e2e8f0;
+  border-color: #334155;
+}
+html.dark-mode .att-legend-pill.cal-line-chip.line-sensor {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.16);
+}
+html.dark-mode .att-legend-pill.cal-line-chip.line-guide {
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.16);
+}
+html.dark-mode .att-legend-pill.cal-line-chip.line-receiver {
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.16);
+}
+html.dark-mode .att-legend-pill.cal-line-chip.is-active-filter {
+  box-shadow: 0 0 0 1.5px #e2e8f0;
+}
+html.dark-mode .plan-legend-divider { color: #475569; }
+html.dark-mode .plan-cell-dot-item { color: #cbd5e1; }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color]:not([data-color="ALL"]) {
+  color: #e2e8f0;
+  border-color: #334155;
+}
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color="yellow"] { border-left-color: #eab308; background: rgba(234, 179, 8, 0.16); }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color="pink"] { border-left-color: #ec4899; background: rgba(236, 72, 153, 0.16); }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color="green"] { border-left-color: #22c55e; background: rgba(34, 197, 94, 0.16); }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color="blue"] { border-left-color: #3b82f6; background: rgba(59, 130, 246, 0.16); }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color="orange"] { border-left-color: #f97316; background: rgba(249, 115, 22, 0.16); }
+html.dark-mode #plan-legend-filters .plan-legend-chip[data-color]:not([data-color="ALL"]).active {
+  box-shadow: 0 0 0 1.5px #e2e8f0;
 }
 
 /* 우측 사이드바: 선택 날짜 상세 & 주차별 품목그룹 합계 */

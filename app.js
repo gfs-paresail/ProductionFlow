@@ -7869,21 +7869,30 @@
   // =========================================================================
   // 14-B. 생산계획 (tab-plan) — 엑셀형 그리드, 월/주차/전체, 5색 팔레트, 메모지, ALT+드래그
   // =========================================================================
-  function generateYearWeeks(yearStr) {
+  function generateYearWeeks(yearStr, customStartDateStr = '') {
     const y = Number(yearStr) || 2026;
     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
     const weeks = [];
-    // 해당 연도 1월 1일이 포함된 주의 화요일/금요일 기준 생성 (2026년 W1 = 12/30(화), 1/2(금))
-    const jan1 = new Date(y, 0, 1);
-    const dow = jan1.getDay(); // 0=일 .. 5=금
-    // 첫 번째 금요일 찾기 (1월 1일 포함 주)
-    const offsetToFri = (5 - dow + 7) % 7;
-    const firstFri = new Date(y, 0, 1 + offsetToFri);
+
+    let firstFri;
+    let targetYear = y;
+    if (customStartDateStr && /^\d{4}-\d{2}-\d{2}$/.test(customStartDateStr)) {
+      const [sy, sm, sd] = customStartDateStr.split('-').map(Number);
+      // 시작일은 무조건 W1의 월요일 -> 금요일은 +4일
+      firstFri = new Date(sy, sm - 1, sd + 4);
+      targetYear = firstFri.getFullYear();
+    } else {
+      // 해당 연도 1월 1일이 포함된 주의 화요일/금요일 기준 생성 (2026년 W1 = 12/30(화), 1/2(금))
+      const jan1 = new Date(y, 0, 1);
+      const dow = jan1.getDay(); // 0=일 .. 5=금
+      const offsetToFri = (5 - dow + 7) % 7;
+      firstFri = new Date(y, 0, 1 + offsetToFri);
+    }
 
     for (let w = 0; w < 53; w++) {
       const fri = new Date(firstFri);
       fri.setDate(firstFri.getDate() + w * 7);
-      if (fri.getFullYear() > y && w >= 51) break;
+      if (fri.getFullYear() > targetYear && w >= 51) break;
 
       const tue = new Date(fri);
       tue.setDate(fri.getDate() - 3);
@@ -7904,7 +7913,7 @@
   function getDefaultPlanData() {
     return {
       year: '2026',
-      startDate: '2026-01-01',
+      startDate: '2025-12-29',
       startMonth: 1,
       endMonth: 3,
       selectedMonths: [1, 2, 3],
@@ -8500,11 +8509,20 @@
       finalRows.push(...ungroupedRows);
     }
 
+    const unregMap = pd.unregisteredOnly ? getCertRegisteredQtyMap() : null;
     return finalRows.filter(row => {
       if (pd.shortageOnly && !row.hasShortage) return false;
       if (!ignoreColorFilter && pd.colorFilter && pd.colorFilter !== 'ALL') {
         const vals = Object.values(row.colors || {});
         if (!vals.includes(pd.colorFilter)) return false;
+      }
+      if (pd.unregisteredOnly && unregMap) {
+        if (row.isGroupRow) return false;
+        const hasUnreg = periodWeeks.some(w => {
+          const pQty = parsePlanNum(row.weeks?.[w.id]?.prod);
+          return pQty > 0 && !(unregMap[`${row.code}__${w.id}`] > 0);
+        });
+        if (!hasUnreg) return false;
       }
       return true;
     });
@@ -8852,6 +8870,10 @@
         badge.remove();
       }
     });
+    const unregBtn = document.getElementById('btn-plan-cert-unregistered');
+    if (unregBtn) {
+      unregBtn.classList.toggle('active', Boolean(pd.unregisteredOnly));
+    }
 
     const tableEl = document.getElementById('plan-excel-table');
     if (tableEl) {
@@ -8925,7 +8947,30 @@
     }
 
     const unitDivisor = pd.stockAmountUnit === '천만원' ? 10000000 : (pd.stockAmountUnit === '백만원' ? 1000000 : 10000);
-    const regMap = getCertRegisteredQtyMap();
+    const certStatusMap = {};
+    const getCertStageRank = (st) => {
+      if (st === '일정완료') return 4;
+      if (st === '품검요청') return 3;
+      if (st === '검정신청') return 2;
+      return 1; // 등록완료 / 부적합 등
+    };
+    (state.certSavedRows || []).forEach(r => {
+      const code = String(r.code || '').trim();
+      const wId = String(r.sourceWeekId || '').trim();
+      if (!code || !wId) return;
+      const key = `${code}__${wId}`;
+      const qty = parseSafeInt(r.qty);
+      const st = r.status || '등록완료';
+      const rank = getCertStageRank(st);
+      if (!certStatusMap[key]) {
+        certStatusMap[key] = { totalQty: 0, doneQty: 0, minRank: rank, statusQty: {} };
+      }
+      const entry = certStatusMap[key];
+      entry.totalQty += qty;
+      if (st === '일정완료') entry.doneQty += qty;
+      if (rank < entry.minRank) entry.minRank = rank;
+      entry.statusQty[st] = (entry.statusQty[st] || 0) + qty;
+    });
     let bodyHtml = '';
     rows.forEach((row, rIdx) => {
       const grpRowCls = row.isGroupRow ? ' class="plan-group-summary-row"' : '';
@@ -8980,19 +9025,28 @@
           }
         }
 
-        // 생산 셀 검정 등록 상태 표시 (녹색 점: 전량등록, 주황 점: 부분등록)
+        // 생산 셀 검정 진행 상태 표시 (4단계: 회색 등록완료 · 주황 검정신청 · 보라 품검요청 · 초록 생산완료)
         let certCls = '';
         if (col.weekId && col.field === 'prod' && !col.isMonth) {
           const pQty = parsePlanNum(raw);
-          const rQty = regMap[`${row.code}__${col.weekId}`] || 0;
-          if (pQty > 0 && rQty > 0) {
-            if (rQty >= pQty) {
-              certCls = ' plan-cert-done';
-              titleText = `검정 등록완료 (${rQty.toLocaleString()} / ${pQty.toLocaleString()})`;
-            } else {
-              certCls = ' plan-cert-partial';
-              titleText = `검정 부분등록 (${rQty.toLocaleString()} / ${pQty.toLocaleString()})`;
+          const stInfo = certStatusMap[`${row.code}__${col.weekId}`];
+          if (pQty > 0 && stInfo && stInfo.totalQty > 0) {
+            let effRank = stInfo.minRank;
+            if (effRank === 4 && stInfo.doneQty < pQty) {
+              effRank = 1; // 일부 수량만 등록·완료된 경우 아직 미등록 잔량이 있으므로 등록완료(회색)로 표시
             }
+            const stageMeta = {
+              1: { cls: ' plan-cert-reg', label: '등록완료' },
+              2: { cls: ' plan-cert-apply', label: '검정신청' },
+              3: { cls: ' plan-cert-qual', label: '품검요청' },
+              4: { cls: ' plan-cert-done', label: '생산완료' }
+            }[effRank];
+            certCls = stageMeta.cls;
+            const statusParts = Object.entries(stInfo.statusQty)
+              .filter(([, q]) => q > 0)
+              .map(([s, q]) => `${s === '일정완료' ? '생산완료' : s} ${q.toLocaleString()}`);
+            const detailStr = statusParts.length > 1 ? ` [${statusParts.join(' · ')}]` : '';
+            titleText = `${stageMeta.label} (${stInfo.totalQty.toLocaleString()} / ${pQty.toLocaleString()})${detailStr}`;
           }
         }
 
@@ -9669,13 +9723,17 @@
     document.getElementById('plan-start-date')?.addEventListener('change', (e) => {
       if (!state.planData) loadLocalPlanData();
       const val = e.target.value;
-      if (!val) return;
-      const newYear = val.slice(0, 4);
-      const newMonth = Number(val.slice(5, 7)) || 1;
+      if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return;
+      const [sy, sm, sd] = val.split('-').map(Number);
+      // 시작일은 무조건 W1의 월요일 -> W1 금요일(+4일) 기준으로 연도와 시작 월을 결정
+      const w1Fri = new Date(sy, sm - 1, sd + 4);
+      const newYear = String(w1Fri.getFullYear());
+      const newMonth = w1Fri.getMonth() + 1;
       if (newYear !== state.planData.year) {
         switchPlanYear(state.planData, newYear);
       }
       state.planData.startDate = val;
+      state.planData.weeks = generateYearWeeks(newYear, val);
       state.planData.selectedMonths = [newMonth, Math.min(12, newMonth + 1), Math.min(12, newMonth + 2)].filter((v, i, a) => a.indexOf(v) === i);
       state.planData.startMonth = state.planData.selectedMonths[0];
       state.planData.endMonth = state.planData.selectedMonths[state.planData.selectedMonths.length - 1];
@@ -9961,6 +10019,15 @@
       const chip = e.target.closest('.plan-legend-chip');
       if (!chip) return;
       state.planData.colorFilter = chip.dataset.color || 'ALL';
+      planGridState.anchor = null;
+      planGridState.focus = null;
+      renderPlanModule();
+    });
+
+    // 미등록 필터 버튼 (계획 수량 > 0 이면서 검정등록 == 0 인 품목만 표시)
+    document.getElementById('btn-plan-cert-unregistered')?.addEventListener('click', () => {
+      if (!state.planData) loadLocalPlanData();
+      state.planData.unregisteredOnly = !state.planData.unregisteredOnly;
       planGridState.anchor = null;
       planGridState.focus = null;
       renderPlanModule();
@@ -10549,10 +10616,37 @@
     }
   }
 
+  async function fetchDocDataWithFallback(primaryCol, primaryId, fallbackId) {
+    if (!isFirestoreActive || !db) return null;
+    try {
+      const doc = await db.collection(primaryCol).doc(primaryId).get();
+      if (doc.exists) return doc.data();
+    } catch (e) { /* fallback below */ }
+    try {
+      const fbDoc = await db.collection('pms_metadata').doc(fallbackId).get();
+      if (fbDoc.exists) return fbDoc.data();
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
   async function saveInspectionV2ToDb() {
     if (isGuestReadOnly(true)) return;
     const weekDate = state.inspectionTargetDate;
     if (!weekDate) return;
+    const activeLine = state.inspLineFilter || 'ALL';
+    let mergedLineName = '';
+
+    if (isFirestoreActive && db && activeLine !== 'ALL') {
+      const remoteRaw = await fetchDocDataWithFallback('pms_insp_v2', weekDate, `insp_v2__${weekDate}`);
+      if (remoteRaw) {
+        const remoteData = normalizeInspV2(remoteRaw, weekDate);
+        const remoteOtherItems = (remoteData.items || []).filter(it => (it.line || '감지기반').trim() !== activeLine);
+        const localLineItems = (state.inspV2Data.items || []).filter(it => (it.line || '감지기반').trim() === activeLine);
+        state.inspV2Data.items = [...remoteOtherItems, ...localLineItems];
+        mergedLineName = activeLine;
+      }
+    }
+
     const meta = getInspV2PlanMeta(state.inspV2Data, weekDate);
     if (meta.hasPlan) {
       state.inspV2Data.startDate = meta.earliestPlanDate;
@@ -10580,7 +10674,8 @@
       }
     }
     markAsDirty(false);
-    showToast(dbSaved ? `${weekDate} 일정계획이 DB에 저장되었습니다.` : `${weekDate} 일정계획이 로컬에 저장되었습니다.`);
+    const mergeLabel = mergedLineName ? ` (${mergedLineName} 병합)` : '';
+    showToast(dbSaved ? `${weekDate} 일정계획이 DB에 저장되었습니다.${mergeLabel}` : `${weekDate} 일정계획이 로컬에 저장되었습니다.`);
     renderSidebarSchedulesV2();
     renderInspectionV2();
   }
@@ -10650,6 +10745,29 @@
     if (isGuestReadOnly(true)) return;
     const dateStr = state.productionDate;
     if (!dateStr) return;
+    const activeLine = state.prodLineFilter || 'ALL';
+    let mergedLineName = '';
+
+    if (isFirestoreActive && db && activeLine !== 'ALL') {
+      const remoteRaw = await fetchDocDataWithFallback('pms_daily_v2', dateStr, `daily_v2__${dateStr}`);
+      if (remoteRaw) {
+        const remoteData = normalizeDailyV2(remoteRaw);
+        const mergedSupportByLine = {
+          ...remoteData.supportByLine,
+          [activeLine]: Array.isArray(state.dailyV2Data?.supportByLine?.[activeLine])
+            ? state.dailyV2Data.supportByLine[activeLine]
+            : []
+        };
+        const remoteOtherEntries = (remoteData.entries || []).filter(ent => (ent.line || '감지기반').trim() !== activeLine);
+        const localLineEntries = (state.dailyV2Data?.entries || []).filter(ent => (ent.line || '감지기반').trim() === activeLine);
+        state.dailyV2Data = {
+          supportByLine: mergedSupportByLine,
+          entries: [...remoteOtherEntries, ...localLineEntries]
+        };
+        mergedLineName = activeLine;
+      }
+    }
+
     saveLocalDailyV2();
     let dbSaved = false;
     if (isFirestoreActive && db) {
@@ -10672,7 +10790,11 @@
       }
     }
     markAsDirty(false);
-    showToast(dbSaved ? `${dateStr} 생산일보가 DB에 저장되었습니다.` : `${dateStr} 생산일보가 로컬에 저장되었습니다.`);
+    const mergeLabel = mergedLineName ? ` (${mergedLineName} 병합)` : '';
+    showToast(dbSaved ? `${dateStr} 생산일보가 DB에 저장되었습니다.${mergeLabel}` : `${dateStr} 생산일보가 로컬에 저장되었습니다.`);
+    if (mergedLineName && typeof renderProductionTable === 'function') {
+      renderProductionTable();
+    }
   }
 
   // 모든 저장된 생산일보(로컬)에서 certRowId별 공정 완료 수량 집계
@@ -12306,23 +12428,27 @@
           }).join('');
         };
 
+        const lineBarColor = targetLine === '감지기반' ? '#ef4444' : (targetLine === '유도등반' ? '#10b981' : '#3b82f6');
         const lineHeader = lineFilter === 'ALL'
           ? `<div class="wh-loss-line-header">
-               <span>📌 ${esc(targetLine)}</span>
+               <span style="display:inline-flex; align-items:center; gap:6px;"><span style="display:inline-block; width:3px; height:12px; border-radius:2px; background:${lineBarColor};"></span>${esc(targetLine)}</span>
                <span style="font-size:11px; color:#64748b;">작업 <b style="color:#dc2626;">${formatWhDuration(lineWorkSum, unit, 1)}</b> · 근태 <b style="color:#d97706;">${formatWhDuration(lineAttSum, unit, 1)}</b></span>
              </div>`
           : '';
+
+        const workIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>`;
+        const attIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
 
         return `
           <div class="wh-loss-line-block">
             ${lineHeader}
             <div class="wh-loss-section-title">
-              <span>🔧 작업 유실</span>
+              <span style="display:inline-flex; align-items:center; gap:5px;">${workIcon}작업 유실</span>
               <span style="color:#dc2626;">${formatWhDuration(lineWorkSum, unit, 1)}</span>
             </div>
             ${renderRows(workRows, lineWorkSum, false)}
             <div class="wh-loss-section-title" style="margin-top:8px;">
-              <span>🗓 근태 유실</span>
+              <span style="display:inline-flex; align-items:center; gap:5px;">${attIcon}근태 유실</span>
               <span style="color:#d97706;">${formatWhDuration(lineAttSum, unit, 1)}</span>
             </div>
             ${renderRows(attRows, lineAttSum, true)}
@@ -13773,13 +13899,13 @@
         return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-status="${sd.key}" title="클릭 시 [${sd.label}] 상태만 강조">${`<span class="cal-status-dot ${sd.cls}"></span>`}${sd.label}</span>`;
       }).join('');
       const lineDefs = [
-        { key: '감지기반', color: '#ef4444' },
-        { key: '유도등반', color: '#10b981' },
-        { key: '수신기반', color: '#3b82f6' }
+        { key: '감지기반', cls: 'line-sensor' },
+        { key: '유도등반', cls: 'line-guide' },
+        { key: '수신기반', cls: 'line-receiver' }
       ];
       const linePills = lineDefs.map(ld => {
         const isActive = lineFilter === ld.key;
-        return `<span class="att-legend-pill is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-line="${ld.key}" title="클릭 시 [${ld.key}]만 필터링 (다시 클릭 시 전체)"><span class="att-legend-dot" style="background:${ld.color};"></span>${ld.key}</span>`;
+        return `<span class="att-legend-pill cal-line-chip ${ld.cls} is-clickable ${isActive ? 'is-active-filter' : ''}" data-cal-line="${ld.key}" title="클릭 시 [${ld.key}]만 필터링 (다시 클릭 시 전체)">${ld.key}</span>`;
       }).join('');
       legendEl.innerHTML = `${linePills}<span style="color:#cbd5e1; margin:0 2px;">|</span>${statusPills}`;
     }
@@ -15390,27 +15516,25 @@
       if (typeof syncCustomSelect === 'function') syncCustomSelect(id);
     };
 
-    fillSelect('rp-filter-week', '전체 생산주차', rows.map(r => r.weekDate), v => formatCertWeekOptionLabel(v));
-    fillSelect('rp-filter-item', '전체 품명', rows.map(r => r.name));
-    fillSelect('rp-filter-builder', '전체 건설사', rows.map(r => r.builder));
-    fillSelect('rp-filter-client', '전체 거래선', rows.map(r => r.client));
+    fillSelect('rp-filter-week', '생산주차', rows.map(r => r.weekDate), v => formatCertWeekOptionLabel(v));
+    fillSelect('rp-filter-item', '품목그룹', rows.map(r => r.itemGroup));
   }
 
   function getFilteredReceiverPlanRows() {
     const rows = state.receiverPlanRows || [];
-    const qSite = (document.getElementById('rp-search-site')?.value || '').trim().toLowerCase();
+    const q = (document.getElementById('rp-search-site')?.value || '').trim().toLowerCase();
     const fWeek = document.getElementById('rp-filter-week')?.value || 'ALL';
     const fItem = document.getElementById('rp-filter-item')?.value || 'ALL';
-    const fBuilder = document.getElementById('rp-filter-builder')?.value || 'ALL';
-    const fClient = document.getElementById('rp-filter-client')?.value || 'ALL';
     const fStatus = state.rpStatusFilter || 'ALL';
 
     return rows.filter(row => {
-      if (qSite && !String(row.siteName || '').toLowerCase().includes(qSite)) return false;
+      if (q) {
+        const matched = [row.code, row.name, row.siteName, row.formatNo, row.builder, row.client]
+          .some(v => String(v || '').toLowerCase().includes(q));
+        if (!matched) return false;
+      }
       if (fWeek !== 'ALL' && String(row.weekDate || '').trim() !== fWeek) return false;
-      if (fItem !== 'ALL' && String(row.name || '').trim() !== fItem) return false;
-      if (fBuilder !== 'ALL' && String(row.builder || '').trim() !== fBuilder) return false;
-      if (fClient !== 'ALL' && String(row.client || '').trim() !== fClient) return false;
+      if (fItem !== 'ALL' && String(row.itemGroup || '').trim() !== fItem) return false;
       if (fStatus !== 'ALL') {
         const st = getReceiverPlanCertStatus(row);
         if (fStatus === '미신청' && st.isSent) return false;
@@ -15716,7 +15840,7 @@
     });
 
     let urgentCnt = 0;
-    filtered.forEach(r => {
+    allRows.forEach(r => {
       const st = getReceiverPlanCertStatus(r);
       if (getRpDueClass(r.dueDate, st.isSent)) urgentCnt++;
     });
@@ -16032,7 +16156,7 @@
 
     // 검색/필터 이벤트
     document.getElementById('rp-search-site')?.addEventListener('input', () => renderReceiverPlanModule());
-    ['rp-filter-week', 'rp-filter-item', 'rp-filter-builder', 'rp-filter-client'].forEach(id => {
+    ['rp-filter-week', 'rp-filter-item'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', () => renderReceiverPlanModule());
     });
 
@@ -16043,23 +16167,6 @@
         state.rpStatusFilter = btn.dataset.rpStatus || 'ALL';
         renderReceiverPlanModule();
       });
-    });
-
-    document.getElementById('btn-rp-reset-filters')?.addEventListener('click', () => {
-      const searchEl = document.getElementById('rp-search-site');
-      if (searchEl) searchEl.value = '';
-      ['rp-filter-week', 'rp-filter-item', 'rp-filter-builder', 'rp-filter-client'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (sel) {
-          sel.value = 'ALL';
-          if (typeof syncCustomSelect === 'function') syncCustomSelect(id);
-        }
-      });
-      state.rpStatusFilter = 'ALL';
-      document.querySelectorAll('#rp-status-filters .plan-legend-chip').forEach(b => {
-        b.classList.toggle('active', b.dataset.rpStatus === 'ALL');
-      });
-      renderReceiverPlanModule();
     });
 
     // 전체 선택 체크박스 (헤더 재렌더링 대응 위임)
@@ -18453,17 +18560,40 @@
   }
 
   function getDefaultReportPositions() {
+    const base = {
+      lot: { x: 0.34, y: 0.18, w: 0.14, h: 0.04 },
+      qty: { x: 0.34, y: 0.23, w: 0.14, h: 0.04 },
+      remark: { x: 0.13, y: 0.27, w: 0.80, h: 0.04 },
+      defectQty: { x: 0.50, y: 0.23, w: 0.12, h: 0.04 },
+      inspectQty: { x: 0.64, y: 0.23, w: 0.12, h: 0.04 }
+    };
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.REPORT_DEFAULT_POS);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.lot && parsed.qty && parsed.remark) return parsed;
+        if (parsed && parsed.lot && parsed.qty && parsed.remark) {
+          return {
+            lot: { ...base.lot, ...parsed.lot },
+            qty: { ...base.qty, ...parsed.qty },
+            remark: { ...base.remark, ...parsed.remark },
+            defectQty: { ...base.defectQty, ...(parsed.defectQty || {}) },
+            inspectQty: { ...base.inspectQty, ...(parsed.inspectQty || {}) }
+          };
+        }
       }
     } catch (e) {}
+    return base;
+  }
+
+  function normalizeReportPositions(srcPos) {
+    const def = getDefaultReportPositions();
+    const s = (srcPos && typeof srcPos === 'object') ? srcPos : {};
     return {
-      lot: { x: 0.34, y: 0.18, w: 0.14, h: 0.04 },
-      qty: { x: 0.34, y: 0.23, w: 0.14, h: 0.04 },
-      remark: { x: 0.13, y: 0.27, w: 0.80, h: 0.04 }
+      lot: { ...def.lot, ...(s.lot || {}) },
+      qty: { ...def.qty, ...(s.qty || {}) },
+      remark: { ...def.remark, ...(s.remark || {}) },
+      defectQty: { ...def.defectQty, ...(s.defectQty || {}) },
+      inspectQty: { ...def.inspectQty, ...(s.inspectQty || {}) }
     };
   }
 
@@ -18496,7 +18626,9 @@
     };
   }
 
-  async function exportProcessInspectionReport(certRowId) {
+  let pendingPrintCertRowId = null;
+
+  function openReportDefectModal(certRowId) {
     const cRow = (state.certSavedRows || []).find(r => r.id === certRowId);
     if (!cRow) return;
     const tpl = findReportTemplateForCode(cRow.code);
@@ -18508,6 +18640,49 @@
       alert('PDF 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하거나 새로고침해 주세요.');
       return;
     }
+
+    pendingPrintCertRowId = certRowId;
+    const lotQty = parseSafeInt(cRow.qty);
+    const prevDefect = parseSafeInt(state.reportPrintedMap?.[cRow.id]?.defectQty);
+    const infoEl = document.getElementById('rpt-defect-item-info');
+    const lotEl = document.getElementById('rpt-defect-lot-qty');
+    const defectEl = document.getElementById('rpt-defect-qty-input');
+    const inspectEl = document.getElementById('rpt-defect-inspect-qty');
+    const modal = document.getElementById('modal-rpt-defect-input');
+
+    if (infoEl) {
+      infoEl.innerHTML = `<b>${escapeHtmlPlan(cRow.name || cRow.code || '')}</b> (${escapeHtmlPlan(cRow.code || '')}) · 로트: <code>${escapeHtmlPlan(cRow.lotNo || '-')}</code>`;
+    }
+    if (lotEl) lotEl.value = lotQty.toLocaleString();
+    if (defectEl) defectEl.value = String(Math.max(0, prevDefect));
+    if (inspectEl) inspectEl.textContent = (lotQty + Math.max(0, prevDefect)).toLocaleString();
+    if (modal) modal.style.display = 'flex';
+    setTimeout(() => {
+      defectEl?.focus();
+      defectEl?.select();
+    }, 50);
+  }
+
+  async function exportProcessInspectionReport(certRowId) {
+    openReportDefectModal(certRowId);
+  }
+
+  async function printProcessInspectionReportPdf(certRowId, defectQtyInput = 0) {
+    const cRow = (state.certSavedRows || []).find(r => r.id === certRowId);
+    if (!cRow) return;
+    const tpl = findReportTemplateForCode(cRow.code);
+    if (!tpl || !tpl.fileBase64) {
+      alert(`[설정 > 공정검사 보고서 양식]에서 품목(${cRow.code})에 연결된 .pdf 양식을 먼저 등록해 주세요.`);
+      return;
+    }
+    if (typeof PDFLib === 'undefined') {
+      alert('PDF 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하거나 새로고침해 주세요.');
+      return;
+    }
+
+    const lotQty = parseSafeInt(cRow.qty);
+    const defectQty = Math.max(0, parseSafeInt(defectQtyInput));
+    const inspectQty = lotQty + defectQty;
 
     try {
       const bytes = base64ToUint8Array(tpl.fileBase64);
@@ -18527,17 +18702,19 @@
       const a4RefH = visW > visH ? 595.28 : 841.89;
       const ptScale = visH / a4RefH;
 
-      const pos = tpl.positions || getDefaultReportPositions();
+      const pos = normalizeReportPositions(tpl.positions);
       const fontSizePt = Number(tpl.fontSize) || 10;
 
       const fields = [
         { key: 'lot', text: String(cRow.lotNo || '').trim(), align: 'center' },
-        { key: 'qty', text: String(parseSafeInt(cRow.qty)), align: 'center' },
-        { key: 'remark', text: String(cRow.site || '').trim(), align: 'left' }
+        { key: 'qty', text: String(lotQty), align: 'center' },
+        { key: 'remark', text: String(cRow.site || '').trim(), align: 'left' },
+        { key: 'defectQty', text: String(defectQty), align: 'center' },
+        { key: 'inspectQty', text: String(inspectQty), align: 'center' }
       ];
 
       for (const f of fields) {
-        if (!f.text) continue;
+        if (f.text === '') continue;
         const p = pos[f.key];
         if (!p) continue;
         const pngInfo = renderTextToPngDataUrl(f.text, fontSizePt);
@@ -18604,7 +18781,9 @@
       state.reportPrintedMap[cRow.id] = {
         printedAt: new Date().toISOString(),
         code: cRow.code || '',
-        lotNo: cRow.lotNo || ''
+        lotNo: cRow.lotNo || '',
+        defectQty,
+        inspectQty
       };
       await saveReportPrintedToDb();
       renderInspectionTable();
@@ -18671,11 +18850,6 @@
     const posSum = document.getElementById('rpt-pos-summary');
     const delBtn = document.getElementById('btn-rpt-tpl-delete');
     const saveBtn = document.getElementById('btn-rpt-tpl-save');
-
-    document.querySelectorAll('#rpt-move-btns .rpt-move-btn').forEach(b => {
-      b.classList.toggle('active', !!(curTpl && (curTpl.group || '분류대기') === b.dataset.moveGroup));
-      b.disabled = !curTpl;
-    });
 
     if (curTpl) {
       if (fileInfo) fileInfo.textContent = curTpl.fileName || curTpl.name || '선택된 파일 없음';
@@ -18867,18 +19041,69 @@
       renderReportTemplatesPane();
     });
 
-    document.getElementById('rpt-move-btns')?.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.rpt-move-btn[data-move-group]');
-      if (!btn) return;
-      const curTpl = (state.reportTemplates || []).find(t => t.id === state.activeReportTemplateId);
-      if (!curTpl) return;
-      const destGroup = btn.dataset.moveGroup;
-      curTpl.group = destGroup;
-      curTpl.updatedAt = new Date().toISOString();
-      await saveReportTemplateToDb(curTpl);
-      activeRptGroup = destGroup;
+    // 등록된 양식 우클릭 -> 작업반 이동 컨텍스트 메뉴
+    const rptCtxMenu = document.getElementById('rpt-context-menu');
+    let rptCtxTargetId = null;
+    const closeRptContextMenu = () => {
+      if (rptCtxMenu) {
+        rptCtxMenu.classList.remove('is-visible');
+        rptCtxMenu.setAttribute('aria-hidden', 'true');
+      }
+      rptCtxTargetId = null;
+    };
+
+    document.getElementById('rpt-tpl-list')?.addEventListener('contextmenu', (e) => {
+      const item = e.target.closest('.rpt-tpl-item');
+      if (!item || !rptCtxMenu) return;
+      e.preventDefault();
+      rptCtxTargetId = item.dataset.tplId || null;
+      if (!rptCtxTargetId) return;
+      state.activeReportTemplateId = rptCtxTargetId;
+      pendingRptItemCodes = [];
       renderReportTemplatesPane();
-      showToast(`[${curTpl.name}] 양식을 [${destGroup}]으로 이동했습니다.`);
+
+      const targetTpl = (state.reportTemplates || []).find(t => t.id === rptCtxTargetId);
+      const curGroup = targetTpl?.group || '분류대기';
+      rptCtxMenu.querySelectorAll('.rpt-ctx-move-btn').forEach(b => {
+        const isSame = b.dataset.moveGroup === curGroup;
+        b.disabled = isSame;
+        b.style.opacity = isSame ? '0.45' : '';
+      });
+
+      const menuW = 196;
+      const menuH = 170;
+      const left = Math.min(e.clientX + 8, window.innerWidth - menuW - 12);
+      const top = Math.min(e.clientY + 6, window.innerHeight - menuH - 12);
+      rptCtxMenu.style.left = `${Math.max(8, left)}px`;
+      rptCtxMenu.style.top = `${Math.max(8, top)}px`;
+      rptCtxMenu.classList.add('is-visible');
+      rptCtxMenu.setAttribute('aria-hidden', 'false');
+    });
+
+    rptCtxMenu?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.rpt-ctx-move-btn[data-move-group]');
+      if (!btn || btn.disabled) return;
+      const targetId = rptCtxTargetId || state.activeReportTemplateId;
+      const targetTpl = (state.reportTemplates || []).find(t => t.id === targetId);
+      const destGroup = btn.dataset.moveGroup;
+      closeRptContextMenu();
+      if (!targetTpl || !destGroup) return;
+      targetTpl.group = destGroup;
+      targetTpl.updatedAt = new Date().toISOString();
+      await saveReportTemplateToDb(targetTpl);
+      activeRptGroup = destGroup;
+      state.activeReportTemplateId = targetTpl.id;
+      renderReportTemplatesPane();
+      showToast(`[${targetTpl.fileName || targetTpl.name}] 양식을 [${destGroup}]으로 이동했습니다.`);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (rptCtxMenu && rptCtxMenu.classList.contains('is-visible') && !rptCtxMenu.contains(e.target)) {
+        closeRptContextMenu();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRptContextMenu();
     });
 
     document.getElementById('btn-rpt-open-picker')?.addEventListener('click', () => {
@@ -18998,7 +19223,13 @@
     let posDragStart = null;
 
     const updatePosPinsUI = () => {
-      const map = { lot: 'rpt-pin-lot', qty: 'rpt-pin-qty', remark: 'rpt-pin-remark' };
+      const map = {
+        lot: 'rpt-pin-lot',
+        qty: 'rpt-pin-qty',
+        remark: 'rpt-pin-remark',
+        defectQty: 'rpt-pin-defectQty',
+        inspectQty: 'rpt-pin-inspectQty'
+      };
       Object.entries(map).forEach(([k, id]) => {
         const el = document.getElementById(id);
         const p = draftPositions[k];
@@ -19059,6 +19290,8 @@
       posDragStart = null;
       if (activePosField === 'lot') activePosField = 'qty';
       else if (activePosField === 'qty') activePosField = 'remark';
+      else if (activePosField === 'remark') activePosField = 'defectQty';
+      else if (activePosField === 'defectQty') activePosField = 'inspectQty';
       updatePosPinsUI();
     });
 
@@ -19071,12 +19304,7 @@
       }
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-      const srcPos = curTpl.positions || getDefaultReportPositions();
-      draftPositions = {
-        lot: { ...srcPos.lot },
-        qty: { ...srcPos.qty },
-        remark: { ...srcPos.remark }
-      };
+      draftPositions = normalizeReportPositions(curTpl.positions);
       activePosField = 'lot';
 
       const modal = document.getElementById('modal-rpt-pdf-pos');
@@ -19113,11 +19341,7 @@
     document.getElementById('btn-rpt-save-pos')?.addEventListener('click', async () => {
       const curTpl = (state.reportTemplates || []).find(t => t.id === state.activeReportTemplateId);
       if (!curTpl) return;
-      const savedPos = {
-        lot: { ...draftPositions.lot },
-        qty: { ...draftPositions.qty },
-        remark: { ...draftPositions.remark }
-      };
+      const savedPos = normalizeReportPositions(draftPositions);
       curTpl.positions = savedPos;
       curTpl.fontSize = Number(document.getElementById('rpt-font-size')?.value || curTpl.fontSize || 10);
       curTpl.updatedAt = new Date().toISOString();
@@ -19131,19 +19355,11 @@
     document.getElementById('btn-rpt-apply-pos-all')?.addEventListener('click', async () => {
       const allTpls = state.reportTemplates || [];
       if (allTpls.length === 0) return;
-      const savedPos = {
-        lot: { ...draftPositions.lot },
-        qty: { ...draftPositions.qty },
-        remark: { ...draftPositions.remark }
-      };
+      const savedPos = normalizeReportPositions(draftPositions);
       saveDefaultReportPositions(savedPos);
       const fontSize = Number(document.getElementById('rpt-font-size')?.value || 10);
       for (const t of allTpls) {
-        t.positions = {
-          lot: { ...savedPos.lot },
-          qty: { ...savedPos.qty },
-          remark: { ...savedPos.remark }
-        };
+        t.positions = normalizeReportPositions(savedPos);
         t.fontSize = fontSize;
         t.updatedAt = new Date().toISOString();
         await saveReportTemplateToDb(t);
@@ -19170,6 +19386,31 @@
       if (!btn || btn.disabled) return;
       const certRowId = btn.dataset.certRowId;
       if (certRowId) exportProcessInspectionReport(certRowId);
+    });
+
+    // 공정검사보고서 인쇄 전 불량수량 입력 모달 이벤트
+    const closeDefectModal = () => {
+      const m = document.getElementById('modal-rpt-defect-input');
+      if (m) m.style.display = 'none';
+      pendingPrintCertRowId = null;
+    };
+    document.getElementById('btn-rpt-defect-close')?.addEventListener('click', closeDefectModal);
+    document.getElementById('btn-rpt-defect-cancel')?.addEventListener('click', closeDefectModal);
+    document.getElementById('rpt-defect-qty-input')?.addEventListener('input', () => {
+      const cRow = (state.certSavedRows || []).find(r => r.id === pendingPrintCertRowId);
+      const lotQty = cRow ? parseSafeInt(cRow.qty) : 0;
+      const defectQty = Math.max(0, parseSafeInt(document.getElementById('rpt-defect-qty-input')?.value));
+      const inspectEl = document.getElementById('rpt-defect-inspect-qty');
+      if (inspectEl) inspectEl.textContent = (lotQty + defectQty).toLocaleString();
+    });
+    document.getElementById('form-rpt-defect-input')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const targetId = pendingPrintCertRowId;
+      const defectQty = Math.max(0, parseSafeInt(document.getElementById('rpt-defect-qty-input')?.value));
+      closeDefectModal();
+      if (targetId) {
+        await printProcessInspectionReportPdf(targetId, defectQty);
+      }
     });
 
     document.querySelector('.settings-nav-btn[data-pane="settings-pane-reports"]')?.addEventListener('click', renderReportTemplatesPane);
@@ -19911,6 +20152,11 @@
         if (savedTab === 'tab-receiver-plan') {
           const pChip = document.getElementById('chip-plan-mode');
           if (pChip) pChip.textContent = '수신기계획';
+          const planMenu = document.querySelector('.nav-dropdown-item[data-parent-tab="tab-receiver-plan"]')?.closest('.nav-dropdown-menu');
+          if (planMenu) {
+            planMenu.querySelectorAll('.nav-dropdown-item').forEach(el => el.classList.remove('active'));
+            planMenu.querySelector('.nav-dropdown-item[data-parent-tab="tab-receiver-plan"]')?.classList.add('active');
+          }
         } else if (savedTab === 'tab-cert-settlement') {
           const cChip = document.getElementById('chip-cert-mode');
           if (cChip) cChip.textContent = '검정정산';
