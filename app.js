@@ -8043,29 +8043,48 @@
     }
   }
 
+  const PLAN_DISPLAY_OPT_KEYS = [
+    'hideSpecCols', 'hideFormatCol', 'hideModelCol', 'hidePriceCol',
+    'hideBaseCol', 'hideMinMaxCols', 'hideActualCol', 'hideCompareCols',
+    'shortageOnly', 'showStockAmount', 'stockAmountUnit', 'autoGreenOnMove', 'viewMode'
+  ];
+
   async function loadPlanDataFromDb() {
+    const hadLocal = Boolean(localStorage.getItem(STORAGE_KEYS.PLAN_DATA));
     loadLocalPlanData();
+    const localOpts = {};
+    if (hadLocal && state.planData) {
+      PLAN_DISPLAY_OPT_KEYS.forEach(k => { localOpts[k] = state.planData[k]; });
+    }
+    const mergeCloudPlan = (rawDoc) => {
+      const next = normalizePlanData(rawDoc);
+      if (hadLocal) {
+        PLAN_DISPLAY_OPT_KEYS.forEach(k => {
+          if (localOpts[k] !== undefined) next[k] = localOpts[k];
+        });
+      }
+      state.planData = next;
+      saveLocalPlanData();
+    };
     if (!isFirestoreActive || !db) return;
     try {
       const doc = await db.collection('pms_data').doc('production_plan').get();
       if (doc.exists) {
-        state.planData = normalizePlanData(doc.data());
-        saveLocalPlanData();
+        mergeCloudPlan(doc.data());
         return;
       }
     } catch (err) { /* fallback below */ }
     try {
       const fbDoc = await db.collection('pms_metadata').doc('production_plan').get();
       if (fbDoc.exists) {
-        state.planData = normalizePlanData(fbDoc.data());
-        saveLocalPlanData();
+        mergeCloudPlan(fbDoc.data());
       }
     } catch (err) {
       console.warn('생산계획 Firestore 로드 오류:', err);
     }
   }
 
-  async function savePlanToDb() {
+  async function savePlanToDb(silent = false) {
     if (isGuestReadOnly(true)) return;
     if (!state.planData) state.planData = getDefaultPlanData();
     saveLocalPlanData();
@@ -8088,7 +8107,9 @@
       }
     }
     markAsDirty(false);
-    showToast(dbSaved ? '생산계획이 DB에 저장되었습니다.' : '생산계획이 로컬에 저장되었습니다.');
+    if (!silent) {
+      showToast(dbSaved ? '생산계획이 DB에 저장되었습니다.' : '생산계획이 로컬에 저장되었습니다.');
+    }
   }
 
   // 실행 취소 (Ctrl+Z) 히스토리 및 그리드 상태
@@ -9533,9 +9554,9 @@
       }
 
       saveLocalPlanData();
-      markAsDirty(true);
+      await savePlanToDb(true);
       renderPlanModule();
-      showToast(`${targetYear}년 예정물량 업로드 완료 (${updatedCount}개 품목, ${weekIds.join(', ')} 반영)`);
+      showToast(`${targetYear}년 예정물량 업로드 및 저장 완료 (${updatedCount}개 품목, ${weekIds.join(', ')} 반영)`);
     } catch (err) {
       console.error('예정물량 업로드 오류:', err);
       showToast(err.message || '파일 파싱 중 오류가 발생했습니다.');
@@ -9619,9 +9640,9 @@
       });
 
       saveLocalPlanData();
-      markAsDirty(true);
+      await savePlanToDb(true);
       renderPlanModule();
-      showToast(`${targetYear}년 ${targetWeekId} 기간별재고 반영 완료 (${updatedCount}개 품목)`);
+      showToast(`${targetYear}년 ${targetWeekId} 기간별재고 반영 및 저장 완료 (${updatedCount}개 품목)`);
     } catch (err) {
       console.error('기간별재고 업로드 오류:', err);
       showToast(err.message || '파일 파싱 중 오류가 발생했습니다.');
@@ -9838,6 +9859,14 @@
     setupDropdown('plan-io-dropdown-wrap', 'btn-plan-io-menu');
 
     // 품목그룹 ON/OFF 체크박스 및 전체 ON/OFF
+    const commitPlanItemGroupChange = () => {
+      planGridState.anchor = null;
+      planGridState.focus = null;
+      saveLocalPlanData();
+      savePlanToDb(true);
+      renderPlanModule();
+    };
+
     document.getElementById('plan-item-group-checklist')?.addEventListener('change', (e) => {
       const chk = e.target.closest('.chk-plan-item-group');
       if (!chk) return;
@@ -9846,30 +9875,18 @@
       if (chk.checked) cur.add(gName);
       else cur.delete(gName);
       state.planData.mergedItemGroups = Array.from(cur);
-      planGridState.anchor = null;
-      planGridState.focus = null;
-      saveLocalPlanData();
-      markAsDirty(true);
-      renderPlanModule();
+      commitPlanItemGroupChange();
     });
 
     document.getElementById('btn-plan-ig-all-on')?.addEventListener('click', () => {
       const allGroups = Array.from(document.querySelectorAll('#plan-item-group-checklist .chk-plan-item-group')).map(c => c.value);
       state.planData.mergedItemGroups = allGroups;
-      planGridState.anchor = null;
-      planGridState.focus = null;
-      saveLocalPlanData();
-      markAsDirty(true);
-      renderPlanModule();
+      commitPlanItemGroupChange();
     });
 
     document.getElementById('btn-plan-ig-all-off')?.addEventListener('click', () => {
       state.planData.mergedItemGroups = [];
-      planGridState.anchor = null;
-      planGridState.focus = null;
-      saveLocalPlanData();
-      markAsDirty(true);
-      renderPlanModule();
+      commitPlanItemGroupChange();
     });
 
     // 품목그룹 순서 변경 (▲/▼ 버튼 & 드래그 앤 드롭)
@@ -9877,11 +9894,7 @@
     if (igChecklistEl) {
       const applyItemGroupOrder = (newOrder) => {
         state.planData.itemGroupOrder = newOrder;
-        planGridState.anchor = null;
-        planGridState.focus = null;
-        saveLocalPlanData();
-        markAsDirty(true);
-        renderPlanModule();
+        commitPlanItemGroupChange();
       };
 
       igChecklistEl.addEventListener('click', (e) => {
@@ -10147,10 +10160,10 @@
           saveLocalCertData();
           await saveCertDataToDb(true);
           saveLocalPlanData();
-          markAsDirty(true);
+          await savePlanToDb(true);
           renderPlanModule();
         }
-        showToast(`기초·최소·최대재고 ${updated}건이 반영되었습니다.`);
+        showToast(`기초·최소·최대재고 ${updated}건이 반영 및 저장되었습니다.`);
       } catch (err) {
         console.error('기초/최소/최대재고 업로드 오류:', err);
         alert('파일을 읽는 중 오류가 발생했습니다.');
@@ -10159,7 +10172,7 @@
     });
 
     document.getElementById('btn-plan-export-xls')?.addEventListener('click', exportPlanToExcel);
-    document.getElementById('btn-plan-save')?.addEventListener('click', savePlanToDb);
+    document.getElementById('btn-plan-save')?.addEventListener('click', () => savePlanToDb(false));
 
     // 우클릭 팔레트 & 메모 이벤트
     tbody.addEventListener('contextmenu', (e) => {
@@ -12232,6 +12245,9 @@
     document.querySelectorAll('#wh-unit-group .plan-seg-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.unit === (state.whUnit || 'H'));
     });
+    if (state.whIncludeAttLoss === undefined) {
+      try { state.whIncludeAttLoss = localStorage.getItem('pms_wh_include_att_loss') === '1'; } catch (e) {}
+    }
     const attChk = document.getElementById('wh-include-att-loss');
     if (attChk) attChk.checked = !!state.whIncludeAttLoss;
 
@@ -13212,6 +13228,7 @@
     });
     document.getElementById('wh-include-att-loss')?.addEventListener('change', (e) => {
       state.whIncludeAttLoss = !!e.target.checked;
+      try { localStorage.setItem('pms_wh_include_att_loss', state.whIncludeAttLoss ? '1' : '0'); } catch (err) {}
       renderWorkhoursView();
     });
     document.getElementById('wh-item-search')?.addEventListener('input', (e) => {
@@ -16864,7 +16881,7 @@
       const file = e.target.files?.[0];
       if (!file || typeof XLSX === 'undefined') return;
       const reader = new FileReader();
-      reader.onload = (ev) => {
+      reader.onload = async (ev) => {
         try {
           const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
           const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -16925,9 +16942,9 @@
           pushRpUndoSnapshot();
           state.receiverPlanRows = [...(state.receiverPlanRows || []), ...imported];
           saveLocalReceiverPlanData();
-          markAsDirty(true);
+          await saveReceiverPlanToDb(true);
           renderReceiverPlanModule();
-          showToast(`수신기계획 ${imported.length}건을 불러왔습니다.`);
+          showToast(`수신기계획 ${imported.length}건을 불러와 저장했습니다.`);
         } catch (err) {
           console.error('수신기계획 엑셀 파싱 오류:', err);
           alert('엑셀/CSV 파일을 읽는 중 오류가 발생했습니다.');
