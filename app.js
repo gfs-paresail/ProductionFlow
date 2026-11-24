@@ -582,10 +582,12 @@
         }
         db = firebase.firestore();
         isFirestoreActive = true;
-        updateDbStatus(true, 'DB 연결됨');
 
         // Firestore에서 최신 마스터 데이터 및 일정 인덱스를 1회 get()으로 로드
-        await loadMasterDataFromDb();
+        const masterLoaded = await loadMasterDataFromDb();
+        if (masterLoaded) {
+          updateDbStatus(true, 'DB 연결됨');
+        }
         await loadInspectionSchedulesFromDb();
         await loadInspectionDataFromDb(state.inspectionTargetDate);
         await loadCertDataFromDb();
@@ -841,8 +843,11 @@
       }
 
       saveLocalMasterData();
+      return true;
     } catch (err) {
       console.warn('마스터 데이터 DB 로드 오류 (로컬 유지):', err);
+      updateDbStatus(false, 'DB 연결 오류');
+      return false;
     }
   }
 
@@ -17262,6 +17267,27 @@
     return def;
   }
 
+  async function fetchAuthUsersFromDb() {
+    if (!isFirestoreActive || !db) {
+      return { ok: false, localOnly: true, error: new Error('DB 미연결 (로컬 모드)') };
+    }
+    try {
+      const authDoc = await db.collection('pms_metadata').doc('auth_users').get();
+      if (authDoc.exists && Array.isArray(authDoc.data().users) && authDoc.data().users.length > 0) {
+        normalizeAuthConfig(authDoc.data().depts, authDoc.data().rolePresets);
+        localStorage.setItem(STORAGE_KEYS.AUTH_CONFIG, JSON.stringify({ depts: state.authDepts, rolePresets: state.authRolePresets }));
+        syncAuthDeptDropdown();
+        state.authUsers = normalizeAuthUsers(authDoc.data().users);
+        localStorage.setItem(STORAGE_KEYS.AUTH_USERS, JSON.stringify(state.authUsers));
+        return { ok: true, exists: true };
+      }
+      return { ok: true, exists: false };
+    } catch (err) {
+      console.warn('auth_users DB 조회 실패:', err);
+      return { ok: false, error: err };
+    }
+  }
+
   async function saveAuthUsersToDb(silent = true) {
     state.authUsers = normalizeAuthUsers(state.authUsers);
     const depts = getAuthDeptsList();
@@ -17277,13 +17303,16 @@
           rolePresets
         });
         if (!silent) showToast('사용자 및 권한 설정이 DB에 저장되었습니다.');
+        return { ok: true };
       } catch (err) {
         console.warn('auth_users DB 저장 실패:', err);
         if (!silent) showToast('로컬에 저장되었습니다 (DB 오류)');
+        return { ok: false, error: err };
       }
     } else if (!silent) {
       showToast('사용자 및 권한 설정이 로컬에 저장되었습니다.');
     }
+    return { ok: false, localOnly: true };
   }
 
   const AUTH_SESSION_DURATION_MS = 4 * 60 * 60 * 1000; // 최초 로그인/재로그인 4시간
@@ -17845,12 +17874,16 @@
     }, true);
 
     // 1) 로그인
-    document.getElementById('form-auth-login')?.addEventListener('submit', (e) => {
+    document.getElementById('form-auth-login')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const idVal = (document.getElementById('auth-login-id')?.value || '').trim();
       const pwVal = document.getElementById('auth-login-pw')?.value || '';
       const saveId = !!document.getElementById('auth-save-id')?.checked;
       const keepLogin = !!document.getElementById('auth-keep-login')?.checked;
+
+      if (isFirestoreActive && db) {
+        await fetchAuthUsersFromDb();
+      }
 
       const user = (state.authUsers || []).find(u => u.loginId === idVal);
       if (!user || user.passwordHash !== hashAuthPassword(pwVal)) {
@@ -17901,13 +17934,25 @@
         setAuthMsg('auth-signup-msg', '비밀번호 확인이 일치하지 않습니다.');
         return;
       }
+      if (!isFirestoreActive || !db) {
+        setAuthMsg('auth-signup-msg', 'DB에 연결되지 않아 가입 신청을 서버에 전송할 수 없습니다. (로컬 모드 / 네트워크·방화벽 확인 필요)');
+        return;
+      }
+
+      const fetchRes = await fetchAuthUsersFromDb();
+      if (!fetchRes.ok) {
+        const errDetail = fetchRes.error?.code || fetchRes.error?.message || 'DB 조회 오류';
+        setAuthMsg('auth-signup-msg', `서버 사용자 목록 조회에 실패했습니다. (${errDetail})`);
+        return;
+      }
+
       if ((state.authUsers || []).some(u => u.loginId.toLowerCase() === loginId.toLowerCase())) {
         setAuthMsg('auth-signup-msg', '이미 사용 중인 아이디입니다.');
         return;
       }
 
-      const viewerPerms = AUTH_ROLE_PRESETS.viewer.permissions;
-      state.authUsers.push({
+      const viewerPerms = (getAuthRolePresetsMap().viewer || AUTH_ROLE_PRESETS.viewer).permissions;
+      const newUser = {
         id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
         loginId, name, dept,
         passwordHash: hashAuthPassword(pw),
@@ -17919,8 +17964,16 @@
         resetRequestedAt: null,
         permissions: { ...viewerPerms },
         createdAt: new Date().toISOString()
-      });
-      await saveAuthUsersToDb(true);
+      };
+      state.authUsers.push(newUser);
+      const saveRes = await saveAuthUsersToDb(true);
+      if (!saveRes.ok) {
+        state.authUsers = state.authUsers.filter(u => u.id !== newUser.id);
+        localStorage.setItem(STORAGE_KEYS.AUTH_USERS, JSON.stringify(state.authUsers));
+        const errDetail = saveRes.error?.code || saveRes.error?.message || 'DB 권한/네트워크 오류';
+        setAuthMsg('auth-signup-msg', `가입 신청 서버 저장에 실패했습니다. (${errDetail})`);
+        return;
+      }
       document.getElementById('form-auth-signup')?.reset();
       setAuthMsg('auth-signup-msg', '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.', true);
     });
@@ -17930,6 +17983,15 @@
       e.preventDefault();
       const loginId = (document.getElementById('auth-reset-id')?.value || '').trim();
       const name = (document.getElementById('auth-reset-name')?.value || '').trim();
+      if (!isFirestoreActive || !db) {
+        setAuthMsg('auth-reset-msg', 'DB에 연결되지 않아 초기화 요청을 전송할 수 없습니다.');
+        return;
+      }
+      const fetchRes = await fetchAuthUsersFromDb();
+      if (!fetchRes.ok) {
+        setAuthMsg('auth-reset-msg', '서버 사용자 목록 조회에 실패했습니다.');
+        return;
+      }
       const user = (state.authUsers || []).find(u => u.loginId === loginId && u.name === name && u.status === 'active');
       if (!user) {
         setAuthMsg('auth-reset-msg', '일치하는 활성 계정을 찾을 수 없습니다.');
@@ -17937,7 +17999,12 @@
       }
       user.resetRequested = true;
       user.resetRequestedAt = new Date().toISOString();
-      await saveAuthUsersToDb(true);
+      const saveRes = await saveAuthUsersToDb(true);
+      if (!saveRes.ok) {
+        user.resetRequested = false;
+        setAuthMsg('auth-reset-msg', '초기화 요청 저장에 실패했습니다. 관리자에게 문의하세요.');
+        return;
+      }
       document.getElementById('form-auth-reset')?.reset();
       setAuthMsg('auth-reset-msg', '초기화 요청이 접수되었습니다. 관리자에게 임시 비밀번호를 안내받으세요.', true);
     });
@@ -17953,6 +18020,15 @@
       if (m) m.style.display = 'none';
       document.querySelector('.nav-tab[data-tab="tab-settings"]')?.click();
       document.getElementById('btn-settings-nav-users')?.click();
+    });
+    document.getElementById('btn-settings-nav-users')?.addEventListener('click', async () => {
+      if (isFirestoreActive && db) {
+        const res = await fetchAuthUsersFromDb();
+        if (res.ok) {
+          renderAuthManagePane();
+          updateHeaderAuthUI();
+        }
+      }
     });
     const performAuthLogout = (expiredMsg = '') => {
       clearAuthSession();
