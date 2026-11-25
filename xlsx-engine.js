@@ -717,6 +717,12 @@
       <NumberFormat ss:Format="#,##0"/>
       ${thinBorder('#CBD5E1')}
     </Style>
+    <Style ss:ID="CellHour">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
+      <NumberFormat ss:Format="0.0"/>
+      ${thinBorder('#CBD5E1')}
+    </Style>
     <Style ss:ID="CellNeg">
       <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
       <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Color="#DC2626"/>
@@ -734,6 +740,13 @@
       <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#0F172A"/>
       <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
       <NumberFormat ss:Format="#,##0"/>
+      ${thinBorder('#94A3B8')}
+    </Style>
+    <Style ss:ID="SumHour">
+      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#0F172A"/>
+      <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
+      <NumberFormat ss:Format="0.0"/>
       ${thinBorder('#94A3B8')}
     </Style>
     <Style ss:ID="NoteBox">

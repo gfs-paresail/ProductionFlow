@@ -343,7 +343,8 @@
     attendanceExpandedWorkers: [],
 
     // 미저장 변경사항 플래그
-    isDirty: false
+    isDirty: false,
+    dirtyTabs: new Set()
   };
 
   let toastTimer = null;
@@ -470,8 +471,18 @@
     }
   }
 
-  function markAsDirty(isDirty = true) {
-    state.isDirty = isDirty;
+  function markAsDirty(isDirty = true, clearAll = false) {
+    if (!(state.dirtyTabs instanceof Set)) state.dirtyTabs = new Set();
+    if (isDirty) {
+      if (state.currentTab) state.dirtyTabs.add(state.currentTab);
+      state.isDirty = true;
+    } else if (clearAll) {
+      state.dirtyTabs.clear();
+      state.isDirty = false;
+    } else {
+      if (state.currentTab) state.dirtyTabs.delete(state.currentTab);
+      state.isDirty = state.dirtyTabs.size > 0;
+    }
     updateDateStatusPills();
     updateGlobalSaveButton();
   }
@@ -702,20 +713,23 @@
     if (!raw || !Array.isArray(raw.items) || (raw.items.length === 0 && (!Array.isArray(raw.excludedCodes) || raw.excludedCodes.length === 0))) {
       return getDefaultStConfig();
     }
-    return applyAutoExcludeUnassignedLines({
-      items: raw.items.map(it => ({
-        id: it.id || `st_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        line: (it.line || '감지기반').trim(),
-        name: (it.name || '').trim(),
-        mode: it.mode === 'group' ? 'group' : 'single',
-        codes: Array.isArray(it.codes) ? Array.from(new Set(it.codes.map(c => String(c).trim()).filter(Boolean))) : [],
-        stAssembly: parseFloat(it.stAssembly) || 0,
-        stInspect: parseFloat(it.stInspect) || 0,
-        stPack: parseFloat(it.stPack) || 0
-      })).filter(it => it.name),
-      excludedCodes: Array.isArray(raw.excludedCodes) ? Array.from(new Set(raw.excludedCodes.map(c => String(c).trim()).filter(Boolean))) : [],
-      unexcludedCodes: Array.isArray(raw.unexcludedCodes) ? Array.from(new Set(raw.unexcludedCodes.map(c => String(c).trim()).filter(Boolean))) : []
-    });
+    return {
+      ...applyAutoExcludeUnassignedLines({
+        items: raw.items.map(it => ({
+          id: it.id || `st_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          line: (it.line || '감지기반').trim(),
+          name: (it.name || '').trim(),
+          mode: it.mode === 'group' ? 'group' : 'single',
+          codes: Array.isArray(it.codes) ? Array.from(new Set(it.codes.map(c => String(c).trim()).filter(Boolean))) : [],
+          stAssembly: parseFloat(it.stAssembly) || 0,
+          stInspect: parseFloat(it.stInspect) || 0,
+          stPack: parseFloat(it.stPack) || 0
+        })).filter(it => it.name),
+        excludedCodes: Array.isArray(raw.excludedCodes) ? Array.from(new Set(raw.excludedCodes.map(c => String(c).trim()).filter(Boolean))) : [],
+        unexcludedCodes: Array.isArray(raw.unexcludedCodes) ? Array.from(new Set(raw.unexcludedCodes.map(c => String(c).trim()).filter(Boolean))) : []
+      }),
+      targetEff: (Number(raw.targetEff) >= 10 && Number(raw.targetEff) <= 300) ? Number(raw.targetEff) : 100
+    };
   }
 
   function loadLocalStConfig() {
@@ -2363,9 +2377,22 @@
       if (!tabId) return false;
 
       // 미저장 데이터 확인 (작성 중인 데이터 보호)
-      if (state.isDirty && (state.currentTab === 'tab-inspection' || state.currentTab === 'tab-production')) {
+      const isPlanDirty = state.dirtyTabs instanceof Set &&
+        (state.dirtyTabs.has('tab-plan') || state.dirtyTabs.has('tab-receiver-plan'));
+      if (state.isDirty && (
+        state.currentTab === 'tab-inspection' ||
+        state.currentTab === 'tab-production' ||
+        state.currentTab === 'tab-plan' ||
+        state.currentTab === 'tab-receiver-plan' ||
+        isPlanDirty
+      )) {
         const proceed = confirm('저장되지 않은 변경사항이 있습니다. 다른 탭으로 이동하시겠습니까?');
         if (!proceed) return false;
+      }
+
+      // 생산일보/일정계획은 탭 이탈 시 미저장 편집을 폐기하지만, 생산계획/수신기계획은 저장 전까지 미저장 상태를 유지
+      if (state.dirtyTabs instanceof Set && (state.currentTab === 'tab-inspection' || state.currentTab === 'tab-production')) {
+        state.dirtyTabs.delete(state.currentTab);
       }
 
       // 1) 모든 탭 버튼 상태 리셋
@@ -2402,7 +2429,9 @@
         localStorage.setItem('pms_last_cal_mode', state.calendarMode || 'attendance');
         localStorage.setItem('pms_last_daily_mode', (state.activeLines && state.activeLines.daily) || 'daily');
       } catch (e) { /* ignore */ }
-      markAsDirty(false);
+      state.isDirty = state.dirtyTabs instanceof Set ? state.dirtyTabs.size > 0 : false;
+      updateDateStatusPills();
+      updateGlobalSaveButton();
 
       // 4) 탭별 데이터 렌더링 (예외 발생 시에도 화면 전환 상태는 유지)
       try {
@@ -3782,6 +3811,52 @@
     }
   }
 
+  // (4-B) 스마트 날짜 포맷터 ('11-25', '11/25', '1125', '26-11-25' -> '2026-11-25')
+  function formatSmartDateInput(rawVal) {
+    if (!rawVal) return '';
+    const s = String(rawVal).trim();
+    if (!s) return '';
+
+    const curYear = new Date().getFullYear();
+    const curCentury = Math.floor(curYear / 100) * 100;
+    let y = 0, m = 0, d = 0;
+
+    let match = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+    if (match) {
+      y = parseInt(match[1], 10);
+      m = parseInt(match[2], 10);
+      d = parseInt(match[3], 10);
+    } else if ((match = s.match(/^(\d{2})[-/.](\d{1,2})[-/.](\d{1,2})$/))) {
+      y = curCentury + parseInt(match[1], 10);
+      m = parseInt(match[2], 10);
+      d = parseInt(match[3], 10);
+    } else if ((match = s.match(/^(\d{1,2})[-/.\s](\d{1,2})$/))) {
+      y = curYear;
+      m = parseInt(match[1], 10);
+      d = parseInt(match[2], 10);
+    } else if (/^\d{8}$/.test(s)) {
+      y = parseInt(s.slice(0, 4), 10);
+      m = parseInt(s.slice(4, 6), 10);
+      d = parseInt(s.slice(6, 8), 10);
+    } else if (/^\d{6}$/.test(s)) {
+      y = curCentury + parseInt(s.slice(0, 2), 10);
+      m = parseInt(s.slice(2, 4), 10);
+      d = parseInt(s.slice(4, 6), 10);
+    } else if (/^\d{4}$/.test(s)) {
+      y = curYear;
+      m = parseInt(s.slice(0, 2), 10);
+      d = parseInt(s.slice(2, 4), 10);
+    } else {
+      return s;
+    }
+
+    if (m < 1 || m > 12 || d < 1 || d > 31) return s;
+    const dt = new Date(y, m - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return s;
+
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
   // (4) 스마트 로트번호 포맷터 및 DB 중복 검증
   function formatSmartLotNumber(rawVal, writeDate) {
     if (!rawVal) return '';
@@ -3809,16 +3884,30 @@
     return `${yy}-${padded}`;
   }
 
-  // 형식번호 기준 로트번호 중복 검증 (전체 저장 DB + 현재 등록 그리드)
-  function checkLotNumberDuplicate(formatNo, lotNo, currentDraftRowId) {
-    if (!formatNo || !lotNo) return false;
+  // 형식번호가 유효하면 형식번호 기준, 없으면('-', '없음', 빈값 등) 품목코드 기준으로 구분 키 반환
+  function isValidCertFormatNo(formatNo) {
+    const fmt = String(formatNo || '').trim();
+    return fmt !== '' && fmt !== '-' && fmt !== '없음' && fmt !== 'N/A' && fmt !== 'n/a';
+  }
+
+  function getCertLotGroupKey(formatNo, code) {
+    if (isValidCertFormatNo(formatNo)) {
+      return `FMT:${String(formatNo).trim()}`;
+    }
+    const cleanCode = String(code || '').trim();
+    return cleanCode ? `CODE:${cleanCode}` : '';
+  }
+
+  // 형식번호(미보유 시 품목코드) 기준 로트번호 중복 검증 (전체 저장 DB + 현재 등록 그리드)
+  function checkLotNumberDuplicate(formatNo, lotNo, currentDraftRowId, code) {
+    if (!lotNo) return false;
     const cleanLot = String(lotNo).trim();
-    const cleanFmt = String(formatNo).trim();
-    if (!cleanLot || !cleanFmt) return false;
+    const myGroupKey = getCertLotGroupKey(formatNo, code);
+    if (!cleanLot || !myGroupKey) return false;
 
     // 1) 저장된 누적 DB 검사
     const existsInSaved = (state.certSavedRows || []).some(r =>
-      r.formatNo && String(r.formatNo).trim() === cleanFmt &&
+      getCertLotGroupKey(r.formatNo, r.code) === myGroupKey &&
       r.lotNo && String(r.lotNo).trim() === cleanLot
     );
     if (existsInSaved) return true;
@@ -3826,7 +3915,7 @@
     // 2) 현재 등록 그리드 검사 (자신 제외)
     const existsInDraft = (state.certDraftRows || []).some(r =>
       r.id !== currentDraftRowId &&
-      r.formatNo && String(r.formatNo).trim() === cleanFmt &&
+      getCertLotGroupKey(r.formatNo, r.code) === myGroupKey &&
       r.lotNo && String(r.lotNo).trim() === cleanLot
     );
     return existsInDraft;
@@ -3914,32 +4003,33 @@
     };
   }
 
-  // 동일 형식번호 기준 다음 로트번호 미리보기 감지 (자동 적용하지 않음)
+  // 동일 형식번호(미보유 시 품목코드) 기준 다음 로트번호 미리보기 감지 (자동 적용하지 않음)
   function getNextLotSuggestionsMap(draftRows) {
-    const maxByFormatYear = new Map(); // `${formatNo}__${yy}` -> maxNum
+    const maxByFormatYear = new Map(); // `${groupKey}__${yy}` -> maxNum
     const yyDefault = String(new Date().getFullYear()).slice(-2);
 
-    const recordLot = (formatNo, lotNo) => {
-      if (!formatNo || !lotNo) return;
+    const recordLot = (formatNo, code, lotNo) => {
+      const groupKey = getCertLotGroupKey(formatNo, code);
+      if (!groupKey || !lotNo) return;
       const m = String(lotNo).trim().match(/^(\d{2})-(\d+)$/);
       if (!m) return;
-      const key = `${String(formatNo).trim()}__${m[1]}`;
+      const key = `${groupKey}__${m[1]}`;
       const num = parseInt(m[2], 10);
       const prev = maxByFormatYear.get(key) || 0;
       if (num > prev) maxByFormatYear.set(key, num);
     };
 
-    (state.certSavedRows || []).forEach(r => recordLot(r.formatNo, r.lotNo));
+    (state.certSavedRows || []).forEach(r => recordLot(r.formatNo, r.code, r.lotNo));
 
     const result = new Map();
     (draftRows || []).forEach(row => {
-      const fmt = String(row.formatNo || '').trim();
-      if (!fmt) return;
+      const groupKey = getCertLotGroupKey(row.formatNo, row.code);
+      if (!groupKey) return;
       const yy = row.writeDate && row.writeDate.length >= 4 ? row.writeDate.slice(2, 4) : yyDefault;
-      const key = `${fmt}__${yy}`;
+      const key = `${groupKey}__${yy}`;
 
       if (row.lotNo && String(row.lotNo).trim()) {
-        recordLot(fmt, row.lotNo);
+        recordLot(row.formatNo, row.code, row.lotNo);
       }
 
       const curMax = maxByFormatYear.get(key) || 0;
@@ -3957,7 +4047,7 @@
     return result;
   }
 
-  // 동일 형식번호 + 연도 기준 제조번호 FROM 다음 번호 예측 (미적용)
+  // 동일 형식번호(미보유 시 품목코드) + 연도 기준 제조번호 FROM 다음 번호 예측 (미적용)
   function getNextFromSuggestionsMap(draftRows) {
     const maxToByFormatYear = new Map();
     const yyDefault = String(new Date().getFullYear()).slice(-2);
@@ -3970,28 +4060,28 @@
       return yyDefault;
     };
 
-    const recordSerial = (formatNo, yy, fromVal, toVal, qtyVal) => {
-      const fmt = String(formatNo || '').trim();
+    const recordSerial = (formatNo, code, yy, fromVal, toVal, qtyVal) => {
+      const groupKey = getCertLotGroupKey(formatNo, code);
       const from = parseSafeInt(fromVal);
-      if (!fmt || from <= 0) return;
-      const key = `${fmt}__${yy}`;
+      if (!groupKey || from <= 0) return;
+      const key = `${groupKey}__${yy}`;
       const qty = parseSafeInt(qtyVal);
       const to = parseSafeInt(toVal) || (qty > 0 ? from + qty - 1 : from);
       const prev = maxToByFormatYear.get(key) || 0;
       if (to > prev) maxToByFormatYear.set(key, to);
     };
 
-    (state.certSavedRows || []).forEach(r => recordSerial(r.formatNo, getRowYy(r), r.from, r.to, r.qty));
+    (state.certSavedRows || []).forEach(r => recordSerial(r.formatNo, r.code, getRowYy(r), r.from, r.to, r.qty));
 
     const result = new Map();
     (draftRows || []).forEach(row => {
-      const fmt = String(row.formatNo || '').trim();
-      if (!fmt) return;
+      const groupKey = getCertLotGroupKey(row.formatNo, row.code);
+      if (!groupKey) return;
       const yy = getRowYy(row);
-      const key = `${fmt}__${yy}`;
+      const key = `${groupKey}__${yy}`;
 
       if (parseSafeInt(row.from) > 0) {
-        recordSerial(fmt, yy, row.from, row.to, row.qty);
+        recordSerial(row.formatNo, row.code, yy, row.from, row.to, row.qty);
       }
 
       const curMaxTo = maxToByFormatYear.get(key) || 0;
@@ -4007,15 +4097,15 @@
     return result;
   }
 
-  // 동일 형식번호 내 제조번호 중복 및 사이값(구간 겹침) 검사
-  function checkSerialRangeOverlap(formatNo, fromVal, toVal, currentDraftRowId) {
-    const fmt = String(formatNo || '').trim();
+  // 동일 형식번호(미보유 시 품목코드) 내 제조번호 중복 및 사이값(구간 겹침) 검사
+  function checkSerialRangeOverlap(formatNo, fromVal, toVal, currentDraftRowId, code) {
+    const myGroupKey = getCertLotGroupKey(formatNo, code);
     const myFrom = parseSafeInt(fromVal);
-    if (!fmt || myFrom <= 0) return false;
+    if (!myGroupKey || myFrom <= 0) return false;
     const myTo = parseSafeInt(toVal) || myFrom;
 
     const isOverlapping = (r) => {
-      if (String(r.formatNo || '').trim() !== fmt) return false;
+      if (getCertLotGroupKey(r.formatNo, r.code) !== myGroupKey) return false;
       const oFrom = parseSafeInt(r.from);
       if (oFrom <= 0) return false;
       const oQty = parseSafeInt(r.qty);
@@ -4028,33 +4118,50 @@
     return false;
   }
 
-  // 생산계획 대비 검정 등록 수량 집계 (code__weekId -> sumQty)
+  function parseCertWeekKey(rawVal, fallbackYear) {
+    const s = String(rawVal || '').trim();
+    if (!s) return { year: '', weekId: '' };
+    const parts = s.split('::');
+    if (parts.length === 2) {
+      return { year: parts[0].trim(), weekId: parts[1].trim() };
+    }
+    return { year: String(fallbackYear || '').trim(), weekId: s };
+  }
+
+  // 생산계획 대비 검정 등록 수량 집계 (year__code__weekId -> sumQty)
   function getCertRegisteredQtyMap() {
     const map = {};
     (state.certSavedRows || []).forEach(r => {
       const code = String(r.code || '').trim();
       const wId = String(r.sourceWeekId || '').trim();
       if (!code || !wId) return;
-      const key = `${code}__${wId}`;
-      map[key] = (map[key] || 0) + parseSafeInt(r.qty);
+      const yr = String(r.sourceYear || (r.weekDate && /^\d{4}/.test(r.weekDate) ? r.weekDate.slice(0, 4) : '')).trim();
+      const qty = parseSafeInt(r.qty);
+      if (yr) {
+        const yKey = `${yr}__${code}__${wId}`;
+        map[yKey] = (map[yKey] || 0) + qty;
+      }
+      const legacyKey = `${code}__${wId}`;
+      map[legacyKey] = (map[legacyKey] || 0) + qty;
     });
     return map;
   }
 
-  function hasUnregisteredCertPlanForWeek(weekId, pd, regMap, targetLine) {
-    if (!weekId || !pd || !pd.rowsByCode) return false;
+  function hasUnregisteredCertPlanForWeek(weekId, rowsByCode, regMap, targetLine, yearStr) {
+    if (!weekId || !rowsByCode) return false;
     return (state.certMasterItems || []).some(item => {
       if ((item.useYn || '사용') !== '사용') return false;
       if (getDefaultItemApplyType(item) === '수동') return false;
       if ((item.inspectType || '') === '-') return false;
       if (targetLine !== 'ALL' && (item.group || '').trim() !== targetLine) return false;
 
-      const savedPlan = pd.rowsByCode[item.code];
+      const savedPlan = rowsByCode[item.code];
       const prodRaw = savedPlan && savedPlan.weeks && savedPlan.weeks[weekId] ? savedPlan.weeks[weekId].prod : '';
       const planQty = parsePlanNum(prodRaw);
       if (planQty <= 0) return false;
 
-      const regQty = regMap[`${item.code}__${weekId}`] || 0;
+      const regQty = (yearStr ? regMap[`${yearStr}__${item.code}__${weekId}`] : undefined)
+        ?? (regMap[`${item.code}__${weekId}`] || 0);
       return (planQty - regQty) > 0;
     });
   }
@@ -4067,13 +4174,39 @@
     const prevVal = state.certSelectedWeekId || sel.value || '';
 
     sel.innerHTML = '';
-    const { weeks } = getPlanPeriodWeeksAndMonths();
-    const baseList = weeks.length > 0 ? weeks : (pd.weeks || []);
     const regMap = getCertRegisteredQtyMap();
     const targetLine = state.certAutoLineFilter || 'ALL';
-    const list = baseList.filter(w => hasUnregisteredCertPlanForWeek(w.id, pd, regMap, targetLine));
+    const yearKeys = Array.from(new Set([
+      ...Object.keys(pd.rowsByYear || {}),
+      String(pd.year || '')
+    ].filter(y => /^\d{4}$/.test(y)))).sort();
 
-    if (list.length === 0) {
+    const availableValues = [];
+    yearKeys.forEach(yr => {
+      const rowsByCodeForYear = (yr === String(pd.year) && pd.rowsByCode)
+        ? pd.rowsByCode
+        : ((pd.rowsByYear && pd.rowsByYear[yr]) || {});
+      const baseList = (yr === String(pd.year) && Array.isArray(pd.weeks) && pd.weeks.length > 0)
+        ? pd.weeks
+        : generateYearWeeks(yr);
+      const list = baseList.filter(w => hasUnregisteredCertPlanForWeek(w.id, rowsByCodeForYear, regMap, targetLine, yr));
+      if (list.length === 0) return;
+
+      const grp = document.createElement('optgroup');
+      grp.label = `${yr}년`;
+      list.forEach(w => {
+        const dates = getPlanWeekFridayDates(yr, w.id);
+        const opt = document.createElement('option');
+        const val = `${yr}::${w.id}`;
+        opt.value = val;
+        opt.textContent = `${w.id} (${dates.weekDate})`;
+        grp.appendChild(opt);
+        availableValues.push(val);
+      });
+      sel.appendChild(grp);
+    });
+
+    if (availableValues.length === 0) {
       const emptyOpt = document.createElement('option');
       emptyOpt.value = '';
       emptyOpt.textContent = '미등록 주차 없음';
@@ -4081,26 +4214,23 @@
       sel.value = '';
       state.certSelectedWeekId = '';
     } else {
-      list.forEach(w => {
-        const dates = getPlanWeekFridayDates(pd.year, w.id);
-        const opt = document.createElement('option');
-        opt.value = w.id;
-        opt.textContent = `${w.id} (${dates.weekDate})`;
-        sel.appendChild(opt);
-      });
-
-      if (list.some(w => w.id === prevVal)) {
+      const parsedPrev = parseCertWeekKey(prevVal, pd.year);
+      const normalizedPrev = parsedPrev.year && parsedPrev.weekId ? `${parsedPrev.year}::${parsedPrev.weekId}` : prevVal;
+      if (availableValues.includes(prevVal)) {
         sel.value = prevVal;
         state.certSelectedWeekId = prevVal;
+      } else if (availableValues.includes(normalizedPrev)) {
+        sel.value = normalizedPrev;
+        state.certSelectedWeekId = normalizedPrev;
       } else {
-        sel.value = list[0].id;
-        state.certSelectedWeekId = list[0].id;
+        sel.value = availableValues[0];
+        state.certSelectedWeekId = availableValues[0];
       }
     }
     syncCustomSelect('cert-plan-week-select');
   }
 
-  function buildDraftRowFromMasterAndPlan(item, qty, weekId, dates, todayStr) {
+  function buildDraftRowFromMasterAndPlan(item, qty, weekId, dates, todayStr, yearStr) {
     const row = createNewDraftRow();
     row.code = item.code || '';
     row.name = getDisplayItemName(item);
@@ -4116,7 +4246,8 @@
     row.inspectDate = dates.inspectDate;
     row.qty = qty;
     row.sourceWeekId = weekId;
-    const planMemo = getPlanWeekMemoText(item.code, weekId);
+    if (yearStr) row.sourceYear = String(yearStr);
+    const planMemo = getPlanWeekMemoText(item.code, weekId, yearStr);
     if (planMemo) {
       row.site = planMemo;
       row.planMemo = planMemo;
@@ -4138,10 +4269,21 @@
     return '자동';
   }
 
-  function loadCertDraftFromPlanWeek(weekId, lineFilter) {
+  function loadCertDraftFromPlanWeek(weekKeyOrId, lineFilter) {
     if (!state.planData) loadLocalPlanData();
     const pd = state.planData || getDefaultPlanData();
-    const dates = getPlanWeekFridayDates(pd.year, weekId);
+    const { year: yr, weekId } = parseCertWeekKey(weekKeyOrId, pd.year);
+    if (!weekId) {
+      state.certDraftRows = [];
+      saveLocalCertData();
+      renderCertDraftTable();
+      return;
+    }
+
+    const rowsByCodeForYear = (yr && yr !== String(pd.year))
+      ? ((pd.rowsByYear && pd.rowsByYear[yr]) || {})
+      : (pd.rowsByCode || (pd.rowsByYear && pd.rowsByYear[yr]) || {});
+    const dates = getPlanWeekFridayDates(yr || pd.year, weekId);
     const todayStr = getTodayDateString();
     const regMap = getCertRegisteredQtyMap();
     const targetLine = lineFilter || state.certAutoLineFilter || 'ALL';
@@ -4153,16 +4295,36 @@
       if ((item.inspectType || '') === '-') return;
       if (targetLine !== 'ALL' && (item.group || '').trim() !== targetLine) return;
 
-      const savedPlan = pd.rowsByCode[item.code];
+      const savedPlan = rowsByCodeForYear[item.code];
       const prodRaw = savedPlan && savedPlan.weeks && savedPlan.weeks[weekId] ? savedPlan.weeks[weekId].prod : '';
       const planQty = parsePlanNum(prodRaw);
       if (planQty <= 0) return;
 
-      const regQty = regMap[`${item.code}__${weekId}`] || 0;
+      const regQty = (yr ? regMap[`${yr}__${item.code}__${weekId}`] : undefined)
+        ?? (regMap[`${item.code}__${weekId}`] || 0);
       const remaining = planQty - regQty;
       if (remaining <= 0) return;
 
-      newDrafts.push(buildDraftRowFromMasterAndPlan(item, remaining, weekId, dates, todayStr));
+      const rawSplits = savedPlan?.splits && Array.isArray(savedPlan.splits[weekId]) ? savedPlan.splits[weekId] : null;
+      const splitSum = rawSplits ? rawSplits.reduce((a, b) => a + parsePlanNum(b), 0) : 0;
+      if (rawSplits && rawSplits.length >= 2 && splitSum === planQty) {
+        let skip = regQty;
+        rawSplits.forEach(partRaw => {
+          const partQty = parsePlanNum(partRaw);
+          if (partQty <= 0) return;
+          if (skip >= partQty) {
+            skip -= partQty;
+            return;
+          }
+          const take = partQty - skip;
+          skip = 0;
+          if (take > 0) {
+            newDrafts.push(buildDraftRowFromMasterAndPlan(item, take, weekId, dates, todayStr, yr));
+          }
+        });
+      } else {
+        newDrafts.push(buildDraftRowFromMasterAndPlan(item, remaining, weekId, dates, todayStr, yr));
+      }
     });
 
     state.certDraftRows = newDrafts;
@@ -4339,19 +4501,20 @@
       totalQty += qtyNum;
 
       // 로트번호 중복 여부 확인
-      const isDupLot = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id);
+      const isDupLot = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id, row.code);
       const lotHint = lotSuggestions.get(row.id);
       const lotPlaceholder = lotHint ? lotHint.suggestion : '';
+      const groupLabel = isValidCertFormatNo(row.formatNo) ? '형식번호' : '품목코드';
       const lotTitle = isDupLot
-        ? '⚠ 동일 형식번호 내 이미 존재하는 로트번호입니다!'
+        ? `⚠ 동일 ${groupLabel} 내 이미 존재하는 로트번호입니다!`
         : (lotHint ? `최근 로트: ${lotHint.prevLot} → 다음 추천: ${lotHint.suggestion}` : '');
 
       // 제조번호 FROM/TO 중복·사이값 여부 확인 및 다음 번호 예측
-      const isDupSerial = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id);
+      const isDupSerial = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code);
       const fromHint = fromSuggestions.get(row.id);
       const fromPlaceholder = fromHint ? fromHint.suggestion : '';
       const fromTitle = isDupSerial
-        ? '⚠ 동일 형식번호 내 중복되거나 겹치는 제조번호 구간(사이값)이 있습니다!'
+        ? `⚠ 동일 ${groupLabel} 내 중복되거나 겹치는 제조번호 구간(사이값)이 있습니다!`
         : (fromHint ? `최근 제조번호 TO: ${fromHint.prevTo} → 다음 추천 FROM: ${fromHint.suggestion}` : '');
 
       // 요청부서 옵션
@@ -4391,13 +4554,13 @@
           <input type="text" tabindex="-1" class="cell-input text-center" readonly value="${row.type || ''}">
         </td>
         <td class="col-cert-date">
-          <input type="date" class="cell-input cert-input-field" data-field="writeDate" data-id="${row.id}" value="${row.writeDate || ''}">
+          <input type="text" class="cell-input text-center cert-input-field cert-input-date" data-field="writeDate" data-id="${row.id}" value="${row.writeDate || ''}" placeholder="MM-DD" maxlength="10">
         </td>
         <td class="col-cert-date">
-          <input type="date" class="cell-input cert-input-field" data-field="inspectDate" data-id="${row.id}" value="${row.inspectDate || ''}">
+          <input type="text" class="cell-input text-center cert-input-field cert-input-date" data-field="inspectDate" data-id="${row.id}" value="${row.inspectDate || ''}" placeholder="MM-DD" maxlength="10">
         </td>
         <td class="col-cert-date">
-          <input type="date" class="cell-input cert-input-field" data-field="weekDate" data-id="${row.id}" value="${row.weekDate || ''}" title="생산주차 금요일">
+          <input type="text" class="cell-input text-center cert-input-field cert-input-date" data-field="weekDate" data-id="${row.id}" value="${row.weekDate || ''}" placeholder="MM-DD" maxlength="10" title="생산주차 금요일">
         </td>
         <td class="col-cert-qty num-cell">
           <input type="text" class="cell-input text-right cert-input-field font-bold" data-field="qty" data-id="${row.id}" value="${qtyNum ? formatNumberDisplay(qtyNum) : ''}" inputmode="numeric">
@@ -4944,7 +5107,7 @@
 
     if (menu) {
       menu.innerHTML = '';
-      Array.from(sel.options).forEach(opt => {
+      const appendOptionBtn = (opt) => {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = `ui-custom-select-option ${opt.value === sel.value ? 'is-selected' : ''}`;
@@ -4959,6 +5122,20 @@
           syncCustomSelect(sel);
         });
         menu.appendChild(item);
+      };
+
+      Array.from(sel.children).forEach(child => {
+        if (child.tagName === 'OPTGROUP') {
+          const grpLabel = document.createElement('div');
+          grpLabel.className = 'ui-custom-select-group-label';
+          grpLabel.textContent = child.label || '';
+          menu.appendChild(grpLabel);
+          Array.from(child.children).forEach(opt => {
+            if (opt.tagName === 'OPTION') appendOptionBtn(opt);
+          });
+        } else if (child.tagName === 'OPTION') {
+          appendOptionBtn(child);
+        }
       });
 
       if (sel.dataset.hasWorkgroupManage === '1') {
@@ -5115,7 +5292,9 @@
         const targetWeek = state.certSelectedWeekId || document.getElementById('cert-plan-week-select')?.value || '';
         state.certSelectedWeekId = targetWeek;
         loadCertDraftFromPlanWeek(targetWeek, state.certAutoLineFilter || 'ALL');
-        showToast(targetWeek ? `${targetWeek} 주차를 다시 불러왔습니다.` : '미등록 생산계획 주차가 없습니다.');
+        const parsedW = parseCertWeekKey(targetWeek, '');
+        const weekLabel = parsedW.year ? `${parsedW.year}년 ${parsedW.weekId}` : parsedW.weekId;
+        showToast(targetWeek ? `${weekLabel} 주차를 다시 불러왔습니다.` : '미등록 생산계획 주차가 없습니다.');
       }
     });
 
@@ -5144,9 +5323,16 @@
       }
     });
 
-    // 0-B. [분할] 모달 로직
+    // 0-B. [분할] 모달 로직 (검정현황 + 생산계획 공용)
     let splitTargetRowId = null;
+    let splitPlanTarget = null; // { code, name, weekId, qty }
     let splitMode = 'manual'; // 'manual' | 'lot'
+
+    function getSplitTargetOrigQty() {
+      if (splitPlanTarget) return parseSafeInt(splitPlanTarget.qty);
+      const row = (state.certDraftRows || []).find(r => r.id === splitTargetRowId);
+      return row ? parseSafeInt(row.qty) : 0;
+    }
 
     function renderSplitManualRows(amounts) {
       const wrap = document.getElementById('cert-split-rows-wrap');
@@ -5166,8 +5352,7 @@
     }
 
     function updateSplitSumStatus() {
-      const row = (state.certDraftRows || []).find(r => r.id === splitTargetRowId);
-      const origQty = row ? parseSafeInt(row.qty) : 0;
+      const origQty = getSplitTargetOrigQty();
       const inputs = Array.from(document.querySelectorAll('#cert-split-rows-wrap .cert-split-amt-input'));
       const sum = inputs.reduce((acc, inp) => acc + parseSafeInt(inp.value), 0);
       const stEl = document.getElementById('cert-split-sum-status');
@@ -5182,8 +5367,7 @@
     }
 
     function updateSplitLotPreview() {
-      const row = (state.certDraftRows || []).find(r => r.id === splitTargetRowId);
-      const origQty = row ? parseSafeInt(row.qty) : 0;
+      const origQty = getSplitTargetOrigQty();
       const unit = parseSafeInt(document.getElementById('cert-split-lot-unit')?.value);
       const prevEl = document.getElementById('cert-split-lot-preview');
       if (!prevEl) return;
@@ -5213,7 +5397,10 @@
         alert('신청수량이 2 이상인 행만 분할할 수 있습니다.');
         return;
       }
+      splitPlanTarget = null;
       splitTargetRowId = target.id;
+      const titleEl = document.getElementById('cert-split-modal-title');
+      if (titleEl) titleEl.textContent = '✂ 신청수량 분할';
       splitMode = 'manual';
       document.getElementById('btn-split-tab-manual')?.classList.add('active');
       document.getElementById('btn-split-tab-lot')?.classList.remove('active');
@@ -5246,12 +5433,38 @@
       updateSplitLotPreview();
     });
 
+    window._openPlanSplitModal = ({ code, name, weekId, qty, existingSplits }) => {
+      const origQty = parseSafeInt(qty);
+      if (origQty < 2) {
+        alert('생산 수량이 2 이상인 셀만 분할할 수 있습니다.');
+        return;
+      }
+      splitTargetRowId = null;
+      splitPlanTarget = { code, name, weekId, qty: origQty };
+      const titleEl = document.getElementById('cert-split-modal-title');
+      if (titleEl) titleEl.textContent = '✂ 생산수량 분할';
+      splitMode = 'manual';
+      document.getElementById('btn-split-tab-manual')?.classList.add('active');
+      document.getElementById('btn-split-tab-lot')?.classList.remove('active');
+      document.getElementById('cert-split-manual-pane').style.display = 'block';
+      document.getElementById('cert-split-lot-pane').style.display = 'none';
+
+      const info = document.getElementById('cert-split-item-info');
+      if (info) {
+        info.innerHTML = `<strong>${name || code}</strong> (${code || ''} · ${weekId})<br>현재 생산수량: <strong style="color:#2563eb;">${origQty.toLocaleString()}</strong>`;
+      }
+      const initialParts = (Array.isArray(existingSplits) && existingSplits.length >= 2)
+        ? existingSplits.map(n => parseSafeInt(n))
+        : [Math.floor(origQty / 2), origQty - Math.floor(origQty / 2)];
+      renderSplitManualRows(initialParts);
+      document.getElementById('cert-split-modal').style.display = 'flex';
+    };
+
     document.getElementById('cert-split-rows-wrap')?.addEventListener('input', (e) => {
       if (!e.target.classList.contains('cert-split-amt-input')) return;
       const inputs = Array.from(document.querySelectorAll('#cert-split-rows-wrap .cert-split-amt-input'));
       const idx = Number(e.target.dataset.idx);
-      const row = (state.certDraftRows || []).find(r => r.id === splitTargetRowId);
-      const origQty = row ? parseSafeInt(row.qty) : 0;
+      const origQty = getSplitTargetOrigQty();
       if (inputs.length === 2 && idx === 0) {
         const v0 = parseSafeInt(inputs[0].value);
         inputs[1].value = Math.max(0, origQty - v0);
@@ -5280,15 +5493,17 @@
     const closeSplitModal = () => {
       document.getElementById('cert-split-modal').style.display = 'none';
       splitTargetRowId = null;
+      splitPlanTarget = null;
     };
     document.getElementById('btn-close-split-modal')?.addEventListener('click', closeSplitModal);
     document.getElementById('btn-cancel-split-modal')?.addEventListener('click', closeSplitModal);
 
     document.getElementById('btn-confirm-split-modal')?.addEventListener('click', () => {
-      const idx = (state.certDraftRows || []).findIndex(r => r.id === splitTargetRowId);
-      if (idx === -1) return;
-      const origRow = state.certDraftRows[idx];
-      const origQty = parseSafeInt(origRow.qty);
+      const planTarget = splitPlanTarget;
+      const idx = planTarget ? -1 : (state.certDraftRows || []).findIndex(r => r.id === splitTargetRowId);
+      if (!planTarget && idx === -1) return;
+      const origRow = planTarget ? null : state.certDraftRows[idx];
+      const origQty = planTarget ? parseSafeInt(planTarget.qty) : parseSafeInt(origRow.qty);
 
       let parts = [];
       if (splitMode === 'lot') {
@@ -5319,6 +5534,36 @@
 
       if (parts.length < 2) {
         alert('2개 이상으로 분할해 주세요.');
+        return;
+      }
+
+      if (planTarget) {
+        pushPlanUndoSnapshot();
+        if (!state.planData) state.planData = getDefaultPlanData();
+        if (!state.planData.rowsByCode[planTarget.code]) {
+          state.planData.rowsByCode[planTarget.code] = { weeks: {}, colors: {}, memos: {}, splits: {} };
+        }
+        if (!state.planData.rowsByCode[planTarget.code].splits) {
+          state.planData.rowsByCode[planTarget.code].splits = {};
+        }
+        state.planData.rowsByCode[planTarget.code].splits[planTarget.weekId] = parts;
+        saveLocalPlanData();
+        markAsDirty(true);
+
+        const pdYear = String(state.planData?.year || '');
+        const syncedCount = syncCertRegisteredRowsSplit(planTarget.code, planTarget.weekId, pdYear, parts);
+        if ((state.certMode || 'auto') === 'auto' && state.certSelectedWeekId) {
+          const parsedSel = parseCertWeekKey(state.certSelectedWeekId, pdYear);
+          if (parsedSel.weekId === planTarget.weekId && (!pdYear || !parsedSel.year || parsedSel.year === pdYear)) {
+            loadCertDraftFromPlanWeek(state.certSelectedWeekId, state.certAutoLineFilter || 'ALL');
+          }
+        }
+
+        renderPlanModule();
+        closeSplitModal();
+        showToast(syncedCount >= 2
+          ? `${parts.length}개로 분할되었습니다. (검정현황 등록완료 ${syncedCount}건 자동 분할)`
+          : `${parts.length}개로 분할되었습니다. (${parts.map(p => p.toLocaleString()).join('/')})`);
         return;
       }
 
@@ -5550,17 +5795,21 @@
 
         // 로트번호 및 제조번호 구간 중복 검사
         for (const row of validRows) {
-          if (row.formatNo && row.lotNo) {
-            const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id);
+          const groupKey = getCertLotGroupKey(row.formatNo, row.code);
+          const groupDesc = isValidCertFormatNo(row.formatNo)
+            ? `형식번호 '${row.formatNo}'`
+            : `품목코드 '${row.code}'`;
+          if (groupKey && row.lotNo) {
+            const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id, row.code);
             if (isDup) {
-              alert(`[중복 경고] 형식번호 '${row.formatNo}'에 로트번호 '${row.lotNo}'가 이미 등록되어 있습니다.\n로트번호를 수정한 후 다시 등록해주세요.`);
+              alert(`[중복 경고] ${groupDesc}에 로트번호 '${row.lotNo}'가 이미 등록되어 있습니다.\n로트번호를 수정한 후 다시 등록해주세요.`);
               return;
             }
           }
-          if (row.formatNo && parseSafeInt(row.from) > 0) {
-            const isDupSer = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id);
+          if (groupKey && parseSafeInt(row.from) > 0) {
+            const isDupSer = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code);
             if (isDupSer) {
-              alert(`[중복 경고] 형식번호 '${row.formatNo}'의 제조번호(${row.from}~${row.to || row.from})가 기존 등록 구간과 겹치거나 사이값입니다.\n제조번호를 수정한 후 다시 등록해주세요.`);
+              alert(`[중복 경고] ${groupDesc}의 제조번호(${row.from}~${row.to || row.from})가 기존 등록 구간과 겹치거나 사이값입니다.\n제조번호를 수정한 후 다시 등록해주세요.`);
               return;
             }
           }
@@ -6167,10 +6416,11 @@
         const row = (state.certDraftRows || []).find(r => r.id === id);
         if (row) {
           row.lotNo = target.value;
-          const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id);
+          const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id, row.code);
           target.classList.toggle('is-duplicate-lot', isDup);
           if (isDup) {
-            target.title = '⚠ 동일 형식번호 내 이미 존재하는 로트번호입니다!';
+            const groupLabel = isValidCertFormatNo(row.formatNo) ? '형식번호' : '품목코드';
+            target.title = `⚠ 동일 ${groupLabel} 내 이미 존재하는 로트번호입니다!`;
           } else {
             target.title = '';
           }
@@ -6190,7 +6440,7 @@
       }
     });
 
-    // 7. 로트번호 포커스 아웃 시 "26-001" 자동 포맷팅
+    // 7. 로트번호 포커스 아웃 시 "26-001", 날짜 포커스 아웃 시 "YYYY-MM-DD" 자동 포맷팅
     document.addEventListener('blur', (e) => {
       const target = e.target;
       if (target && target.classList.contains('cert-input-lot')) {
@@ -6201,12 +6451,38 @@
           row.lotNo = formatted;
           target.value = formatted;
 
-          const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id);
+          const isDup = checkLotNumberDuplicate(row.formatNo, row.lotNo, row.id, row.code);
           target.classList.toggle('is-duplicate-lot', isDup);
           saveLocalCertData();
         }
       }
+      if (target && target.classList.contains('cert-input-date')) {
+        const id = target.dataset.id;
+        const field = target.dataset.field;
+        const row = (state.certDraftRows || []).find(r => r.id === id);
+        if (row && field) {
+          const formatted = formatSmartDateInput(target.value);
+          row[field] = formatted;
+          target.value = formatted;
+          saveLocalCertData();
+        }
+      }
     }, true);
+
+    document.addEventListener('keydown', (e) => {
+      const target = e.target;
+      if (e.key === 'Enter' && target && target.classList.contains('cert-input-date')) {
+        const formatted = formatSmartDateInput(target.value);
+        target.value = formatted;
+        const id = target.dataset.id;
+        const field = target.dataset.field;
+        const row = (state.certDraftRows || []).find(r => r.id === id);
+        if (row && field) {
+          row[field] = formatted;
+          saveLocalCertData();
+        }
+      }
+    });
 
     // 7-B. 로트번호 · 제조번호 FROM 추천값 더블클릭 시 자동 입력
     document.addEventListener('dblclick', (e) => {
@@ -8193,6 +8469,7 @@
     const baseYearShort = String(baseYearNum).slice(-2);
 
     const fixedCols = [
+      { key: 'rowNo', label: 'NO', fixed: true, editable: false, cls: 'plan-col-no', width: 46, isNum: false },
       { key: 'code', label: '품목코드', fixed: true, editable: false, cls: 'plan-col-code', width: 110, isNum: false },
       { key: 'name', label: '품명', fixed: true, editable: false, cls: 'plan-col-name', width: 210, isNum: false }
     ];
@@ -8401,6 +8678,7 @@
 
         const colors = saved.colors || {};
         const memos = saved.memos || {};
+        const splits = saved.splits || {};
 
         return {
           code: item.code || '',
@@ -8417,6 +8695,7 @@
           months: monthVals,
           colors,
           memos,
+          splits,
           isGroupRow: false
         };
       });
@@ -8570,6 +8849,102 @@
     return '';
   }
 
+  function getPlanWeekCertLockInfo(code, weekId, yearStr) {
+    const cleanCode = String(code || '').trim();
+    const cleanWeek = String(weekId || '').trim();
+    const targetYear = String(yearStr || state.planData?.year || '').trim();
+    let doneQty = 0;
+    let appliedQty = 0;
+    let draftSavedQty = 0;
+
+    if (!cleanCode || !cleanWeek) {
+      return { doneQty: 0, appliedQty: 0, draftSavedQty: 0, lockedQty: 0, hasDone: false, hasApplied: false };
+    }
+
+    (state.certSavedRows || []).forEach(r => {
+      if (String(r.code || '').trim() !== cleanCode) return;
+      if (String(r.sourceWeekId || '').trim() !== cleanWeek) return;
+      const rYear = String(r.sourceYear || (r.weekDate && /^\d{4}/.test(r.weekDate) ? r.weekDate.slice(0, 4) : '')).trim();
+      if (targetYear && rYear && rYear !== targetYear) return;
+
+      const qty = parseSafeInt(r.qty);
+      const st = String(r.status || '등록완료').trim();
+      if (st === '일정완료') {
+        doneQty += qty;
+      } else if (st === '검정신청' || st === '품검요청') {
+        appliedQty += qty;
+      } else {
+        draftSavedQty += qty;
+      }
+    });
+
+    return {
+      doneQty,
+      appliedQty,
+      draftSavedQty,
+      lockedQty: doneQty + appliedQty,
+      hasDone: doneQty > 0,
+      hasApplied: appliedQty > 0
+    };
+  }
+
+  function trySetPlanCellValueWithCertGuard(code, col, rawVal) {
+    if (!col || !col.editable) return { ok: false, reason: '' };
+    if (col.weekId && col.field === 'prod' && !col.isMonth) {
+      const yr = state.planData?.year;
+      const lock = getPlanWeekCertLockInfo(code, col.weekId, yr);
+      const oldQty = parsePlanNum(state.planData?.rowsByCode?.[code]?.weeks?.[col.weekId]?.prod);
+      let cleanStr = rawVal === null || rawVal === undefined ? '' : String(rawVal).trim().replace(/,/g, '');
+      const newQty = cleanStr === '' ? 0 : parsePlanNum(cleanStr);
+
+      if (lock.hasDone) {
+        if (newQty === oldQty && cleanStr !== '') return { ok: false, reason: '' };
+        return {
+          ok: false,
+          reason: `생산완료(일정완료)된 건(${lock.doneQty.toLocaleString()}개)이 있어 수량을 변경하거나 삭제할 수 없습니다.`
+        };
+      }
+
+      if (lock.hasApplied && newQty < lock.lockedQty) {
+        return {
+          ok: false,
+          reason: `검정신청·품검요청된 수량(${lock.lockedQty.toLocaleString()}개)보다 적게 수정하거나 삭제할 수 없습니다.`
+        };
+      }
+
+      // 검정신청/품검요청 상태에서 수량이 증가한 경우, 증가분 자동 로트 분할
+      const prevSplits = state.planData?.rowsByCode?.[code]?.splits?.[col.weekId];
+      const hasPrevSplits = Array.isArray(prevSplits) && prevSplits.length >= 2 &&
+        prevSplits.reduce((a, b) => a + parsePlanNum(b), 0) === oldQty;
+
+      setPlanCellValue(code, col, rawVal);
+
+      if (lock.hasApplied && newQty > oldQty) {
+        const entry = state.planData?.rowsByCode?.[code];
+        if (entry) {
+          if (!entry.splits) entry.splits = {};
+          const basePart = oldQty > 0 ? oldQty : lock.lockedQty;
+          const addedPart = newQty - basePart;
+          if (hasPrevSplits) {
+            entry.splits[col.weekId] = [...prevSplits, newQty - oldQty];
+          } else if (basePart > 0 && addedPart > 0) {
+            entry.splits[col.weekId] = [basePart, addedPart];
+          }
+          return {
+            ok: true,
+            autoSplitInfo: entry.splits[col.weekId]
+              ? `증가분 ${addedPart.toLocaleString()}개가 자동 분할되었습니다. (${entry.splits[col.weekId].map(n => parsePlanNum(n).toLocaleString()).join('/')})`
+              : ''
+          };
+        }
+      }
+      return { ok: true, autoSplitInfo: '' };
+    }
+
+    setPlanCellValue(code, col, rawVal);
+    return { ok: true, autoSplitInfo: '' };
+  }
+
   function setPlanCellValue(code, col, rawVal) {
     if (!state.planData) state.planData = getDefaultPlanData();
     if (!state.planData.rowsByCode[code]) {
@@ -8588,6 +8963,12 @@
       if (!entry.weeks) entry.weeks = {};
       if (!entry.weeks[col.weekId]) entry.weeks[col.weekId] = {};
       entry.weeks[col.weekId][col.field] = clean;
+      if (col.field === 'prod' && entry.splits && Array.isArray(entry.splits[col.weekId])) {
+        const splitSum = entry.splits[col.weekId].reduce((a, b) => a + parsePlanNum(b), 0);
+        if (parsePlanNum(clean) !== splitSum || parsePlanNum(clean) < 2) {
+          delete entry.splits[col.weekId];
+        }
+      }
     }
   }
 
@@ -8602,9 +8983,12 @@
     }
   }
 
-  function getPlanWeekMemoText(code, weekId) {
-    if (!code || !weekId || !state.planData?.rowsByCode?.[code]?.memos) return '';
-    const memos = state.planData.rowsByCode[code].memos;
+  function getPlanWeekMemoText(code, weekId, yearStr) {
+    const rowsByCode = (yearStr && state.planData?.rowsByYear?.[String(yearStr)])
+      ? state.planData.rowsByYear[String(yearStr)]
+      : state.planData?.rowsByCode;
+    if (!code || !weekId || !rowsByCode?.[code]?.memos) return '';
+    const memos = rowsByCode[code].memos;
     if (memos[`${weekId}:prod`]) return String(memos[`${weekId}:prod`]).trim();
     const prefix = `${weekId}:`;
     const otherKey = Object.keys(memos).find(k => k.startsWith(prefix) && String(memos[k] || '').trim());
@@ -8716,14 +9100,16 @@
     cols.forEach((col, cIdx) => {
       const fixedCls = col.fixed ? ` plan-fixed-col${col.isLastFixed ? ' plan-fixed-last' : ''}` : '';
       const fixedStyle = col.fixed ? ` style="left:${col.left}px;"` : '';
-      if (cIdx === 0) {
+      if (col.key === 'rowNo') {
+        html += `<td class="${col.cls}${fixedCls}"${fixedStyle}></td>`;
+      } else if (col.key === 'code') {
         html += `<td class="${col.cls}${fixedCls} plan-summary-label"${fixedStyle}>
           <select id="plan-summary-pos-inline" class="plan-summary-pos-inline" title="합계 위치 변경">
             <option value="bottom"${pos === 'bottom' ? ' selected' : ''}>합계 ▼(하단)</option>
             <option value="top"${pos === 'top' ? ' selected' : ''}>합계 ▲(상단)</option>
           </select>
         </td>`;
-      } else if (cIdx === 1) {
+      } else if (col.key === 'name') {
         html += `<td class="${col.cls}${fixedCls}" style="left:${col.left}px; text-align:left; font-family:Pretendard,sans-serif;">${rows.length}개 품목</td>`;
       } else if (cIdx < fixedCount && col.key !== 'baseStock') {
         html += `<td class="${col.cls}${fixedCls}"${fixedStyle}></td>`;
@@ -8979,6 +9365,8 @@
       const code = String(r.code || '').trim();
       const wId = String(r.sourceWeekId || '').trim();
       if (!code || !wId) return;
+      const rYear = String(r.sourceYear || (r.weekDate && /^\d{4}/.test(r.weekDate) ? r.weekDate.slice(0, 4) : '')).trim();
+      if (pd.year && rYear && rYear !== String(pd.year)) return;
       const key = `${code}__${wId}`;
       const qty = parseSafeInt(r.qty);
       const st = r.status || '등록완료';
@@ -8997,8 +9385,10 @@
       const grpRowCls = row.isGroupRow ? ' class="plan-group-summary-row"' : '';
       bodyHtml += `<tr data-r="${rIdx}" data-code="${escapeHtmlPlan(row.code)}"${grpRowCls}>`;
       cols.forEach((col, cIdx) => {
-        const raw = getPlanCellRawValue(row, col);
-        let disp = col.isNum ? formatPlanCellDisplay(raw) : escapeHtmlPlan(raw);
+        const raw = col.key === 'rowNo' ? String(rIdx + 1) : getPlanCellRawValue(row, col);
+        let disp = col.key === 'rowNo'
+          ? String(rIdx + 1)
+          : (col.isNum ? formatPlanCellDisplay(raw) : escapeHtmlPlan(raw));
         let stockWon = 0;
         if (pd.showStockAmount && col.field === 'stock' && raw !== '') {
           if (row.isGroupRow) {
@@ -9071,12 +9461,21 @@
           }
         }
 
+        const splitParts = (col.weekId && col.field === 'prod' && !col.isMonth && !row.isGroupRow && row.splits && Array.isArray(row.splits[col.weekId]) && row.splits[col.weekId].length >= 2)
+          ? row.splits[col.weekId]
+          : null;
+        if (splitParts) {
+          const splitText = `분할 ${splitParts.map(n => parsePlanNum(n).toLocaleString('ko-KR')).join('/')}`;
+          titleText = titleText ? `${splitText} · ${titleText}` : splitText;
+        }
+
         const cellColor = row.colors ? row.colors[col.key] : '';
         const colorCls = cellColor ? ` plan-cell-color-${cellColor}` : '';
         const hasMemo = row.memos && row.memos[col.key] ? ' plan-has-memo' : '';
+        const hasSplit = splitParts ? ' plan-has-split' : '';
         const titleAttr = titleText ? ` title="${escapeHtmlPlan(titleText)}"` : '';
 
-        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}"${fixedStyle}${titleAttr}>${disp}</td>`;
+        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}${hasSplit}"${fixedStyle}${titleAttr}>${disp}</td>`;
       });
       bodyHtml += '</tr>';
     });
@@ -9146,8 +9545,11 @@
   function applyPlanSelectionClasses() {
     const tbody = document.getElementById('plan-grid-tbody');
     if (!tbody) return;
-    tbody.querySelectorAll('td.plan-cell-selected, td.plan-cell-active').forEach(td => {
-      td.classList.remove('plan-cell-selected', 'plan-cell-active');
+    tbody.querySelectorAll('tr.plan-row-selected').forEach(tr => {
+      tr.classList.remove('plan-row-selected', 'plan-row-selected-top', 'plan-row-selected-bottom');
+    });
+    tbody.querySelectorAll('td.plan-cell-selected, td.plan-cell-active, td.plan-range-top, td.plan-range-bottom, td.plan-range-left, td.plan-range-right').forEach(td => {
+      td.classList.remove('plan-cell-selected', 'plan-cell-active', 'plan-range-top', 'plan-range-bottom', 'plan-range-left', 'plan-range-right');
     });
 
     const extra = planGridState.extraCells instanceof Set ? planGridState.extraCells : new Set();
@@ -9159,22 +9561,39 @@
       return;
     }
 
+    const isFullRowSelection = Boolean(
+      extra.size === 0 &&
+      range &&
+      planGridState.columns.length > 0 &&
+      range.c1 === 0 &&
+      range.c2 === planGridState.columns.length - 1
+    );
+
     const selectedCoords = [];
     if (extra.size > 0) {
       extra.forEach(key => {
         const [rs, cs] = key.split(',');
         const r = Number(rs), c = Number(cs);
         const td = tbody.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
-        if (td) td.classList.add('plan-cell-selected');
+        if (td) td.classList.add('plan-cell-selected', 'plan-range-top', 'plan-range-bottom', 'plan-range-left', 'plan-range-right');
         selectedCoords.push({ r, c });
       });
     } else if (range) {
       for (let r = range.r1; r <= range.r2; r++) {
         const tr = tbody.querySelector(`tr[data-r="${r}"]`);
         if (!tr) continue;
+        if (isFullRowSelection) {
+          tr.classList.add('plan-row-selected');
+        }
         for (let c = range.c1; c <= range.c2; c++) {
           const td = tr.querySelector(`td[data-c="${c}"]`);
-          if (td) td.classList.add('plan-cell-selected');
+          if (td) {
+            td.classList.add('plan-cell-selected');
+            if (r === range.r1) td.classList.add('plan-range-top');
+            if (r === range.r2) td.classList.add('plan-range-bottom');
+            if (c === range.c1) td.classList.add('plan-range-left');
+            if (c === range.c2) td.classList.add('plan-range-right');
+          }
           selectedCoords.push({ r, c });
         }
       }
@@ -9271,6 +9690,13 @@
       showToast('품목그룹 합산 행은 수정할 수 없습니다. 개별 수정은 품목그룹을 OFF 해주세요.');
       return;
     }
+    if (col.weekId && col.field === 'prod' && !col.isMonth) {
+      const lock = getPlanWeekCertLockInfo(row.code, col.weekId, state.planData?.year);
+      if (lock.hasDone) {
+        showToast('생산완료(일정완료)된 셀은 수량을 수정할 수 없습니다.');
+        return;
+      }
+    }
 
     const tbody = document.getElementById('plan-grid-tbody');
     const td = tbody ? tbody.querySelector(`td[data-r="${r}"][data-c="${c}"]`) : null;
@@ -9343,9 +9769,16 @@
       const newVal = ed.inputEl.value;
       if (String(newVal) !== String(ed.originalVal)) {
         pushPlanUndoSnapshot();
-        setPlanCellValue(row.code, col, newVal);
-        saveLocalPlanData();
-        markAsDirty(true);
+        const res = trySetPlanCellValueWithCertGuard(row.code, col, newVal);
+        if (!res.ok) {
+          planUndoStack.pop();
+          updatePlanUndoButton();
+          if (res.reason) alert(res.reason);
+        } else {
+          saveLocalPlanData();
+          markAsDirty(true);
+          if (res.autoSplitInfo) showToast(res.autoSplitInfo);
+        }
       }
     }
 
@@ -9357,17 +9790,23 @@
     if (!range) return;
     pushPlanUndoSnapshot();
     let changed = false;
+    let blockedReason = '';
     for (let r = range.r1; r <= range.r2; r++) {
       const row = planGridState.rows[r];
-      if (!row) continue;
+      if (!row || row.isGroupRow) continue;
       for (let c = range.c1; c <= range.c2; c++) {
         const col = planGridState.columns[c];
         if (col && col.editable) {
-          setPlanCellValue(row.code, col, '');
-          changed = true;
+          const res = trySetPlanCellValueWithCertGuard(row.code, col, '');
+          if (res.ok) {
+            changed = true;
+          } else if (res.reason && !blockedReason) {
+            blockedReason = res.reason;
+          }
         }
       }
     }
+    if (blockedReason) alert(blockedReason);
     if (changed) {
       saveLocalPlanData();
       markAsDirty(true);
@@ -9431,6 +9870,7 @@
 
     pushPlanUndoSnapshot();
     let changed = false;
+    let blockedReason = '';
     const isSingleSource = matrix.length === 1 && matrix[0].length === 1;
     const isMultiTarget = range.r2 > range.r1 || range.c2 > range.c1;
 
@@ -9438,12 +9878,13 @@
       const val = matrix[0][0];
       for (let r = range.r1; r <= range.r2; r++) {
         const row = planGridState.rows[r];
-        if (!row) continue;
+        if (!row || row.isGroupRow) continue;
         for (let c = range.c1; c <= range.c2; c++) {
           const col = planGridState.columns[c];
           if (col && col.editable) {
-            setPlanCellValue(row.code, col, val);
-            changed = true;
+            const res = trySetPlanCellValueWithCertGuard(row.code, col, val);
+            if (res.ok) changed = true;
+            else if (res.reason && !blockedReason) blockedReason = res.reason;
           }
         }
       }
@@ -9452,14 +9893,16 @@
         const tr = range.r1 + dr;
         const row = planGridState.rows[tr];
         if (!row) break;
+        if (row.isGroupRow) continue;
         const lineCols = matrix[dr];
         for (let dc = 0; dc < lineCols.length; dc++) {
           const tc = range.c1 + dc;
           const col = planGridState.columns[tc];
           if (!col) break;
           if (col.editable) {
-            setPlanCellValue(row.code, col, lineCols[dc]);
-            changed = true;
+            const res = trySetPlanCellValueWithCertGuard(row.code, col, lineCols[dc]);
+            if (res.ok) changed = true;
+            else if (res.reason && !blockedReason) blockedReason = res.reason;
           }
         }
       }
@@ -9469,6 +9912,7 @@
       planGridState.anchor = { r: range.r1, c: range.c1 };
       planGridState.focus = { r: endR, c: endC };
     }
+    if (blockedReason) alert(blockedReason);
 
     if (changed) {
       saveLocalPlanData();
@@ -9671,14 +10115,137 @@
     window.XLSXEngine.exportToExcelXML('생산계획', [h1, h2], exportRows, `생산계획_${pd.year}.xls`);
   }
 
+  function getPlanWeekDraftRegisteredCertRows(code, weekId, yearStr) {
+    const cleanCode = String(code || '').trim();
+    const cleanWeek = String(weekId || '').trim();
+    const targetYear = String(yearStr || state.planData?.year || '').trim();
+    if (!cleanCode || !cleanWeek) return [];
+    const targetWeekDate = targetYear ? getPlanWeekFridayDates(targetYear, cleanWeek).weekDate : '';
+    return (state.certSavedRows || []).filter(r => {
+      if (String(r.code || '').trim() !== cleanCode) return false;
+      const rWeek = String(r.sourceWeekId || '').trim();
+      if (rWeek) {
+        if (rWeek !== cleanWeek) return false;
+      } else if (!targetWeekDate || String(r.weekDate || '').trim() !== targetWeekDate) {
+        return false;
+      }
+      const rYear = String(r.sourceYear || (r.weekDate && /^\d{4}/.test(r.weekDate) ? r.weekDate.slice(0, 4) : '')).trim();
+      if (targetYear && rYear && rYear !== targetYear) return false;
+      const st = String(r.status || '등록완료').trim();
+      return st === '등록완료';
+    });
+  }
+
+  function syncCertRegisteredRowsSplit(code, weekId, yearStr, parts) {
+    if (!Array.isArray(parts) || parts.length < 2) return 0;
+    const lock = getPlanWeekCertLockInfo(code, weekId, yearStr);
+    if (lock.hasDone || lock.hasApplied) return 0;
+
+    const regRows = getPlanWeekDraftRegisteredCertRows(code, weekId, yearStr);
+    if (regRows.length === 0) return 0;
+
+    const regSum = regRows.reduce((acc, r) => acc + parseSafeInt(r.qty), 0);
+    const partsSum = parts.reduce((acc, p) => acc + parseSafeInt(p), 0);
+    if (regSum !== partsSum) return 0;
+
+    const sorted = [...regRows].sort((a, b) => {
+      const fA = parseSafeInt(a.from), fB = parseSafeInt(b.from);
+      if (fA > 0 && fB > 0 && fA !== fB) return fA - fB;
+      return String(a.lotNo || '').localeCompare(String(b.lotNo || ''));
+    });
+
+    const baseRow = sorted[0];
+    const removeIds = new Set(sorted.map(r => r.id));
+    const firstIdx = (state.certSavedRows || []).findIndex(r => removeIds.has(r.id));
+    if (firstIdx === -1) return 0;
+
+    const groupKey = getCertLotGroupKey(baseRow.formatNo, baseRow.code);
+    const yyDefault = String(yearStr || new Date().getFullYear()).slice(-2);
+    const baseLotM = String(baseRow.lotNo || '').trim().match(/^(\d{2})-(\d+)$/);
+    const yy = baseLotM ? baseLotM[1] : yyDefault;
+
+    let maxLotNum = 0;
+    (state.certSavedRows || []).forEach(r => {
+      if (removeIds.has(r.id)) return;
+      if (getCertLotGroupKey(r.formatNo, r.code) !== groupKey) return;
+      const m = String(r.lotNo || '').trim().match(/^(\d{2})-(\d+)$/);
+      if (m && m[1] === yy) {
+        const n = parseInt(m[2], 10);
+        if (n > maxLotNum) maxLotNum = n;
+      }
+    });
+
+    let runningFrom = parseSafeInt(baseRow.from);
+    let nextLotNum = baseLotM ? Math.max(parseInt(baseLotM[2], 10), maxLotNum) : maxLotNum;
+
+    const newRows = parts.map((pQty, idx) => {
+      const q = parseSafeInt(pQty);
+      const clone = { ...baseRow };
+      if (idx === 0) {
+        clone.id = baseRow.id;
+        if (baseLotM) {
+          clone.lotNo = baseRow.lotNo;
+        }
+      } else {
+        clone.id = `cert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${idx}`;
+        if (baseLotM) {
+          nextLotNum += 1;
+          clone.lotNo = `${yy}-${String(nextLotNum).padStart(3, '0')}`;
+        } else {
+          clone.lotNo = '';
+        }
+      }
+      clone.qty = q;
+      if (runningFrom > 0) {
+        clone.from = runningFrom;
+        clone.to = runningFrom + q - 1;
+        runningFrom += q;
+      } else {
+        clone.from = '';
+        clone.to = '';
+      }
+      clone.passNo = '';
+      updateDraftRowCalculations(clone);
+      return clone;
+    });
+
+    const keptBefore = [];
+    const keptAfter = [];
+    (state.certSavedRows || []).forEach((r, idx) => {
+      if (removeIds.has(r.id)) return;
+      if (idx < firstIdx) keptBefore.push(r);
+      else keptAfter.push(r);
+    });
+    state.certSavedRows = [...keptBefore, ...newRows, ...keptAfter];
+
+    saveLocalCertData();
+    if (typeof saveCertDataToDb === 'function') saveCertDataToDb(true);
+    if (typeof renderCertSavedTable === 'function') renderCertSavedTable();
+    return newRows.length;
+  }
+
   // 우클릭 5색 팔레트 제어
   function openPlanContextPalette(x, y) {
     const pal = document.getElementById('plan-context-palette');
     if (!pal) return;
+
+    const anchor = planGridState.anchor;
+    const row = anchor ? planGridState.rows[anchor.r] : null;
+    const col = anchor ? planGridState.columns[anchor.c] : null;
+    const isProdCell = Boolean(row && !row.isGroupRow && col && col.weekId && col.field === 'prod' && !col.isMonth && col.editable);
+    const prodQty = isProdCell ? parsePlanNum(getPlanCellRawValue(row, col)) : 0;
+    const hasSplit = Boolean(isProdCell && row.splits && Array.isArray(row.splits[col.weekId]) && row.splits[col.weekId].length >= 2);
+    const hasMultiRegCert = Boolean(isProdCell && getPlanWeekDraftRegisteredCertRows(row.code, col.weekId, state.planData?.year).length >= 2);
+
+    const splitBtn = document.getElementById('btn-plan-ctx-split');
+    const mergeBtn = document.getElementById('btn-plan-ctx-merge');
+    if (splitBtn) splitBtn.disabled = !(isProdCell && prodQty >= 2);
+    if (mergeBtn) mergeBtn.disabled = !(hasSplit || hasMultiRegCert);
+
     let left = x + 12; // 마우스 포인터 오른쪽에서 등장
     let top = y - 10;
     if (left + 205 > window.innerWidth) left = Math.max(10, x - 205);
-    if (top + 290 > window.innerHeight) top = Math.max(10, window.innerHeight - 300);
+    if (top + 320 > window.innerHeight) top = Math.max(10, window.innerHeight - 330);
 
     pal.style.left = `${left}px`;
     pal.style.top = `${top}px`;
@@ -10174,8 +10741,21 @@
     document.getElementById('btn-plan-export-xls')?.addEventListener('click', exportPlanToExcel);
     document.getElementById('btn-plan-save')?.addEventListener('click', () => savePlanToDb(false));
 
+    function canEditPlan() {
+      const u = state.currentUser;
+      if (!u || u.isGuest) return false;
+      if (u.permissions && typeof u.permissions.plan === 'string') {
+        return u.permissions.plan === 'edit';
+      }
+      return u.role !== 'viewer';
+    }
+
     // 우클릭 팔레트 & 메모 이벤트
     tbody.addEventListener('contextmenu', (e) => {
+      if (!canEditPlan()) {
+        closePlanContextPalette();
+        return;
+      }
       const td = e.target.closest('td[data-r][data-c]');
       if (!td) return;
       e.preventDefault();
@@ -10222,48 +10802,93 @@
       renderPlanModule();
     });
 
-    // 우클릭 -> [검정 신청으로 보내기] (선택 범위의 생산 셀 이관)
-    document.getElementById('btn-plan-ctx-send-cert')?.addEventListener('click', async () => {
+    // 우클릭 -> [분할]
+    document.getElementById('btn-plan-ctx-split')?.addEventListener('click', () => {
       closePlanContextPalette();
-      const range = getPlanSelectedRange();
-      if (!range) return;
-
-      const pd = state.planData || getDefaultPlanData();
-      const regMap = getCertRegisteredQtyMap();
-      const todayStr = getTodayDateString();
-      const masterByCode = new Map((state.certMasterItems || []).map(i => [i.code, i]));
-
-      const outgoing = [];
-      for (let r = range.r1; r <= range.r2; r++) {
-        const rowObj = planGridState.rows[r];
-        if (!rowObj) continue;
-        const masterItem = masterByCode.get(rowObj.code);
-        if (!masterItem || (masterItem.inspectType || '') === '-') continue;
-
-        for (let c = range.c1; c <= range.c2; c++) {
-          const col = planGridState.columns[c];
-          if (!col || !col.weekId || col.field !== 'prod' || col.isMonth) continue;
-          const planQty = parsePlanNum(getPlanCellRawValue(rowObj, col));
-          if (planQty <= 0) continue;
-          const regQty = regMap[`${rowObj.code}__${col.weekId}`] || 0;
-          const remaining = planQty - regQty;
-          if (remaining <= 0) continue;
-
-          const dates = getPlanWeekFridayDates(pd.year, col.weekId);
-          outgoing.push(buildDraftRowFromMasterAndPlan(masterItem, remaining, col.weekId, dates, todayStr));
-        }
+      const anchor = planGridState.anchor;
+      if (!anchor) return;
+      const row = planGridState.rows[anchor.r];
+      const col = planGridState.columns[anchor.c];
+      if (!row || row.isGroupRow || !col || !col.weekId || col.field !== 'prod' || col.isMonth || !col.editable) {
+        alert('주차별 생산 수량 셀에서만 분할할 수 있습니다.');
+        return;
       }
+      const qty = parsePlanNum(getPlanCellRawValue(row, col));
+      if (qty < 2) {
+        alert('생산 수량이 2 이상인 셀만 분할할 수 있습니다.');
+        return;
+      }
+      const existingSplits = row.splits && Array.isArray(row.splits[col.weekId]) ? row.splits[col.weekId] : null;
+      if (typeof window._openPlanSplitModal === 'function') {
+        window._openPlanSplitModal({
+          code: row.code,
+          name: row.name,
+          weekId: col.weekId,
+          qty,
+          existingSplits
+        });
+      }
+    });
 
-      if (outgoing.length === 0) {
-        alert('선택한 범위에 검정 신청할 수 있는 생산 수량(미신청 잔여량 > 0)이 없습니다.');
+    // 우클릭 -> [병합 (분할해제)]
+    document.getElementById('btn-plan-ctx-merge')?.addEventListener('click', () => {
+      closePlanContextPalette();
+      const anchor = planGridState.anchor;
+      if (!anchor) return;
+      const row = planGridState.rows[anchor.r];
+      const col = planGridState.columns[anchor.c];
+      if (!row || !col || !col.weekId || col.field !== 'prod') return;
+
+      const pdYear = String(state.planData?.year || '');
+      const entry = state.planData?.rowsByCode?.[row.code];
+      const hasSplit = Boolean(entry?.splits && Array.isArray(entry.splits[col.weekId]) && entry.splits[col.weekId].length >= 2);
+      const regRows = getPlanWeekDraftRegisteredCertRows(row.code, col.weekId, pdYear);
+
+      if (!hasSplit && regRows.length < 2) {
+        showToast('분할된 셀이나 병합할 등록완료 로트가 없습니다.');
         return;
       }
 
-      state.certMode = 'auto';
-      state.certDraftRows = outgoing;
-      saveLocalCertData();
-      await activateTab('tab-certification');
-      showToast(`선택한 ${outgoing.length}건이 검정 신청 등록으로 전달되었습니다.`);
+      if (hasSplit) {
+        pushPlanUndoSnapshot();
+        delete entry.splits[col.weekId];
+        saveLocalPlanData();
+        markAsDirty(true);
+      }
+
+      let mergedCertCount = 0;
+      if (regRows.length >= 2) {
+        const sorted = [...regRows].sort((a, b) => {
+          const fA = parseSafeInt(a.from), fB = parseSafeInt(b.from);
+          if (fA > 0 && fB > 0 && fA !== fB) return fA - fB;
+          return String(a.lotNo || '').localeCompare(String(b.lotNo || ''));
+        });
+        const keepRow = sorted[0];
+        const removeIds = new Set(sorted.slice(1).map(r => r.id));
+        const totalQty = sorted.reduce((acc, r) => acc + parseSafeInt(r.qty), 0);
+
+        keepRow.qty = totalQty;
+        keepRow.passNo = '';
+        updateDraftRowCalculations(keepRow);
+
+        state.certSavedRows = (state.certSavedRows || []).filter(r => !removeIds.has(r.id));
+        mergedCertCount = sorted.length;
+        saveLocalCertData();
+        if (typeof saveCertDataToDb === 'function') saveCertDataToDb(true);
+        if (typeof renderCertSavedTable === 'function') renderCertSavedTable();
+      }
+
+      if ((state.certMode || 'auto') === 'auto' && state.certSelectedWeekId) {
+        const parsedSel = parseCertWeekKey(state.certSelectedWeekId, pdYear);
+        if (parsedSel.weekId === col.weekId && (!pdYear || !parsedSel.year || parsedSel.year === pdYear)) {
+          loadCertDraftFromPlanWeek(state.certSelectedWeekId, state.certAutoLineFilter || 'ALL');
+        }
+      }
+
+      renderPlanModule();
+      showToast(mergedCertCount >= 2
+        ? `분할이 해제(병합)되었습니다. (검정현황 등록완료 ${mergedCertCount}건 → 1건 통합)`
+        : '분할이 해제(병합)되었습니다.');
     });
 
     document.getElementById('btn-plan-memo-edit')?.addEventListener('click', promptMemoForActiveCell);
@@ -10293,6 +10918,24 @@
         planGridState.altDrag = { r, fromColIdx: c, weekId: col.weekId, code: row.code };
         td.classList.add('plan-drag-source');
         applyPlanSelectionClasses();
+        return;
+      }
+
+      // NO 열 클릭 시 해당 행 전체 선택 (Shift/드래그로 여러 행 선택 지원)
+      if (col && col.key === 'rowNo') {
+        const lastColIdx = Math.max(0, planGridState.columns.length - 1);
+        planGridState.extraCells.clear();
+        if (e.shiftKey && planGridState.anchor) {
+          planGridState.anchor = { r: planGridState.anchor.r, c: 0 };
+          planGridState.focus = { r, c: lastColIdx };
+        } else {
+          planGridState.anchor = { r, c: 0 };
+          planGridState.focus = { r, c: lastColIdx };
+          planGridState.isDragging = true;
+          planGridState.isRowDragging = true;
+        }
+        applyPlanSelectionClasses();
+        scrollWrap.focus({ preventScroll: true });
         return;
       }
 
@@ -10346,6 +10989,14 @@
       }
 
       if (!planGridState.isDragging) return;
+      if (planGridState.isRowDragging) {
+        const lastColIdx = Math.max(0, planGridState.columns.length - 1);
+        if (!planGridState.focus || planGridState.focus.r !== r || planGridState.focus.c !== lastColIdx) {
+          planGridState.focus = { r, c: lastColIdx };
+          applyPlanSelectionClasses();
+        }
+        return;
+      }
       if (!planGridState.focus || planGridState.focus.r !== r || planGridState.focus.c !== c) {
         planGridState.focus = { r, c };
         applyPlanSelectionClasses();
@@ -10353,6 +11004,7 @@
     });
 
     document.addEventListener('mouseup', (e) => {
+      planGridState.isRowDragging = false;
       if (planGridState.altDrag) {
         const drag = planGridState.altDrag;
         planGridState.altDrag = null;
@@ -10370,6 +11022,19 @@
             const rowObj = planGridState.rows[r];
             const srcVal = getPlanCellRawValue(rowObj, srcCol);
             if (srcVal !== '' && srcVal !== null && srcVal !== undefined) {
+              const pdYear = String(state.planData?.year || '');
+              const srcLock = getPlanWeekCertLockInfo(drag.code, srcCol.weekId, pdYear);
+              if (srcLock.hasDone) {
+                showToast('생산완료(일정완료)된 셀은 주차를 이동할 수 없습니다.');
+                return;
+              }
+              const targetExisting = parsePlanNum(getPlanCellRawValue(rowObj, targetCol));
+              const targetLock = getPlanWeekCertLockInfo(drag.code, targetCol.weekId, pdYear);
+              if (targetExisting > 0 || targetLock.lockedQty > 0 || targetLock.draftSavedQty > 0) {
+                showToast('이동할 대상 주차에 이미 수량이 있어 이동할 수 없습니다.');
+                return;
+              }
+
               pushPlanUndoSnapshot();
               setPlanCellValue(drag.code, targetCol, srcVal);
               setPlanCellValue(drag.code, srcCol, '');
@@ -10379,16 +11044,46 @@
                 setPlanCellMemo(drag.code, targetCol.key, srcMemo);
                 setPlanCellMemo(drag.code, srcCol.key, '');
               }
+              // 분할 정보도 함께 이동
+              const entry = state.planData?.rowsByCode?.[drag.code];
+              if (entry?.splits && Array.isArray(entry.splits[srcCol.weekId])) {
+                entry.splits[targetCol.weekId] = [...entry.splits[srcCol.weekId]];
+                delete entry.splits[srcCol.weekId];
+              }
               if (state.planData?.autoGreenOnMove) {
                 setPlanCellColor(drag.code, targetCol.key, 'green');
                 setPlanCellColor(drag.code, srcCol.key, '');
               }
+
+              // 검정현황 저장 건(등록완료/검정신청/품검요청)도 새 주차로 동기화
+              let certMovedCount = 0;
+              const newDates = getPlanWeekFridayDates(pdYear, targetCol.weekId);
+              (state.certSavedRows || []).forEach(cr => {
+                if (String(cr.code || '').trim() !== String(drag.code).trim()) return;
+                if (String(cr.sourceWeekId || '').trim() !== String(srcCol.weekId).trim()) return;
+                const crYear = String(cr.sourceYear || (cr.weekDate && /^\d{4}/.test(cr.weekDate) ? cr.weekDate.slice(0, 4) : '')).trim();
+                if (pdYear && crYear && crYear !== pdYear) return;
+                if (String(cr.status || '').trim() === '일정완료') return;
+
+                cr.sourceWeekId = targetCol.weekId;
+                if (pdYear) cr.sourceYear = pdYear;
+                cr.weekDate = newDates.weekDate;
+                cr.inspectDate = newDates.inspectDate;
+                certMovedCount++;
+              });
+              if (certMovedCount > 0) {
+                saveLocalCertData();
+                if (typeof saveCertDataToDb === 'function') saveCertDataToDb(true);
+              }
+
               planGridState.anchor = { r, c };
               planGridState.focus = { r, c };
               saveLocalPlanData();
               markAsDirty(true);
               renderPlanModule();
-              showToast(`${drag.weekId} → ${targetCol.weekId} 주차 이동 완료`);
+              showToast(certMovedCount > 0
+                ? `${drag.weekId} → ${targetCol.weekId} 주차 이동 완료 (검정현황 ${certMovedCount}건 동기화)`
+                : `${drag.weekId} → ${targetCol.weekId} 주차 이동 완료`);
             }
           }
         }
@@ -12147,7 +12842,8 @@
                 aQty: 0, iQty: 0, pQty: 0,
                 actualHours: 0,
                 stdH: 0,
-                children: new Map()
+                children: new Map(),
+                dailyLogs: []
               });
             }
             bObj = buckets.get(bKey);
@@ -12160,6 +12856,9 @@
             bObj.pQty += pQ;
             bObj.actualHours += rowHours;
             bObj.stdH += rowStdH;
+            if (rowHours > 0 || qty > 0) {
+              bObj.dailyLogs.push({ dateStr, line, code: code || ent.name || '-', name: stItem.name, qty, actualH: rowHours, stdH: rowStdH });
+            }
 
             const cKey = code || ent.name || '-';
             if (!bObj.children.has(cKey)) {
@@ -12194,7 +12893,8 @@
                 aQty: 0, iQty: 0, pQty: 0,
                 actualHours: 0,
                 stdH: 0,
-                children: new Map()
+                children: new Map(),
+                dailyLogs: []
               });
             }
             bObj = buckets.get(bKey);
@@ -12204,14 +12904,71 @@
             bObj.pQty += pQ;
             bObj.actualHours += rowHours;
             bObj.stdH += rowStdH;
+            if (rowHours > 0 || qty > 0) {
+              bObj.dailyLogs.push({ dateStr, line, code: code || ent.name || '-', name: bObj.name, qty, actualH: rowHours, stdH: rowStdH });
+            }
           }
         });
       } catch (e) { /* ignore */ }
     }
 
     const list = Array.from(buckets.values());
+    const allAnomalies = [];
     let totalStdH = 0, totalActH = 0;
-    list.forEach(it => { totalStdH += it.stdH; totalActH += it.actualHours; });
+    list.forEach(it => {
+      totalStdH += it.stdH;
+      totalActH += it.actualHours;
+      const avgEff = (it.actualHours > 0 && it.stdH > 0) ? (it.stdH / it.actualHours) * 100 : null;
+      const byDateMap = new Map();
+      (it.dailyLogs || []).forEach(dl => {
+        const dk = `${dl.dateStr}__${dl.line}`;
+        if (!byDateMap.has(dk)) {
+          byDateMap.set(dk, { dateStr: dl.dateStr, line: dl.line, qty: 0, actualH: 0, stdH: 0 });
+        }
+        const agg = byDateMap.get(dk);
+        agg.qty += dl.qty;
+        agg.actualH += dl.actualH;
+        agg.stdH += dl.stdH;
+      });
+
+      const itemAnomalies = [];
+      byDateMap.forEach(agg => {
+        let reason = '';
+        let severity = 'warn';
+        if (agg.actualH > 0 && agg.qty <= 0) {
+          reason = '공수 입력 · 수량 누락(0)';
+          severity = 'err';
+        } else if (agg.qty > 0 && agg.actualH <= 0) {
+          reason = '수량 입력 · 공수 누락(0)';
+          severity = 'err';
+        } else if (agg.actualH > 0 && agg.stdH > 0) {
+          const dayEff = (agg.stdH / agg.actualH) * 100;
+          if (dayEff < 50 || (avgEff && dayEff < avgEff * 0.5)) {
+            reason = `효율 급락 (${dayEff.toFixed(0)}%${avgEff ? ` · 월평균 ${avgEff.toFixed(0)}%` : ''})`;
+          } else if (dayEff > 150 || (avgEff && dayEff > avgEff * 1.6)) {
+            reason = `효율 급등 (${dayEff.toFixed(0)}%${avgEff ? ` · 월평균 ${avgEff.toFixed(0)}%` : ''})`;
+          }
+        }
+        if (reason) {
+          const entry = {
+            whKey: it.key,
+            itemName: it.name,
+            dateStr: agg.dateStr,
+            line: agg.line,
+            qty: agg.qty,
+            actualH: agg.actualH,
+            stdH: agg.stdH,
+            reason,
+            severity
+          };
+          itemAnomalies.push(entry);
+          allAnomalies.push(entry);
+        }
+      });
+      itemAnomalies.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+      it.anomalies = itemAnomalies;
+    });
+    allAnomalies.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
 
     const activeLossH = includeAttLoss ? (totalWorkLossH + totalAttLossH) : totalWorkLossH;
     const stEff = totalActH > 0 && totalStdH > 0 ? (totalStdH / totalActH) * 100 : null;
@@ -12219,6 +12976,7 @@
 
     return {
       list,
+      anomalies: allAnomalies,
       unmappedCodes: Array.from(unmappedCodes),
       lossWork: Object.values(lossWork).sort((a, b) => b.totalH - a.totalH),
       lossAtt: Object.values(lossAtt).sort((a, b) => b.totalH - a.totalH),
@@ -12310,6 +13068,46 @@
     const stTbody = document.getElementById('wh-st-tbody');
     const stTfoot = document.getElementById('wh-st-tfoot');
     const searchKw = (state.whItemSearch || '').trim().toLowerCase();
+    const displayMode = state.whAggDisplayMode || 'qty'; // 'qty' | 'st' | 'est'
+    if (state.whTargetEff === undefined) {
+      const savedEff = Number(state.stConfig?.targetEff);
+      state.whTargetEff = (Number.isFinite(savedEff) && savedEff >= 10 && savedEff <= 300) ? savedEff : 100;
+    }
+    const targetEffPct = Math.max(10, Math.min(300, Number(state.whTargetEff) || 100));
+
+    state.whLastAnomalies = cur.anomalies || [];
+    state.whLastAnomaliesByKey = new Map((cur.list || []).map(it => [it.key, it.anomalies || []]));
+
+    const anomBtn = document.getElementById('btn-wh-anomaly-alert');
+    const anomCntEl = document.getElementById('wh-anomaly-count');
+    if (anomBtn && anomCntEl) {
+      if (state.whLastAnomalies.length > 0) {
+        anomBtn.style.display = 'inline-flex';
+        anomCntEl.textContent = String(state.whLastAnomalies.length);
+      } else {
+        anomBtn.style.display = 'none';
+      }
+    }
+
+    const targetEffInput = document.getElementById('wh-target-eff');
+    if (targetEffInput && document.activeElement !== targetEffInput) {
+      targetEffInput.value = String(targetEffPct);
+    }
+
+    const modeBtn = document.getElementById('btn-wh-st-mode');
+    if (modeBtn) {
+      modeBtn.textContent = displayMode === 'est'
+        ? `표시: 예상 ST (${targetEffPct}%)`
+        : (displayMode === 'st' ? '표시: ST(초)' : '표시: 수량');
+      modeBtn.classList.toggle('btn-primary', displayMode !== 'qty');
+      modeBtn.classList.toggle('btn-outline', displayMode === 'qty');
+    }
+    const colAEl = document.getElementById('wh-col-a');
+    const colIEl = document.getElementById('wh-col-i');
+    const colPEl = document.getElementById('wh-col-p');
+    if (colAEl) colAEl.textContent = displayMode === 'est' ? '조립 (예상)' : (displayMode === 'st' ? '조립 (ST)' : '조립');
+    if (colIEl) colIEl.textContent = displayMode === 'est' ? '검사 (예상)' : (displayMode === 'st' ? '검사 (ST)' : '검사');
+    if (colPEl) colPEl.textContent = displayMode === 'est' ? '포장 (예상)' : (displayMode === 'st' ? '포장 (ST)' : '포장');
 
     if (stTbody) {
       const filteredList = cur.list.filter(it => {
@@ -12323,7 +13121,7 @@
       });
 
       if (filteredList.length === 0) {
-        stTbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding: 28px; color:#94a3b8;">해당 월에 집계된 생산일보 데이터가 없습니다.</td></tr>';
+        stTbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding: 28px; color:#94a3b8;">해당 월에 집계된 생산일보 데이터가 없습니다.</td></tr>';
       } else {
         const effBadgeHtml = (effVal) => {
           if (effVal === null) return '-';
@@ -12333,12 +13131,33 @@
           return `<span class="wh-badge wh-badge-ok">${txt}</span>`;
         };
 
+        const renderProcessCell = (qtyVal, stVal, effRatio) => {
+          if (displayMode === 'st') {
+            return `<td class="num-cell text-right" title="수량: ${qtyVal.toLocaleString()}">${stVal}s</td>`;
+          }
+          if (displayMode === 'est') {
+            if (qtyVal <= 0 || stVal <= 0 || !effRatio) {
+              const reasonTip = qtyVal <= 0
+                ? `당월 실적 수량 없음 (측정 ST: ${stVal}s)`
+                : `측정 ST: ${stVal}s (예상 산출 불가)`;
+              return `<td class="num-cell text-right" style="color:#94a3b8;" title="${reasonTip}">-</td>`;
+            }
+            const estVal = Number((stVal * effRatio).toFixed(2));
+            const diff = estVal - stVal;
+            const diffStr = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}s`;
+            const colorStyle = Math.abs(diff) > stVal * 0.25 ? 'color:#d97706; font-weight:700;' : 'color:#2563eb; font-weight:600;';
+            return `<td class="num-cell text-right" style="${colorStyle}" title="측정 ST: ${stVal}s → 예상 ST: ${estVal}s (${diffStr}) · 수량: ${qtyVal.toLocaleString()}">${estVal}s</td>`;
+          }
+          return `<td class="num-cell text-right" title="ST: ${stVal}s">${qtyVal.toLocaleString()}</td>`;
+        };
+
         const rowsHtml = [];
         filteredList.forEach((it, idx) => {
           const stA = Number(it.stItem.stAssembly) || 0;
           const stI = Number(it.stItem.stInspect) || 0;
           const stP = Number(it.stItem.stPack) || 0;
           const effVal = it.actualHours > 0 && it.stdH > 0 ? (it.stdH / it.actualHours) * 100 : null;
+          const effRatio = (effVal && effVal > 0) ? (targetEffPct / effVal) : null;
           const isExpanded = state.whExpandedGroups && state.whExpandedGroups.has(it.key);
           const hasChildren = it.isGroup && it.children.size > 0;
 
@@ -12351,19 +13170,21 @@
           const actionBtn = it.isUnmapped && it.code
             ? ` <button type="button" class="btn btn-xs btn-outline btn-wh-quick-map" data-code="${esc(it.code)}" style="padding:1px 5px; font-size:10px; margin-left:4px;">지정</button>`
             : '';
+          const anomPill = (it.anomalies && it.anomalies.length > 0)
+            ? `<button type="button" class="wh-anomaly-pill" data-wh-key="${esc(it.key)}" title="이상 일보 ${it.anomalies.length}건 확인 (클릭 시 이동)">!${it.anomalies.length}</button>`
+            : '';
 
           rowsHtml.push(`
             <tr class="${rowCls}" data-wh-key="${esc(it.key)}">
               <td class="text-center">${idx + 1}</td>
               <td class="text-center">${esc(it.line)}</td>
-              <td class="font-bold">${arrow}${esc(it.name)} ${badge}${actionBtn}</td>
-              <td class="num-cell text-right">${it.aQty.toLocaleString()}</td>
-              <td class="num-cell text-right">${it.iQty.toLocaleString()}</td>
-              <td class="num-cell text-right">${it.pQty.toLocaleString()}</td>
-              <td class="text-center" style="font-size:11px; color:#64748b;">${stA} / ${stI} / ${stP}</td>
+              <td class="font-bold" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(it.name)}">${arrow}${esc(it.name)} ${badge}${actionBtn}</td>
+              ${renderProcessCell(it.aQty, stA, effRatio)}
+              ${renderProcessCell(it.iQty, stI, effRatio)}
+              ${renderProcessCell(it.pQty, stP, effRatio)}
               <td class="num-cell text-right font-bold" style="color:#7c3aed;">${formatWhDuration(it.stdH, unit, 2)}</td>
               <td class="num-cell text-right font-bold">${formatWhDuration(it.actualHours, unit, 1)}</td>
-              <td class="text-center">${effBadgeHtml(effVal)}</td>
+              <td class="text-center">${effBadgeHtml(effVal)}${anomPill}</td>
               <td class="text-center" style="color:#94a3b8;">-</td>
             </tr>
           `);
@@ -12371,15 +13192,15 @@
           if (hasChildren && isExpanded) {
             Array.from(it.children.values()).forEach(ch => {
               const chEff = ch.actualHours > 0 && ch.stdH > 0 ? (ch.stdH / ch.actualHours) * 100 : null;
+              const chRatio = (chEff && chEff > 0) ? (targetEffPct / chEff) : null;
               rowsHtml.push(`
                 <tr class="wh-child-row">
                   <td></td>
                   <td class="text-center">└</td>
-                  <td><code>${esc(ch.code)}</code> ${esc(ch.name)}</td>
-                  <td class="num-cell text-right">${ch.aQty.toLocaleString()}</td>
-                  <td class="num-cell text-right">${ch.iQty.toLocaleString()}</td>
-                  <td class="num-cell text-right">${ch.pQty.toLocaleString()}</td>
-                  <td class="text-center" style="font-size:10.5px;">세부</td>
+                  <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(ch.code + ' ' + ch.name)}"><code>${esc(ch.code)}</code> ${esc(ch.name)}</td>
+                  ${renderProcessCell(ch.aQty, stA, chRatio)}
+                  ${renderProcessCell(ch.iQty, stI, chRatio)}
+                  ${renderProcessCell(ch.pQty, stP, chRatio)}
                   <td class="num-cell text-right">${formatWhDuration(ch.stdH, unit, 2)}</td>
                   <td class="num-cell text-right">${formatWhDuration(ch.actualHours, unit, 1)}</td>
                   <td class="text-center">${chEff !== null ? chEff.toFixed(1) + '%' : '-'}</td>
@@ -12394,7 +13215,7 @@
       if (stTfoot) {
         const totEff = cur.stEff !== null ? `${cur.stEff.toFixed(1)}%` : '-';
         const totRealEff = cur.realEff !== null ? `${cur.realEff.toFixed(1)}%` : '-';
-        stTfoot.innerHTML = `<td colspan="7" class="summary-label text-center">월간 합계</td><td class="num-cell text-right font-bold" style="color:#7c3aed;">${formatWhDuration(cur.totalStdH, unit, 2)}</td><td class="num-cell text-right font-bold">${formatWhDuration(cur.totalActH, unit, 1)}</td><td class="text-center font-bold">${totEff}</td><td class="text-center font-bold" style="color:#0284c7;">${totRealEff}</td>`;
+        stTfoot.innerHTML = `<td colspan="6" class="summary-label text-center">월간 합계</td><td class="num-cell text-right font-bold" style="color:#7c3aed;">${formatWhDuration(cur.totalStdH, unit, 2)}</td><td class="num-cell text-right font-bold">${formatWhDuration(cur.totalActH, unit, 1)}</td><td class="text-center font-bold">${totEff}</td><td class="text-center font-bold" style="color:#0284c7;">${totRealEff}</td>`;
       }
     }
 
@@ -13167,6 +13988,192 @@
 
     document.getElementById('btn-prod-save')?.addEventListener('click', saveDailyV2ToDb);
 
+    async function exportDailyReportsYearExcel() {
+      if (!window.XLSXEngine || typeof window.XLSXEngine.exportMultiSheetWorkbook !== 'function') {
+        alert('엑셀 내보내기 엔진을 찾을 수 없습니다.');
+        return;
+      }
+
+      const targetYear = String(state.productionDate || getTodayDateString()).slice(0, 4);
+      showToast(`${targetYear}년 생산일보 데이터를 불러오는 중...`);
+
+      const byDate = new Map();
+
+      // 1) Firestore 1년치 조회
+      if (isFirestoreActive && db) {
+        try {
+          const snap = await db.collection('pms_daily_v2')
+            .where('date', '>=', `${targetYear}-01-01`)
+            .where('date', '<=', `${targetYear}-12-31`)
+            .get();
+          snap.forEach(doc => {
+            const data = doc.data();
+            const dStr = data?.date || doc.id;
+            if (dStr && String(dStr).startsWith(`${targetYear}-`)) {
+              byDate.set(dStr, normalizeDailyV2(data));
+            }
+          });
+        } catch (err) {
+          console.warn(`연간 생산일보(${targetYear}) Firestore 조회 실패 (로컬 데이터 사용):`, err);
+        }
+      }
+
+      // 2) 로컬 저장소 병합
+      try {
+        const prefix = STORAGE_KEYS.DAILY_V2_PREFIX + `${targetYear}-`;
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k || !k.startsWith(prefix)) continue;
+          const dStr = k.slice(STORAGE_KEYS.DAILY_V2_PREFIX.length);
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const norm = normalizeDailyV2(JSON.parse(raw));
+            if (norm.entries && norm.entries.length > 0) {
+              byDate.set(dStr, norm);
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      // 3) 현재 화면에 열려 있는 날짜(미저장 포함) 반영
+      if (state.productionDate && String(state.productionDate).startsWith(`${targetYear}-`) && state.dailyV2Data) {
+        byDate.set(state.productionDate, normalizeDailyV2(state.dailyV2Data));
+      }
+
+      const sortedDates = Array.from(byDate.keys()).sort();
+      const allWorkers = (state.workers || []).filter(w => isDirectManufacturingWorker(w));
+      const workerById = new Map((state.workers || []).map(w => [w.id, w]));
+
+      const sheets = INSP_LINES.map(lineName => {
+        const lineEntries = [];
+        const usedWorkerIds = new Set();
+
+        sortedDates.forEach(dStr => {
+          const dayData = byDate.get(dStr);
+          if (!dayData || !Array.isArray(dayData.entries)) return;
+          dayData.entries.forEach(ent => {
+            if ((ent.line || '감지기반') !== lineName) return;
+            const actQty = parseSafeInt(ent.actualQty);
+            const targetQty = parseSafeInt(ent.targetQty);
+            const whMap = ent.workerHours || {};
+            let rowHours = 0;
+            Object.entries(whMap).forEach(([wId, hv]) => {
+              const h = parseFloat(hv) || 0;
+              if (h > 0) {
+                rowHours += h;
+                usedWorkerIds.add(wId);
+              }
+            });
+            if (!ent.isLoss && !ent.name && !ent.code && actQty === 0 && targetQty === 0 && rowHours === 0) return;
+            lineEntries.push({ dateStr: dStr, ent, actQty, targetQty, rowHours });
+          });
+        });
+
+        // 해당 반 고정 작업자 + 연간 투입된 지원/기타 작업자
+        const fixedWorkers = allWorkers.filter(w => (w.group || '감지기반') === lineName);
+        const fixedIdSet = new Set(fixedWorkers.map(w => w.id));
+        const extraWorkers = [];
+        usedWorkerIds.forEach(wId => {
+          if (fixedIdSet.has(wId)) return;
+          const wObj = workerById.get(wId);
+          extraWorkers.push(wObj
+            ? { ...wObj, _isSupport: true }
+            : { id: wId, name: wId, group: '기타', _isSupport: true });
+        });
+        const sheetWorkers = [...fixedWorkers, ...extraWorkers];
+
+        const headers = [
+          'No', '날짜', '품명', '로트', '공정', '작업내용', '계획수량', '실적수량',
+          ...sheetWorkers.map(w => w._isSupport ? `[지원] ${w.name}` : w.name),
+          '공수합계'
+        ];
+        const colWidths = [
+          36, 84, 175, 74, 72, 130, 68, 68,
+          ...sheetWorkers.map(() => 62),
+          72
+        ];
+
+        const rows = [];
+        rows.push({
+          height: 28,
+          cells: [{ v: `${targetYear}년 ${lineName} 생산일보`, style: 'Title', mergeAcross: headers.length - 1 }]
+        });
+        rows.push({
+          height: 24,
+          cells: headers.map(h => ({ v: h, style: 'Th' }))
+        });
+
+        let sumTarget = 0;
+        let sumActual = 0;
+        let sumTotalHours = 0;
+        const workerTotals = new Array(sheetWorkers.length).fill(0);
+
+        if (lineEntries.length === 0) {
+          rows.push({
+            height: 24,
+            cells: [{ v: `${targetYear}년 작성된 ${lineName} 생산일보 데이터가 없습니다.`, style: 'CellCenter', mergeAcross: headers.length - 1 }]
+          });
+        } else {
+          lineEntries.forEach((item, idx) => {
+            const { dateStr, ent, actQty, targetQty, rowHours } = item;
+            const dispName = ent.isLoss ? (ent.name || '-') : (getDisplayNameByCode(ent.code, ent.name) || '-');
+            const procLabel = ent.isLoss
+              ? (ent.lossLabel || (ent.procs && ent.procs[0]) || '유실')
+              : ((ent.procs && ent.procs.length > 0 ? ent.procs : ['assembly']).map(p => PROC_LABELS[p] || p).join('+'));
+
+            if (!ent.isLoss) {
+              sumTarget += targetQty;
+              sumActual += actQty;
+            }
+            sumTotalHours += rowHours;
+
+            const workerCells = sheetWorkers.map((w, wIdx) => {
+              const h = parseFloat(ent.workerHours && ent.workerHours[w.id]) || 0;
+              if (h > 0) {
+                workerTotals[wIdx] += h;
+                return { v: Number(h.toFixed(1)), style: 'CellHour' };
+              }
+              return { v: '', style: 'CellHour' };
+            });
+
+            rows.push({
+              height: 20,
+              cells: [
+                { v: idx + 1, style: 'CellCenter' },
+                { v: dateStr, style: 'CellCenter' },
+                { v: dispName, style: 'CellText' },
+                { v: ent.lotNo || '-', style: 'CellCenter' },
+                { v: procLabel, style: 'CellCenter' },
+                { v: ent.note || '', style: 'CellText' },
+                { v: targetQty > 0 ? targetQty : '', style: 'CellNum' },
+                { v: (!ent.isLoss && actQty > 0) ? actQty : '', style: 'CellNum' },
+                ...workerCells,
+                { v: rowHours > 0 ? Number(rowHours.toFixed(1)) : '', style: 'CellHour' }
+              ]
+            });
+          });
+
+          rows.push({
+            height: 22,
+            cells: [
+              { v: `합계 (${lineEntries.length}건)`, style: 'SumText', mergeAcross: 5 },
+              { v: sumTarget, style: 'SumNum' },
+              { v: sumActual, style: 'SumNum' },
+              ...workerTotals.map(t => ({ v: t > 0 ? Number(t.toFixed(1)) : 0, style: 'SumHour' })),
+              { v: Number(sumTotalHours.toFixed(1)), style: 'SumHour' }
+            ]
+          });
+        }
+
+        return { name: lineName, colWidths, rows };
+      });
+
+      window.XLSXEngine.exportMultiSheetWorkbook(sheets, `생산일보_${targetYear}년.xls`);
+      showToast(`${targetYear}년 반별 생산일보 엑셀이 다운로드되었습니다.`);
+    }
+
+    document.getElementById('btn-prod-export-excel')?.addEventListener('click', exportDailyReportsYearExcel);
+
     // 일보 입력 셀 포커스 시 기존 값 전체 선택 (키보드 입력 시 바로 덮어쓰기)
     container.addEventListener('focusin', (e) => {
       if (e.target.matches('.prod-v2-qty-input, .prod-v2-hour-input')) {
@@ -13235,12 +14242,104 @@
       state.whItemSearch = e.target.value;
       renderWorkhoursView();
     });
+    document.getElementById('wh-target-eff')?.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      if (Number.isFinite(v) && v >= 10 && v <= 300) {
+        state.whTargetEff = v;
+        if ((state.whAggDisplayMode || 'qty') === 'est') {
+          renderWorkhoursView();
+        }
+      }
+    });
+    document.getElementById('wh-target-eff')?.addEventListener('change', (e) => {
+      const v = Math.max(10, Math.min(300, parseFloat(e.target.value) || 100));
+      state.whTargetEff = v;
+      e.target.value = String(v);
+      if ((state.whAggDisplayMode || 'qty') === 'qty') {
+        state.whAggDisplayMode = 'est';
+      }
+      renderWorkhoursView();
+    });
+    document.getElementById('btn-wh-save-target-eff')?.addEventListener('click', async () => {
+      if (isGuestReadOnly(true)) return;
+      const inp = document.getElementById('wh-target-eff');
+      const v = Math.max(10, Math.min(300, parseFloat(inp ? inp.value : state.whTargetEff) || 100));
+      state.whTargetEff = v;
+      if (inp) inp.value = String(v);
+      if (!state.stConfig) state.stConfig = getDefaultStConfig();
+      state.stConfig.targetEff = v;
+      await saveStConfigToDb(true);
+      renderWorkhoursView();
+      showToast(`목표효율(${v}%)이 저장되었습니다.`);
+    });
+    document.getElementById('btn-wh-st-mode')?.addEventListener('click', () => {
+      const curMode = state.whAggDisplayMode || 'qty';
+      state.whAggDisplayMode = curMode === 'qty' ? 'st' : (curMode === 'st' ? 'est' : 'qty');
+      renderWorkhoursView();
+    });
+
+    const openWhAnomaliesModal = (filterKey) => {
+      const modal = document.getElementById('modal-wh-anomalies');
+      const listEl = document.getElementById('wh-anomalies-list');
+      if (!modal || !listEl) return;
+      const items = filterKey
+        ? (state.whLastAnomaliesByKey?.get(filterKey) || [])
+        : (state.whLastAnomalies || []);
+      if (items.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--text-muted);">감지된 이상 일보 내역이 없습니다.</div>';
+      } else {
+        listEl.innerHTML = items.map(a => `
+          <div class="wh-anomaly-item" data-date="${escapeHtmlPlan(a.dateStr)}" data-line="${escapeHtmlPlan(a.line)}">
+            <div>
+              <div style="font-size:12.5px; font-weight:700; color:var(--text-main);">
+                ${escapeHtmlPlan(a.dateStr)} · ${escapeHtmlPlan(a.line)} · ${escapeHtmlPlan(a.itemName)}
+              </div>
+              <div style="font-size:11.5px; color:var(--text-muted); margin-top:2px;">
+                수량: <b>${a.qty.toLocaleString()}</b> · 실동공수: <b>${a.actualH.toFixed(1)}h</b> ·
+                <span style="color:${a.severity === 'err' ? '#dc2626' : '#d97706'}; font-weight:700;">${escapeHtmlPlan(a.reason)}</span>
+              </div>
+            </div>
+            <span class="btn btn-xs btn-outline" style="flex-shrink:0;">일보 이동 →</span>
+          </div>
+        `).join('');
+      }
+      modal.style.display = 'flex';
+    };
+
+    const closeWhAnomaliesModal = () => {
+      const modal = document.getElementById('modal-wh-anomalies');
+      if (modal) modal.style.display = 'none';
+    };
+    document.getElementById('btn-wh-anomaly-alert')?.addEventListener('click', () => openWhAnomaliesModal(null));
+    document.getElementById('btn-close-wh-anomalies')?.addEventListener('click', closeWhAnomaliesModal);
+    document.getElementById('btn-cancel-wh-anomalies')?.addEventListener('click', closeWhAnomaliesModal);
+    document.getElementById('wh-anomalies-list')?.addEventListener('click', async (e) => {
+      const itemEl = e.target.closest('.wh-anomaly-item');
+      if (!itemEl) return;
+      const dateStr = itemEl.dataset.date;
+      const lineStr = itemEl.dataset.line;
+      if (!dateStr) return;
+      closeWhAnomaliesModal();
+      state.productionDate = dateStr;
+      try { localStorage.setItem(STORAGE_KEYS.LAST_PROD_DATE, dateStr); } catch (err) {}
+      if (!state.activeLines) state.activeLines = {};
+      state.activeLines.daily = 'daily';
+      await activateTab('tab-production');
+      showToast(`${dateStr}${lineStr ? ` (${lineStr})` : ''} 생산일보로 이동했습니다.`);
+    });
+
     document.getElementById('btn-wh-export-csv')?.addEventListener('click', exportWorkhoursCsv);
     document.getElementById('btn-wh-st-config')?.addEventListener('click', () => openStConfigModal('ALL'));
     document.getElementById('btn-wh-unmapped-alert')?.addEventListener('click', () => openStConfigModal('unmapped'));
 
-    // 공수집계 테이블 아코디언 드릴다운 & 빠른 미설정 지정
+    // 공수집계 테이블 아코디언 드릴다운 & 빠른 미설정 지정 & 이상 일보 확인
     document.getElementById('wh-st-tbody')?.addEventListener('click', (e) => {
+      const anomBtn = e.target.closest('.wh-anomaly-pill');
+      if (anomBtn) {
+        e.stopPropagation();
+        openWhAnomaliesModal(anomBtn.dataset.whKey || null);
+        return;
+      }
       const quickBtn = e.target.closest('.btn-wh-quick-map');
       if (quickBtn) {
         e.stopPropagation();
@@ -17678,8 +18777,9 @@
     }
     if (nameEl) nameEl.textContent = `${u.name} (${preset.label})`;
 
+    const isAdminUser = u.role === 'admin';
     const pendingCount = (state.authUsers || []).filter(x => x.status === 'pending' || x.resetRequested).length;
-    if (u.canApprove) {
+    if (isAdminUser) {
       if (navUsersBtn) navUsersBtn.style.display = 'flex';
       if (navDataAdminBtn) navDataAdminBtn.style.display = 'flex';
       if (alertEl) {
@@ -17695,6 +18795,13 @@
       if (navDataAdminBtn) navDataAdminBtn.style.display = 'none';
       if (alertEl) alertEl.style.display = 'none';
       if (navBadge) navBadge.style.display = 'none';
+
+      // 관리자가 아닌 계정이 사용자·권한 관리 / 데이터 관리 패널에 머물러 있으면 품목정보 탭으로 복귀
+      const usersPane = document.getElementById('settings-pane-users');
+      const dataPane = document.getElementById('settings-pane-data-admin');
+      if (usersPane?.classList.contains('active') || dataPane?.classList.contains('active')) {
+        document.querySelector('.settings-nav-btn[data-pane="settings-pane-items"]')?.click();
+      }
     }
   }
 
@@ -17764,7 +18871,7 @@
       }
     }
 
-    if (u.canApprove) renderAuthManagePane();
+    if (isAdminRole) renderAuthManagePane();
   }
 
   function openUserAccountModal() {
@@ -17790,7 +18897,7 @@
     const tempAlert = document.getElementById('user-account-temp-pw-alert');
     if (tempAlert) tempAlert.style.display = u.mustChangePassword ? 'block' : 'none';
     const goManage = document.getElementById('btn-auth-go-manage');
-    if (goManage) goManage.style.display = u.canApprove ? 'inline-flex' : 'none';
+    if (goManage) goManage.style.display = u.role === 'admin' ? 'inline-flex' : 'none';
     document.getElementById('form-change-my-pw')?.reset();
     setAuthMsg('my-pw-msg', '');
     modal.style.display = 'flex';

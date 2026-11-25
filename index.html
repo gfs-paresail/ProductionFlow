@@ -455,7 +455,8 @@
             <button type="button" class="plan-palette-btn" id="btn-plan-ctx-memo">📝 메모지 넣기/수정</button>
             <button type="button" class="plan-palette-btn text-danger" id="btn-plan-ctx-del-memo">메모 삭제</button>
             <div class="plan-menu-divider"></div>
-            <button type="button" class="plan-palette-btn" id="btn-plan-ctx-send-cert" style="color:#2563eb; font-weight:700;">📤 검정 신청으로 보내기</button>
+            <button type="button" class="plan-palette-btn" id="btn-plan-ctx-split" style="color:#2563eb; font-weight:700;">✂ 분할</button>
+            <button type="button" class="plan-palette-btn" id="btn-plan-ctx-merge">🔗 병합 (분할해제)</button>
           </div>
         </div>
 
@@ -794,6 +795,10 @@
                 <button type="button" class="btn btn-sm btn-outline" id="btn-prod-add-adhoc" title="계획에 없는 돌발/긴급 작업 품목 추가">
                   + 돌발/추가 품목
                 </button>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-prod-export-excel" title="해당 연도(1년치) 반별 생산일보 엑셀 내려받기">
+                  <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  엑셀 내려받기
+                </button>
                 <button type="button" class="btn btn-sm btn-save-success" id="btn-prod-save" title="현재 일자의 생산일보를 DB에 저장">
                   <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                   저장
@@ -851,6 +856,10 @@
                   <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                   CSV 내보내기
                 </button>
+                <button type="button" class="btn btn-sm btn-save-success" id="btn-wh-save-target-eff" title="목표효율 설정을 저장합니다">
+                  <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                  저장
+                </button>
               </div>
             </div>
           </div>
@@ -896,23 +905,33 @@
                     <h3 class="section-title">품목(단일·묶음)별 표준공수 vs 실동공수</h3>
                     <span class="section-desc">묶음 행을 클릭하면 세부 품목코드별 내역이 펼쳐집니다.</span>
                   </div>
-                  <input type="text" id="wh-item-search" class="form-input form-input-sm" placeholder="품목명/코드 검색..." style="width: 155px;">
+                  <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <button type="button" id="btn-wh-anomaly-alert" class="btn btn-xs btn-outline" style="display:none; border-color:#f59e0b; color:#d97706; font-weight:700;" title="ST/효율 이상 일보 내역 확인 및 바로가기">
+                      ⚠ 이상 일보 <span id="wh-anomaly-count">0</span>건
+                    </button>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11.5px; color:var(--text-secondary); margin:0;" title="예상 ST 산출 시 목표 효율(%)">
+                      <span>목표효율</span>
+                      <input type="number" id="wh-target-eff" class="form-input form-input-sm" value="100" min="10" max="300" step="5" style="width: 56px; text-align: right;">
+                      <span>%</span>
+                    </label>
+                    <input type="text" id="wh-item-search" class="form-input form-input-sm" placeholder="품목명/코드 검색..." style="width: 145px;">
+                    <button type="button" id="btn-wh-st-mode" class="btn btn-xs btn-outline" title="조립/검사/포장 표시 전환 (수량 → ST → 예상 ST)">표시: 수량</button>
+                  </div>
                 </div>
                 <div class="table-container" style="max-height: 410px; overflow: auto;">
                   <table class="grid-table wh-agg-table">
                     <thead>
                       <tr class="header-row-primary">
-                        <th style="width: 38px;">No</th>
-                        <th style="width: 72px;">작업반</th>
-                        <th style="min-width: 170px;">집계 품목명</th>
-                        <th style="width: 68px;">조립</th>
-                        <th style="width: 68px;">검사</th>
-                        <th style="width: 68px;">포장</th>
-                        <th style="width: 118px;">ST (조/검/포 s)</th>
-                        <th style="width: 82px;">S/T공수</th>
-                        <th style="width: 82px;">실동공수</th>
-                        <th style="width: 78px;">S/T효율</th>
-                        <th style="width: 78px;">실동효율</th>
+                        <th style="width: 5%; min-width: 40px;">No</th>
+                        <th style="width: 8%; min-width: 66px;">작업반</th>
+                        <th style="width: 25%; min-width: 160px;">집계 품목명</th>
+                        <th style="width: 9%; min-width: 64px;" id="wh-col-a">조립</th>
+                        <th style="width: 9%; min-width: 64px;" id="wh-col-i">검사</th>
+                        <th style="width: 9%; min-width: 64px;" id="wh-col-p">포장</th>
+                        <th style="width: 9%; min-width: 72px;">S/T공수</th>
+                        <th style="width: 9%; min-width: 72px;">실동공수</th>
+                        <th style="width: 8.5%; min-width: 72px;">S/T효율</th>
+                        <th style="width: 8.5%; min-width: 72px;">실동효율</th>
                       </tr>
                     </thead>
                     <tbody id="wh-st-tbody"></tbody>
@@ -1292,39 +1311,6 @@
               </div>
             </div>
 
-          </div>
-        </div>
-
-        <!-- 수량 분할 팝업 모달 -->
-        <div class="cert-modal-overlay" id="cert-split-modal" style="display: none;">
-          <div class="cert-modal-box" style="width: 440px; max-width: 95vw;">
-            <div class="cert-modal-head">
-              <h3>✂ 신청수량 분할</h3>
-              <button type="button" class="btn-close-modal" id="btn-close-split-modal">×</button>
-            </div>
-            <div class="cert-modal-body" style="padding: 16px;">
-              <div id="cert-split-item-info" style="margin-bottom: 12px; padding: 10px 12px; background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 8px; font-size: 13px;"></div>
-              <div class="plan-view-segmented" style="margin-bottom: 12px;">
-                <button type="button" class="plan-seg-btn active" id="btn-split-tab-manual">직접 분할</button>
-                <button type="button" class="plan-seg-btn" id="btn-split-tab-lot">LOT 단위 자동 분할</button>
-              </div>
-              <div id="cert-split-manual-pane">
-                <div id="cert-split-rows-wrap" style="display: flex; flex-direction: column; gap: 8px;"></div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                  <button type="button" class="btn btn-xs btn-outline" id="btn-split-add-line">+ 분할 행 추가</button>
-                  <span id="cert-split-sum-status" style="font-size: 12.5px; font-weight: 700;"></span>
-                </div>
-              </div>
-              <div id="cert-split-lot-pane" style="display: none;">
-                <label style="display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 6px;">1 LOT 기준 수량</label>
-                <input type="number" id="cert-split-lot-unit" class="form-input" min="1" placeholder="예: 3000" style="width: 100%; margin-bottom: 8px;">
-                <div id="cert-split-lot-preview" style="font-size: 12.5px; color: var(--text-sub); background: var(--bg-subtle); padding: 8px 10px; border-radius: 6px;"></div>
-              </div>
-            </div>
-            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
-              <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-split-modal">취소</button>
-              <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-split-modal">분할 적용</button>
-            </div>
           </div>
         </div>
 
@@ -3044,6 +3030,58 @@
     </div>
   </div>
 
+  <!-- 수량 분할 팝업 모달 (검정현황 + 생산계획 공용) -->
+  <div class="cert-modal-overlay" id="cert-split-modal" style="display: none;">
+    <div class="cert-modal-box" style="width: 440px; max-width: 95vw;">
+      <div class="cert-modal-head">
+        <h3 id="cert-split-modal-title">✂ 신청수량 분할</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-split-modal">×</button>
+      </div>
+      <div class="cert-modal-body" style="padding: 16px;">
+        <div id="cert-split-item-info" style="margin-bottom: 12px; padding: 10px 12px; background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 8px; font-size: 13px;"></div>
+        <div class="plan-view-segmented" style="margin-bottom: 12px;">
+          <button type="button" class="plan-seg-btn active" id="btn-split-tab-manual">직접 분할</button>
+          <button type="button" class="plan-seg-btn" id="btn-split-tab-lot">LOT 단위 자동 분할</button>
+        </div>
+        <div id="cert-split-manual-pane">
+          <div id="cert-split-rows-wrap" style="display: flex; flex-direction: column; gap: 8px;"></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+            <button type="button" class="btn btn-xs btn-outline" id="btn-split-add-line">+ 분할 행 추가</button>
+            <span id="cert-split-sum-status" style="font-size: 12.5px; font-weight: 700;"></span>
+          </div>
+        </div>
+        <div id="cert-split-lot-pane" style="display: none;">
+          <label style="display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 6px;">1 LOT 기준 수량</label>
+          <input type="number" id="cert-split-lot-unit" class="form-input" min="1" placeholder="예: 3000" style="width: 100%; margin-bottom: 8px;">
+          <div id="cert-split-lot-preview" style="font-size: 12.5px; color: var(--text-sub); background: var(--bg-subtle); padding: 8px 10px; border-radius: 6px;"></div>
+        </div>
+      </div>
+      <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
+        <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-split-modal">취소</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-split-modal">분할 적용</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 월별 ST 이상 일보 내역 모달 -->
+  <div class="cert-modal-overlay" id="modal-wh-anomalies" style="display: none; z-index: 2100;">
+    <div class="cert-modal-box" style="width: 640px; max-width: 95vw;">
+      <div class="cert-modal-head">
+        <h3>⚠ ST · 효율 이상 일보 감지 내역</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-wh-anomalies">×</button>
+      </div>
+      <div style="padding: 14px 16px;">
+        <div id="wh-anomalies-desc" style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+          수량/공수 누락 또는 월 평균 대비 효율이 크게 튄 일보 내역입니다. 클릭하면 해당 날짜의 생산일보로 바로 이동합니다.
+        </div>
+        <div id="wh-anomalies-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow-y: auto;"></div>
+      </div>
+      <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; padding: 10px 16px; border-top: 1px solid var(--border-light);">
+        <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-wh-anomalies">닫기</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 내 계정 · 비밀번호 변경 · 로그아웃 모달 -->
   <div class="cert-modal-overlay" id="modal-user-account" style="display: none;">
     <div class="cert-modal-box" style="width: 420px; max-width: 94vw;">
@@ -3131,20 +3169,20 @@
         <button type="button" class="btn-close-modal" id="btn-rpt-defect-close">×</button>
       </div>
       <form id="form-rpt-defect-input" style="padding: 16px; display:flex; flex-direction:column; gap:12px;">
-        <div id="rpt-defect-item-info" style="font-size:12.5px; color:#334155; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; line-height:1.5;"></div>
+        <div id="rpt-defect-item-info" style="font-size:12.5px; color:var(--text-main); background:var(--bg-subtle); border:1px solid var(--border-light); border-radius:6px; padding:8px 10px; line-height:1.5;"></div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
           <div>
-            <label style="display:block; font-size:12px; font-weight:600; color:#64748b; margin-bottom:4px;">로트수량</label>
-            <input type="text" id="rpt-defect-lot-qty" class="form-input" readonly style="background:#f1f5f9; font-weight:700; text-align:right;">
+            <label style="display:block; font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px;">로트수량</label>
+            <input type="text" id="rpt-defect-lot-qty" class="form-input" readonly style="background:var(--bg-subtle); color:var(--text-main); font-weight:700; text-align:right;">
           </div>
           <div>
-            <label for="rpt-defect-qty-input" style="display:block; font-size:12px; font-weight:600; color:#dc2626; margin-bottom:4px;">불량수량 *</label>
+            <label for="rpt-defect-qty-input" style="display:block; font-size:12px; font-weight:600; color:#ef4444; margin-bottom:4px;">불량수량 *</label>
             <input type="number" id="rpt-defect-qty-input" class="form-input" min="0" step="1" value="0" required style="font-weight:700; text-align:right;">
           </div>
         </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:10px 12px;">
-          <span style="font-size:12.5px; font-weight:700; color:#1e40af;">검사수량 (로트수량 + 불량수량)</span>
-          <span id="rpt-defect-inspect-qty" style="font-size:16px; font-weight:800; color:#1d4ed8;">0</span>
+        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--primary-light); border:1px solid var(--primary-border); border-radius:6px; padding:10px 12px;">
+          <span style="font-size:12.5px; font-weight:700; color:var(--primary);">검사수량 (로트수량 + 불량수량)</span>
+          <span id="rpt-defect-inspect-qty" style="font-size:16px; font-weight:800; color:var(--primary);">0</span>
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
           <button type="button" class="btn btn-sm btn-outline" id="btn-rpt-defect-cancel">취소</button>
