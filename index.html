@@ -365,17 +365,9 @@
               <div class="plan-dropdown-wrap" id="plan-io-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-plan-io-menu">엑셀 관리 ▾</button>
                 <div class="plan-dropdown-menu" id="plan-io-dropdown-menu">
-                  <button type="button" class="plan-menu-btn" id="btn-plan-upload-forecast">
+                  <button type="button" class="plan-menu-btn" id="btn-plan-upload-unified" style="color:#2563eb; font-weight:700;">
                     <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    예정물량 업로드 (.xls/.xlsx)
-                  </button>
-                  <button type="button" class="plan-menu-btn" id="btn-plan-upload-weekly">
-                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    기간별재고 업로드 (W00.xls)
-                  </button>
-                  <button type="button" class="plan-menu-btn" id="btn-plan-upload-stock-limits">
-                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    기초·최소·최대재고 업로드 (.xls/.xlsx)
+                    통합 엑셀 업로드 (드래그&amp;드롭)
                   </button>
                   <div class="plan-menu-divider"></div>
                   <button type="button" class="plan-menu-btn" id="btn-plan-add-week">
@@ -388,9 +380,7 @@
                   </button>
                 </div>
               </div>
-              <input type="file" id="input-plan-forecast-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
-              <input type="file" id="input-plan-weekly-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
-              <input type="file" id="input-plan-stock-limits-file" accept=".xlsx,.xls,.csv,.tsv" style="display:none;">
+              <input type="file" id="input-plan-unified-files" accept=".xlsx,.xls,.csv,.tsv" multiple style="display:none;">
 
               <button type="button" class="btn btn-sm btn-save-success" id="btn-plan-save" title="생산계획 저장 (DB 및 로컬)">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
@@ -3059,6 +3049,79 @@
       <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
         <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-split-modal">취소</button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-split-modal">분할 적용</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 생산계획 통합 엑셀 업로드 (드래그 & 드롭) 모달 -->
+  <div class="cert-modal-overlay" id="modal-plan-unified-upload" style="display: none; z-index: 2100;">
+    <div class="cert-modal-box" style="width: 580px; max-width: 95vw;">
+      <div class="cert-modal-head">
+        <h3 style="display:flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          생산계획 통합 엑셀 업로드
+        </h3>
+        <button type="button" class="btn-close-modal" id="btn-close-plan-unified-upload">×</button>
+      </div>
+      <div style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div id="plan-unified-dropzone" class="plan-upload-dropzone" tabindex="0">
+          <div style="margin-bottom: 6px; color: var(--text-muted); display: flex; justify-content: center;">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          </div>
+          <div style="font-size: 13.5px; font-weight: 700; color: var(--text-main);">엑셀 파일을 여기에 드래그 &amp; 드롭하세요</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
+            예정물량 · 기간별재고(W00) · 기초/최소/최대재고 파일을 한 번에 여러 개 넣을 수 있습니다. (클릭하여 파일 선택)
+          </div>
+        </div>
+        <div id="plan-unified-file-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto;"></div>
+        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer;">
+          <input type="checkbox" id="chk-plan-forecast-autocolor">
+          <span>예정물량 업로드 시 변동된 출고예정 셀 자동 색상 표시 (증가: 노랑 · 감소: 핑크)</span>
+        </label>
+      </div>
+      <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
+        <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-plan-unified-upload">취소</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-apply-plan-unified-upload" disabled>일괄 반영하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 예정물량 업로드 증감 비교 요약 모달 -->
+  <div class="cert-modal-overlay" id="modal-plan-forecast-diff" style="display: none; z-index: 2120;">
+    <div class="cert-modal-box" style="width: 720px; max-width: 96vw;">
+      <div class="cert-modal-head">
+        <h3 id="plan-forecast-diff-title">예정물량(출고예정) 변동 비교 요약</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-plan-forecast-diff">×</button>
+      </div>
+      <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div id="plan-forecast-diff-summary" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div class="plan-view-segmented" id="plan-forecast-diff-filter">
+            <button type="button" class="plan-seg-btn active" data-filter="ALL">전체</button>
+            <button type="button" class="plan-seg-btn" data-filter="UP">증가만</button>
+            <button type="button" class="plan-seg-btn" data-filter="DOWN">감소만</button>
+            <button type="button" class="plan-seg-btn" data-filter="SHORT">재고부족 발생</button>
+          </div>
+          <span style="font-size: 11.5px; color: var(--text-muted);">항목을 클릭하면 해당 품목·주차 셀로 바로 이동합니다.</span>
+        </div>
+        <div style="max-height: 340px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 8px;">
+          <table class="grid-table" style="width: 100%; font-size: 12px;">
+            <thead>
+              <tr>
+                <th style="width: 96px;">품목코드</th>
+                <th>품명</th>
+                <th style="width: 56px;">주차</th>
+                <th style="width: 130px;">기존 → 신규</th>
+                <th style="width: 82px;">증감</th>
+                <th style="width: 92px;">예상재고</th>
+              </tr>
+            </thead>
+            <tbody id="plan-forecast-diff-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border-light);">
+        <button type="button" class="btn btn-sm btn-primary" id="btn-ok-plan-forecast-diff">확인</button>
       </div>
     </div>
   </div>

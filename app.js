@@ -9310,16 +9310,18 @@
     let headRow2 = '<tr class="plan-header-row-2">';
     cols.slice(fixedCount).forEach(col => {
       let alertHtml = '';
-      if (col.weekId && col.field === 'prod' && !col.isMonth) {
+      if (col && col.key) {
         let alertCnt = 0;
         rows.forEach(r => {
+          if (r.isGroupRow) return;
           const c = r.colors && r.colors[col.key];
           if (c && (!pd.colorFilter || pd.colorFilter === 'ALL' || c === pd.colorFilter)) {
             alertCnt++;
           }
         });
         if (alertCnt > 0) {
-          alertHtml = ` <span class="plan-week-alert-badge" title="상태 표시 ${alertCnt}건">!</span>`;
+          const colTitle = (col.weekId ? `${col.weekId} ` : (col.month ? `${col.month}월 ` : '')) + col.label;
+          alertHtml = ` <span class="plan-week-alert-badge" data-col-key="${escapeHtmlPlan(col.key)}" data-col-label="${escapeHtmlPlan(colTitle)}" data-alert-count="${alertCnt}" title="상태 표시 ${alertCnt}건 (클릭 시 해당 열 색상 일괄 해제)">!</span>`;
         }
       }
       headRow2 += `<th class="${col.cls}">${col.label}${alertHtml}</th>`;
@@ -9925,14 +9927,14 @@
   }
 
   // 예정물량조회.xls 업로드 (4행 주차, 5행 예정+조정 -> 출고예정)
-  async function handlePlanForecastUpload(file) {
-    if (!file || !window.XLSXEngine) return;
+  async function handlePlanForecastUpload(file, options = {}) {
+    if (!file || !window.XLSXEngine) return null;
     try {
       const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
       const rows = parsed?.data || [];
       if (!rows || rows.length < 5) {
         showToast('예정물량 파일에서 데이터를 찾을 수 없습니다.');
-        return;
+        return null;
       }
 
       // 5행('예정'이 포함된 행)을 헤더 행으로, 바로 위 4행을 주차 행으로 정확히 탐색
@@ -9969,7 +9971,7 @@
       const weekIds = Object.keys(weekColsMap);
       if (weekIds.length === 0) {
         showToast('4행에서 주차(W1, W2...) 헤더를 찾을 수 없습니다.');
-        return;
+        return null;
       }
 
       pushPlanUndoSnapshot();
@@ -9979,20 +9981,44 @@
       const targetYear = yMatch ? (yMatch[1] ? yMatch[1] : ('20' + yMatch[2])) : (pd.year || '2026');
       switchPlanYear(pd, targetYear);
 
+      const masterMap = new Map((state.certMasterItems || []).map(it => [String(it.code || '').trim(), it]));
+      const diffItems = [];
+      const unknownCodes = new Set();
       let updatedCount = 0;
 
       for (let r = headerIdx + 1; r < rows.length; r++) {
         const code = String(rows[r][codeIdx] || '').trim();
         if (!code) continue;
+        if (!masterMap.has(code)) unknownCodes.add(code);
         if (!pd.rowsByCode[code]) pd.rowsByCode[code] = { weeks: {}, colors: {}, memos: {} };
         if (!pd.rowsByCode[code].weeks) pd.rowsByCode[code].weeks = {};
+        if (!pd.rowsByCode[code].colors) pd.rowsByCode[code].colors = {};
 
         weekIds.forEach(wId => {
           const { planIdx, adjIdx } = weekColsMap[wId];
           const pVal = planIdx !== undefined ? parsePlanNum(rows[r][planIdx]) : 0;
           const aVal = adjIdx !== undefined ? parsePlanNum(rows[r][adjIdx]) : 0;
+          const newVal = pVal + aVal;
           if (!pd.rowsByCode[code].weeks[wId]) pd.rowsByCode[code].weeks[wId] = {};
-          pd.rowsByCode[code].weeks[wId].forecast = String(pVal + aVal);
+          const oldVal = parsePlanNum(pd.rowsByCode[code].weeks[wId].forecast);
+          pd.rowsByCode[code].weeks[wId].forecast = String(newVal);
+
+          if (oldVal !== newVal) {
+            const delta = newVal - oldVal;
+            const mItem = masterMap.get(code);
+            diffItems.push({
+              code,
+              name: mItem ? getDisplayItemName(mItem) : code,
+              weekId: wId,
+              oldVal,
+              newVal,
+              delta,
+              isUnregistered: !mItem
+            });
+            if (options.autoColor) {
+              pd.rowsByCode[code].colors[`${wId}:forecast`] = delta > 0 ? 'yellow' : 'pink';
+            }
+          }
         });
         updatedCount++;
       }
@@ -10000,15 +10026,32 @@
       saveLocalPlanData();
       await savePlanToDb(true);
       renderPlanModule();
-      showToast(`${targetYear}년 예정물량 업로드 및 저장 완료 (${updatedCount}개 품목, ${weekIds.join(', ')} 반영)`);
+
+      // 반영 후 각 변동 셀의 예상재고 / 부족 여부 계산
+      const computedMap = new Map((planGridState.rows || []).map(row => [row.code, row]));
+      diffItems.forEach(d => {
+        const rowObj = computedMap.get(d.code);
+        const wData = rowObj?.weeks?.[d.weekId];
+        const stockVal = wData ? parsePlanNum(wData.stock) : null;
+        d.afterStock = stockVal;
+        d.minStock = rowObj ? rowObj.minStock : null;
+        d.isShort = stockVal !== null && (stockVal < 0 || (d.minStock !== null && d.minStock > 0 && stockVal < d.minStock));
+      });
+
+      showToast(`${targetYear}년 예정물량 업로드 및 저장 완료 (${updatedCount}개 품목, 변동 ${diffItems.length}건)`);
+      if (!options.suppressDiffModal && diffItems.length > 0 && typeof window._openPlanForecastDiffModal === 'function') {
+        window._openPlanForecastDiffModal(diffItems, targetYear, Array.from(unknownCodes));
+      }
+      return { targetYear, updatedCount, diffItems, unknownCodes: Array.from(unknownCodes) };
     } catch (err) {
       console.error('예정물량 업로드 오류:', err);
       showToast(err.message || '파일 파싱 중 오류가 발생했습니다.');
+      return null;
     }
   }
 
   // 기간별재고(26W1.xls) 업로드 (5행 총출고수량->실출고, 총입고수량->입고비교)
-  async function handlePlanWeeklyUpload(file) {
+  async function handlePlanWeeklyUpload(file, overrideWeekStr = '') {
     if (!file || !window.XLSXEngine) return;
     try {
       const pd = state.planData || getDefaultPlanData();
@@ -10030,7 +10073,7 @@
         };
       };
 
-      let { year: targetYear, weekId: targetWeekId } = parseYearWeekFromStr(file.name);
+      let { year: targetYear, weekId: targetWeekId } = parseYearWeekFromStr(overrideWeekStr || file.name);
       if (!targetWeekId) {
         const ask = prompt('파일명에서 주차(예: 26W1, W1)를 찾을 수 없습니다. 적용할 연도/주차를 입력하세요 (예: 26W1):', `${String(pd.year || '2026').slice(-2)}W1`);
         if (!ask) return;
@@ -10627,8 +10670,42 @@
       renderPlanModule();
     });
 
-    // 주차 헤더 클릭 시 이름 수정
+    // 주차 헤더 클릭 시 이름 수정 & 느낌표(!) 배지 클릭 시 해당 열 색상 일괄 해제
     thead?.addEventListener('click', (e) => {
+      const alertBadge = e.target.closest('.plan-week-alert-badge');
+      if (alertBadge) {
+        e.stopPropagation();
+        if (!canEditPlan()) return;
+        const colKey = alertBadge.dataset.colKey;
+        const colLabel = alertBadge.dataset.colLabel || colKey;
+        const cnt = Number(alertBadge.dataset.alertCount) || 0;
+        if (!colKey) return;
+        if (!confirm(`[${colLabel}] 열의 색상 표시(${cnt}건)를 일괄 해제하시겠습니까?`)) return;
+
+        const pd = state.planData;
+        if (!pd || !pd.rowsByCode) return;
+        pushPlanUndoSnapshot();
+        const activeFilter = pd.colorFilter || 'ALL';
+        let cleared = 0;
+        Object.values(pd.rowsByCode).forEach(entry => {
+          if (!entry || !entry.colors || !entry.colors[colKey]) return;
+          if (activeFilter === 'ALL' || entry.colors[colKey] === activeFilter) {
+            delete entry.colors[colKey];
+            cleared++;
+          }
+        });
+        if (cleared > 0) {
+          saveLocalPlanData();
+          markAsDirty(true);
+          renderPlanModule();
+          showToast(`[${colLabel}] 열의 색상 표시 ${cleared}건이 해제되었습니다.`);
+        } else {
+          planUndoStack.pop();
+          updatePlanUndoButton();
+        }
+        return;
+      }
+
       const th = e.target.closest('.plan-week-header-cell');
       if (!th) return;
       const weekId = th.dataset.weekId;
@@ -10643,34 +10720,14 @@
       }
     });
 
-    // 파일 업로드 / 다운로드 / 저장
-    const forecastInput = document.getElementById('input-plan-forecast-file');
-    document.getElementById('btn-plan-upload-forecast')?.addEventListener('click', () => forecastInput?.click());
-    forecastInput?.addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (file) await handlePlanForecastUpload(file);
-      e.target.value = '';
-    });
-
-    const weeklyInput = document.getElementById('input-plan-weekly-file');
-    document.getElementById('btn-plan-upload-weekly')?.addEventListener('click', () => weeklyInput?.click());
-    weeklyInput?.addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (file) await handlePlanWeeklyUpload(file);
-      e.target.value = '';
-    });
-
-    const stockLimitsInput = document.getElementById('input-plan-stock-limits-file');
-    document.getElementById('btn-plan-upload-stock-limits')?.addEventListener('click', () => stockLimitsInput?.click());
-    stockLimitsInput?.addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (!file || !window.XLSXEngine) { e.target.value = ''; return; }
+    // 기초·최소·최대재고 업로드 공통 함수
+    async function handlePlanStockLimitsUpload(file) {
+      if (!file || !window.XLSXEngine) return;
       try {
         const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
         const rows = parsed?.data || [];
         if (rows.length < 2) {
           showToast('업로드 파일에서 데이터를 찾을 수 없습니다.');
-          e.target.value = '';
           return;
         }
         let hIdx = rows.findIndex((r, idx) => idx < 15 && Array.isArray(r) && r.some(c => {
@@ -10685,7 +10742,6 @@
         const idxMax = hdr.findIndex(h => h.includes('최대'));
         if (idxCode < 0 || (idxBase < 0 && idxMin < 0 && idxMax < 0)) {
           alert('헤더에 [품목코드] 및 [기초재고 / 최소재고 / 최대재고] 중 하나 이상이 포함되어야 합니다.');
-          e.target.value = '';
           return;
         }
 
@@ -10735,7 +10791,278 @@
         console.error('기초/최소/최대재고 업로드 오류:', err);
         alert('파일을 읽는 중 오류가 발생했습니다.');
       }
+    }
+
+    // 통합 드래그 & 드롭 엑셀 업로드 모달 + 예정물량 증감 비교 요약 모달
+    const unifiedUploadModal = document.getElementById('modal-plan-unified-upload');
+    const unifiedDropzone = document.getElementById('plan-unified-dropzone');
+    const unifiedFileInput = document.getElementById('input-plan-unified-files');
+    const unifiedListEl = document.getElementById('plan-unified-file-list');
+    const unifiedApplyBtn = document.getElementById('btn-apply-plan-unified-upload');
+    let unifiedQueue = []; // { id, file, type: 'forecast'|'weekly'|'stockLimits'|'unknown', weekStr }
+
+    const detectPlanExcelFileMeta = async (file) => {
+      const name = String(file?.name || '');
+      const ym = name.match(/(?:(20\d{2})|(\d{2}))[\s_-]*W\s*(\d+)/i);
+      const wm = name.match(/W\s*(\d+)/i);
+      const defYy = String(state.planData?.year || '2026').slice(-2);
+      const detectedWeekStr = ym
+        ? `${(ym[1] || ('20' + ym[2])).slice(-2)}W${Number(ym[3])}`
+        : (wm ? `${defYy}W${Number(wm[1])}` : '');
+
+      let type = 'unknown';
+      try {
+        if (window.XLSXEngine) {
+          const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
+          const rows = (parsed?.data || []).slice(0, 15);
+          const hasCell = (pred) => rows.some(r => Array.isArray(r) && r.some(c => pred(String(c || '').replace(/\s+/g, '').trim())));
+          if (hasCell(s => s === '예정' || s === '조정')) {
+            type = 'forecast';
+          } else if (hasCell(s => s === '총출고수량' || s === '총입고수량')) {
+            type = 'weekly';
+          } else if (hasCell(s => s.includes('품목코드') || s === '코드' || s === '품목') && hasCell(s => s.includes('기초') || s.includes('최소') || s.includes('최대'))) {
+            type = 'stockLimits';
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      if (type === 'unknown') {
+        if (name.includes('예정')) type = 'forecast';
+        else if (detectedWeekStr) type = 'weekly';
+        else if (name.includes('재고') || name.includes('기초')) type = 'stockLimits';
+      }
+      return { type, weekStr: detectedWeekStr };
+    };
+
+    const renderUnifiedUploadQueue = () => {
+      if (!unifiedListEl) return;
+      if (unifiedQueue.length === 0) {
+        unifiedListEl.innerHTML = '<div style="text-align:center; padding:12px; font-size:12px; color:var(--text-muted);">첨부된 파일이 없습니다.</div>';
+        if (unifiedApplyBtn) unifiedApplyBtn.disabled = true;
+        return;
+      }
+      if (unifiedApplyBtn) unifiedApplyBtn.disabled = !unifiedQueue.some(q => q.type !== 'unknown');
+
+      unifiedListEl.innerHTML = unifiedQueue.map(q => `
+        <div class="plan-upload-file-row" data-qid="${q.id}">
+          <div style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; display:flex; align-items:center; gap:6px;" title="${escapeHtmlPlan(q.file.name)}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; color:var(--text-muted);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            <span style="overflow:hidden; text-overflow:ellipsis;">${escapeHtmlPlan(q.file.name)}</span>
+          </div>
+          <select class="form-input form-input-sm plan-unified-type-sel" data-qid="${q.id}" style="width:140px;">
+            <option value="forecast"${q.type === 'forecast' ? ' selected' : ''}>예정물량</option>
+            <option value="weekly"${q.type === 'weekly' ? ' selected' : ''}>기간별재고 (W00)</option>
+            <option value="stockLimits"${q.type === 'stockLimits' ? ' selected' : ''}>기초·최소·최대재고</option>
+            <option value="unknown"${q.type === 'unknown' ? ' selected' : ''}>종류 미인식</option>
+          </select>
+          ${q.type === 'weekly' ? `<input type="text" class="form-input form-input-sm plan-unified-week-inp" data-qid="${q.id}" value="${escapeHtmlPlan(q.weekStr)}" placeholder="예: 26W46" style="width:78px; text-align:center;" title="적용할 연도/주차">` : ''}
+          <button type="button" class="btn btn-xs btn-ghost text-danger plan-unified-del-btn" data-qid="${q.id}" title="목록에서 제거">×</button>
+        </div>
+      `).join('');
+    };
+
+    const addFilesToUnifiedQueue = async (fileList) => {
+      const files = Array.from(fileList || []).filter(f => /\.(xlsx|xls|csv|tsv)$/i.test(f.name));
+      if (files.length === 0) {
+        showToast('엑셀(.xls, .xlsx, .csv) 파일만 업로드할 수 있습니다.');
+        return;
+      }
+      for (const f of files) {
+        const meta = await detectPlanExcelFileMeta(f);
+        unifiedQueue.push({
+          id: `uq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          file: f,
+          type: meta.type,
+          weekStr: meta.weekStr
+        });
+      }
+      renderUnifiedUploadQueue();
+    };
+
+    const closeUnifiedUploadModal = () => {
+      if (unifiedUploadModal) unifiedUploadModal.style.display = 'none';
+      unifiedQueue = [];
+      renderUnifiedUploadQueue();
+    };
+
+    document.getElementById('btn-plan-upload-unified')?.addEventListener('click', () => {
+      document.getElementById('plan-io-dropdown-wrap')?.classList.remove('is-open');
+      unifiedQueue = [];
+      renderUnifiedUploadQueue();
+      if (unifiedUploadModal) unifiedUploadModal.style.display = 'flex';
+    });
+    document.getElementById('btn-close-plan-unified-upload')?.addEventListener('click', closeUnifiedUploadModal);
+    document.getElementById('btn-cancel-plan-unified-upload')?.addEventListener('click', closeUnifiedUploadModal);
+
+    unifiedDropzone?.addEventListener('click', () => unifiedFileInput?.click());
+    unifiedFileInput?.addEventListener('change', async (e) => {
+      if (e.target.files?.length) await addFilesToUnifiedQueue(e.target.files);
       e.target.value = '';
+    });
+    unifiedDropzone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      unifiedDropzone.classList.add('is-dragover');
+    });
+    unifiedDropzone?.addEventListener('dragleave', () => {
+      unifiedDropzone.classList.remove('is-dragover');
+    });
+    unifiedDropzone?.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      unifiedDropzone.classList.remove('is-dragover');
+      if (e.dataTransfer?.files?.length) await addFilesToUnifiedQueue(e.dataTransfer.files);
+    });
+
+    unifiedListEl?.addEventListener('change', (e) => {
+      const sel = e.target.closest('.plan-unified-type-sel');
+      if (sel) {
+        const q = unifiedQueue.find(x => x.id === sel.dataset.qid);
+        if (q) {
+          q.type = sel.value;
+          renderUnifiedUploadQueue();
+        }
+        return;
+      }
+      const inp = e.target.closest('.plan-unified-week-inp');
+      if (inp) {
+        const q = unifiedQueue.find(x => x.id === inp.dataset.qid);
+        if (q) q.weekStr = inp.value.trim();
+      }
+    });
+    unifiedListEl?.addEventListener('click', (e) => {
+      const del = e.target.closest('.plan-unified-del-btn');
+      if (!del) return;
+      unifiedQueue = unifiedQueue.filter(x => x.id !== del.dataset.qid);
+      renderUnifiedUploadQueue();
+    });
+
+    unifiedApplyBtn?.addEventListener('click', async () => {
+      const valid = unifiedQueue.filter(q => q.type !== 'unknown');
+      if (valid.length === 0) return;
+
+      const autoColor = !!document.getElementById('chk-plan-forecast-autocolor')?.checked;
+      const stockFiles = valid.filter(q => q.type === 'stockLimits');
+      const weeklyFiles = valid.filter(q => q.type === 'weekly');
+      const forecastFiles = valid.filter(q => q.type === 'forecast');
+
+      unifiedApplyBtn.disabled = true;
+      unifiedApplyBtn.textContent = '반영 중...';
+      let lastForecastRes = null;
+      try {
+        for (const q of stockFiles) await handlePlanStockLimitsUpload(q.file);
+        for (const q of weeklyFiles) await handlePlanWeeklyUpload(q.file, q.weekStr);
+        for (const q of forecastFiles) {
+          lastForecastRes = await handlePlanForecastUpload(q.file, { autoColor, suppressDiffModal: true });
+        }
+        closeUnifiedUploadModal();
+        if (lastForecastRes && lastForecastRes.diffItems.length > 0 && typeof window._openPlanForecastDiffModal === 'function') {
+          window._openPlanForecastDiffModal(lastForecastRes.diffItems, lastForecastRes.targetYear, lastForecastRes.unknownCodes);
+        }
+      } finally {
+        unifiedApplyBtn.disabled = false;
+        unifiedApplyBtn.textContent = '일괄 반영하기';
+      }
+    });
+
+    // 예정물량 증감 비교 요약 모달
+    const diffModal = document.getElementById('modal-plan-forecast-diff');
+    let curForecastDiffItems = [];
+    let curForecastDiffFilter = 'ALL';
+
+    const renderForecastDiffTable = () => {
+      const tbodyDiff = document.getElementById('plan-forecast-diff-tbody');
+      if (!tbodyDiff) return;
+      const list = curForecastDiffItems.filter(d => {
+        if (curForecastDiffFilter === 'UP') return d.delta > 0;
+        if (curForecastDiffFilter === 'DOWN') return d.delta < 0;
+        if (curForecastDiffFilter === 'SHORT') return d.isShort;
+        return true;
+      });
+      if (list.length === 0) {
+        tbodyDiff.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">해당 조건에 맞는 변동 내역이 없습니다.</td></tr>';
+        return;
+      }
+      tbodyDiff.innerHTML = list.map(d => {
+        const deltaColor = d.delta > 0 ? '#d97706' : '#2563eb';
+        const deltaSign = d.delta > 0 ? `+${d.delta.toLocaleString()}` : d.delta.toLocaleString();
+        const stockStr = d.afterStock === null ? '-' : d.afterStock.toLocaleString();
+        const stockStyle = d.afterStock !== null && d.afterStock < 0
+          ? 'color:#dc2626; font-weight:700;'
+          : (d.isShort ? 'color:#d97706; font-weight:700;' : '');
+        return `
+          <tr class="plan-forecast-diff-row" data-code="${escapeHtmlPlan(d.code)}" data-week="${escapeHtmlPlan(d.weekId)}">
+            <td class="text-center"><code>${escapeHtmlPlan(d.code)}</code></td>
+            <td style="font-weight:600;">${escapeHtmlPlan(d.name)}${d.isUnregistered ? ' <span style="font-size:10px; color:#dc2626;">(미등록)</span>' : ''}</td>
+            <td class="text-center">${escapeHtmlPlan(d.weekId)}</td>
+            <td class="text-center">${d.oldVal.toLocaleString()} → <b>${d.newVal.toLocaleString()}</b></td>
+            <td class="text-right" style="color:${deltaColor}; font-weight:700;">${deltaSign}</td>
+            <td class="text-right" style="${stockStyle}">${stockStr}${d.isShort ? ' ⚠' : ''}</td>
+          </tr>
+        `;
+      }).join('');
+    };
+
+    window._openPlanForecastDiffModal = (diffItems, targetYear, unknownCodes = []) => {
+      curForecastDiffItems = diffItems || [];
+      curForecastDiffFilter = 'ALL';
+      document.querySelectorAll('#plan-forecast-diff-filter .plan-seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.filter === 'ALL');
+      });
+
+      const titleEl = document.getElementById('plan-forecast-diff-title');
+      if (titleEl) titleEl.textContent = `${targetYear}년 예정물량(출고예정) 변동 비교 요약`;
+
+      const upItems = curForecastDiffItems.filter(d => d.delta > 0);
+      const downItems = curForecastDiffItems.filter(d => d.delta < 0);
+      const shortItems = curForecastDiffItems.filter(d => d.isShort);
+      const upSum = upItems.reduce((s, d) => s + d.delta, 0);
+      const downSum = downItems.reduce((s, d) => s + d.delta, 0);
+
+      const sumEl = document.getElementById('plan-forecast-diff-summary');
+      if (sumEl) {
+        sumEl.innerHTML = `
+          <span class="plan-diff-badge">변동 총 <b>${curForecastDiffItems.length}</b>건</span>
+          <span class="plan-diff-badge" style="color:#b45309;">증가 <b>${upItems.length}</b>건 (+${upSum.toLocaleString()})</span>
+          <span class="plan-diff-badge" style="color:#1d4ed8;">감소 <b>${downItems.length}</b>건 (${downSum.toLocaleString()})</span>
+          <span class="plan-diff-badge" style="color:${shortItems.length > 0 ? '#dc2626' : 'var(--text-muted)'};">재고부족/결품 <b>${shortItems.length}</b>건</span>
+          ${unknownCodes.length > 0 ? `<span class="plan-diff-badge" style="color:#dc2626;">미등록 코드 ${unknownCodes.length}종</span>` : ''}
+        `;
+      }
+      renderForecastDiffTable();
+      if (diffModal) diffModal.style.display = 'flex';
+    };
+
+    const closeForecastDiffModal = () => {
+      if (diffModal) diffModal.style.display = 'none';
+    };
+    document.getElementById('btn-close-plan-forecast-diff')?.addEventListener('click', closeForecastDiffModal);
+    document.getElementById('btn-ok-plan-forecast-diff')?.addEventListener('click', closeForecastDiffModal);
+
+    document.querySelectorAll('#plan-forecast-diff-filter .plan-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        curForecastDiffFilter = btn.dataset.filter || 'ALL';
+        document.querySelectorAll('#plan-forecast-diff-filter .plan-seg-btn').forEach(b => {
+          b.classList.toggle('active', b === btn);
+        });
+        renderForecastDiffTable();
+      });
+    });
+
+    document.getElementById('plan-forecast-diff-tbody')?.addEventListener('click', (e) => {
+      const tr = e.target.closest('.plan-forecast-diff-row');
+      if (!tr) return;
+      const code = tr.dataset.code;
+      const weekId = tr.dataset.week;
+      const rIdx = (planGridState.rows || []).findIndex(r => r.code === code);
+      const cIdx = (planGridState.columns || []).findIndex(c => c.weekId === weekId && c.field === 'forecast' && !c.isMonth);
+      closeForecastDiffModal();
+      if (rIdx >= 0 && cIdx >= 0) {
+        planGridState.anchor = { r: rIdx, c: cIdx };
+        planGridState.focus = { r: rIdx, c: cIdx };
+        applyPlanSelectionClasses();
+        scrollPlanCellIntoView(rIdx, cIdx);
+      } else {
+        showToast(`${code} · ${weekId}는 현재 표시 기간(월) 밖에 있습니다.`);
+      }
     });
 
     document.getElementById('btn-plan-export-xls')?.addEventListener('click', exportPlanToExcel);

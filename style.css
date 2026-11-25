@@ -4738,6 +4738,11 @@ html.dark-mode .cert-inline-edit-input:focus {
   line-height: 1;
   vertical-align: middle;
   box-shadow: 0 1px 2px rgba(239, 68, 68, 0.35);
+  cursor: pointer;
+}
+.plan-week-alert-badge:hover {
+  transform: scale(1.12);
+  background-color: #dc2626;
 }
 
 .plan-filter-count-badge {
@@ -7961,6 +7966,49 @@ html.dark-mode .plan-legend-chip.active .plan-filter-count-badge {
   background-color: #fffbeb;
 }
 
+.plan-upload-dropzone {
+  border: 2px dashed #94a3b8;
+  border-radius: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  background: var(--bg-subtle);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.plan-upload-dropzone:hover,
+.plan-upload-dropzone.is-dragover {
+  border-color: #2563eb;
+  background: var(--primary-light);
+}
+.plan-upload-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.plan-forecast-diff-row {
+  cursor: pointer;
+}
+.plan-forecast-diff-row:hover {
+  background-color: var(--primary-light);
+}
+.plan-diff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+}
+
 .wh-anomaly-pill {
   display: inline-flex;
   align-items: center;
@@ -7994,7 +8042,50 @@ html.dark-mode .plan-legend-chip.active .plan-filter-count-badge {
   border-color: #f59e0b;
   background: var(--primary-light);
 }
-html.dark-mode .wh-anomaly-pill {
+html.dark-mode .plan-upload-dropzone {
+  border: 2px dashed #94a3b8;
+  border-radius: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  background: var(--bg-subtle);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.plan-upload-dropzone:hover,
+.plan-upload-dropzone.is-dragover {
+  border-color: #2563eb;
+  background: var(--primary-light);
+}
+.plan-upload-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.plan-forecast-diff-row {
+  cursor: pointer;
+}
+.plan-forecast-diff-row:hover {
+  background-color: var(--primary-light);
+}
+.plan-diff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+}
+
+.wh-anomaly-pill {
   background: rgba(245, 158, 11, 0.18);
   color: #fbbf24;
   border-color: rgba(245, 158, 11, 0.5);
