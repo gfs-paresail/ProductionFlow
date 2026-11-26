@@ -3304,7 +3304,8 @@ tr.row-status-failed td {
   position: sticky;
 }
 
-.plan-excel-table tbody td.plan-cell-selected {
+.plan-excel-table tbody td.plan-cell-selected,
+.rp-excel-table tbody td.plan-cell-selected {
   background-color: rgba(59, 130, 246, 0.14) !important;
   --sel-top: 0px;
   --sel-bottom: 0px;
@@ -3317,21 +3318,28 @@ tr.row-status-failed td {
     inset 0 var(--sel-bottom) 0 #2563eb;
 }
 
-.plan-excel-table tbody td.plan-range-top { --sel-top: 2px; }
-.plan-excel-table tbody td.plan-range-bottom { --sel-bottom: -2px; }
-.plan-excel-table tbody td.plan-range-left { --sel-left: 2px; }
-.plan-excel-table tbody td.plan-range-right { --sel-right: -2px; }
+.plan-excel-table tbody td.plan-range-top,
+.rp-excel-table tbody td.plan-range-top { --sel-top: 2px; }
+.plan-excel-table tbody td.plan-range-bottom,
+.rp-excel-table tbody td.plan-range-bottom { --sel-bottom: -2px; }
+.plan-excel-table tbody td.plan-range-left,
+.rp-excel-table tbody td.plan-range-left { --sel-left: 2px; }
+.plan-excel-table tbody td.plan-range-right,
+.rp-excel-table tbody td.plan-range-right { --sel-right: -2px; }
 
-.plan-excel-table tbody td.plan-fixed-col.plan-cell-selected {
+.plan-excel-table tbody td.plan-fixed-col.plan-cell-selected,
+.rp-excel-table tbody td.rp-fixed-col.plan-cell-selected {
   background-color: #e0ecff !important;
 }
 
-.plan-excel-table tbody td.plan-cell-active {
+.plan-excel-table tbody td.plan-cell-active,
+.rp-excel-table tbody td.plan-cell-active {
   background-color: rgba(219, 234, 254, 0.35) !important;
   z-index: 5;
 }
 
-.plan-excel-table tbody td.plan-fixed-col.plan-cell-active {
+.plan-excel-table tbody td.plan-fixed-col.plan-cell-active,
+.rp-excel-table tbody td.rp-fixed-col.plan-cell-active {
   background-color: #d4e4ff !important;
   z-index: 15 !important;
 }
@@ -7889,7 +7897,7 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   padding: 4px;
 }
 
-/* 수신기계획 우클릭 컨텍스트 메뉴 */
+/* 수신기계획 우클릭 컨텍스트 메뉴 (생산계획과 동일한 스르륵 등장 + 선택 삭제만 볼드) */
 .rp-context-menu {
   position: fixed;
   z-index: 9500;
@@ -7897,8 +7905,17 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   padding: 5px;
   background: #ffffff;
   border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2), 0 4px 10px -2px rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.rp-context-menu.is-visible {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateX(0);
 }
 .rp-ctx-item {
   display: flex;
@@ -7910,7 +7927,7 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   background: transparent;
   color: #1e293b;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
 }
@@ -7920,6 +7937,7 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
 }
 .rp-ctx-item.is-danger {
   color: #dc2626;
+  font-weight: 600;
 }
 .rp-ctx-item.is-danger:hover {
   background: #fef2f2;

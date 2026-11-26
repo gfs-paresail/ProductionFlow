@@ -17098,8 +17098,12 @@
     const getRowYy = (row) => {
       const lotM = String(row?.lotNo || '').trim().match(/^(\d{2})-/);
       if (lotM) return lotM[1];
-      const ref = row?.weekDate || row?.inspectDate || row?.writeDate || row?.receiptDate || '';
+      const ref = row?.weekDate || row?.inspectDate || '';
       if (ref.length >= 4 && /^\d{4}/.test(ref)) return ref.slice(2, 4);
+      const py = String(row?.planYear || '').trim();
+      if (/^\d{4}$/.test(py)) return py.slice(2, 4);
+      const rec = row?.writeDate || row?.receiptDate || '';
+      if (rec.length >= 4 && /^\d{4}/.test(rec)) return rec.slice(2, 4);
       return yyDefault;
     };
 
@@ -17128,6 +17132,7 @@
       recordSerial(r.formatNo, getRowYy(r), r.from, r.to);
     });
     (state.receiverPlanRows || []).forEach(r => {
+      if (!getReceiverPlanCertStatus(r).isSent) return;
       recordLot(r.formatNo, r.lotNo);
       recordSerial(r.formatNo, getRowYy(r), r.serialFrom, r.serialTo);
     });
@@ -17136,8 +17141,16 @@
     (targetRows || []).forEach(row => {
       const fmt = String(row.formatNo || '').trim();
       if (!fmt) return;
-      const refDate = row.weekDate || row.inspectDate || row.receiptDate || '';
-      const yy = refDate.length >= 4 ? refDate.slice(2, 4) : yyDefault;
+      const primaryRef = row.weekDate || row.inspectDate || '';
+      const py = String(row.planYear || '').trim();
+      let yy = yyDefault;
+      if (primaryRef.length >= 4 && /^\d{4}/.test(primaryRef)) {
+        yy = primaryRef.slice(2, 4);
+      } else if (/^\d{4}$/.test(py)) {
+        yy = py.slice(2, 4);
+      } else if (row.receiptDate && row.receiptDate.length >= 4 && /^\d{4}/.test(row.receiptDate)) {
+        yy = row.receiptDate.slice(2, 4);
+      }
       const key = `${fmt}__${yy}`;
 
       let changed = false;
@@ -17167,6 +17180,39 @@
       if (changed) updated++;
     });
     return updated;
+  }
+
+  // 미신청 행들의 로트/제조번호를 현재 그리드 위→아래 순서대로 자동 재계산 (확정 행은 유지)
+  function recalculatePendingReceiverLotsAndSerials() {
+    const rows = state.receiverPlanRows || [];
+    const pendingRows = [];
+    let cleared = 0;
+
+    rows.forEach(r => {
+      if (getReceiverPlanCertStatus(r).isSent) return;
+      const fmt = String(r.formatNo || '').trim();
+      if (!fmt || fmt === '-') {
+        if (r.lotNo || r.serialFrom || r.serialTo) {
+          r.lotNo = '';
+          r.serialFrom = '';
+          r.serialTo = '';
+          cleared++;
+        }
+        return;
+      }
+      pendingRows.push(r);
+    });
+
+    if (pendingRows.length === 0) return cleared;
+
+    const prevSnapshot = pendingRows.map(r => `${r.lotNo || ''}|${r.serialFrom || ''}|${r.serialTo || ''}`);
+    recommendReceiverLotAndSerial(pendingRows, true);
+    let diffCnt = cleared;
+    pendingRows.forEach((r, idx) => {
+      const nextSnapshot = `${r.lotNo || ''}|${r.serialFrom || ''}|${r.serialTo || ''}`;
+      if (nextSnapshot !== prevSnapshot[idx]) diffCnt++;
+    });
+    return diffCnt;
   }
 
   function getReceiverPlanRowYear(row) {
@@ -17468,8 +17514,8 @@
   function applyRpSelectionClasses() {
     const tbody = document.getElementById('rp-excel-tbody');
     if (!tbody) return;
-    tbody.querySelectorAll('td.plan-cell-selected, td.plan-cell-active').forEach(td => {
-      td.classList.remove('plan-cell-selected', 'plan-cell-active');
+    tbody.querySelectorAll('td.plan-cell-selected, td.plan-cell-active, td.plan-range-top, td.plan-range-bottom, td.plan-range-left, td.plan-range-right').forEach(td => {
+      td.classList.remove('plan-cell-selected', 'plan-cell-active', 'plan-range-top', 'plan-range-bottom', 'plan-range-left', 'plan-range-right');
     });
 
     const selSet = state.rpSelectedIds instanceof Set ? state.rpSelectedIds : new Set();
@@ -17485,7 +17531,12 @@
       if (!tr) continue;
       for (let c = range.c1; c <= range.c2; c++) {
         const td = tr.querySelector(`td[data-c="${c}"]`);
-        if (td) td.classList.add('plan-cell-selected');
+        if (!td) continue;
+        td.classList.add('plan-cell-selected');
+        if (r === range.r1) td.classList.add('plan-range-top');
+        if (r === range.r2) td.classList.add('plan-range-bottom');
+        if (c === range.c1) td.classList.add('plan-range-left');
+        if (c === range.c2) td.classList.add('plan-range-right');
       }
     }
 
@@ -17564,6 +17615,9 @@
 
   function renderReceiverPlanModule() {
     if (!Array.isArray(state.receiverPlanRows)) loadLocalReceiverPlanData();
+    if (recalculatePendingReceiverLotsAndSerials() > 0) {
+      saveLocalReceiverPlanData();
+    }
     const rpOpts = loadRpDisplayOpts();
     const chkRpCode = document.getElementById('chk-rp-hide-code');
     const chkRpFmt = document.getElementById('chk-rp-hide-format');
@@ -17978,6 +18032,7 @@
       }
 
       if (col.field === 'weekDate' && nextVal) {
+        if (/^\d{4}/.test(nextVal)) row.planYear = nextVal.slice(0, 4);
         const calcInspect = calcReceiverInspectDateFromWeekDate(nextVal);
         if (calcInspect) row.inspectDate = calcInspect;
         const calcYm = calcReceiverMfgYmFromWeekDate(nextVal);
@@ -18985,7 +19040,7 @@
     let rpCtxRowId = null;
 
     const closeRpContextMenu = () => {
-      if (rpCtxMenu) rpCtxMenu.style.display = 'none';
+      if (rpCtxMenu) rpCtxMenu.classList.remove('is-visible');
       rpCtxRowId = null;
     };
 
@@ -18996,13 +19051,14 @@
         const tr = e.target.closest('tr[data-rp-id]');
         rpCtxRowId = tr ? tr.dataset.rpId : null;
 
-        rpCtxMenu.style.display = 'block';
         const menuW = rpCtxMenu.offsetWidth || 160;
-        const menuH = rpCtxMenu.offsetHeight || 190;
-        const left = Math.min(e.clientX, window.innerWidth - menuW - 8);
+        const menuH = rpCtxMenu.offsetHeight || 210;
+        const left = Math.min(e.clientX + 6, window.innerWidth - menuW - 8);
         const top = Math.min(e.clientY, window.innerHeight - menuH - 8);
         rpCtxMenu.style.left = `${Math.max(8, left)}px`;
         rpCtxMenu.style.top = `${Math.max(8, top)}px`;
+        rpCtxMenu.classList.remove('is-visible');
+        requestAnimationFrame(() => rpCtxMenu.classList.add('is-visible'));
       });
 
       rpCtxMenu.addEventListener('click', (e) => {
@@ -19035,7 +19091,7 @@
       });
 
       document.addEventListener('click', (e) => {
-        if (rpCtxMenu.style.display === 'none') return;
+        if (!rpCtxMenu.classList.contains('is-visible')) return;
         if (!e.target.closest('#rp-context-menu')) closeRpContextMenu();
       });
       scrollWrap.addEventListener('scroll', closeRpContextMenu);
@@ -19065,6 +19121,9 @@
           return;
         }
       }
+
+      // 선택된 미신청 행들을 위→아래 순서대로 최종 로트·제조번호로 확정 후 검정현황으로 전송
+      recommendReceiverLotAndSerial(toSend, true);
 
       const todayStr = getTodayDateString();
       const newSaved = [];
@@ -19107,6 +19166,9 @@
       state.certSavedRows = [...newSaved, ...(state.certSavedRows || [])];
       saveLocalCertData();
       await saveCertDataToDb(true);
+      recalculatePendingReceiverLotsAndSerials();
+      saveLocalReceiverPlanData();
+      await saveReceiverPlanToDb(true);
       state.rpSelectedIds.clear();
       renderReceiverPlanModule();
       if (typeof renderCertificationModule === 'function') renderCertificationModule();
