@@ -242,12 +242,14 @@
     // 검정현황 상태
     certMasterItems: [],
     certMasterFilterGroup: 'ALL',
+    certMasterEditMode: false,
     certDraftRows: [],
     certSavedRows: [],
     certFilterType: localStorage.getItem(STORAGE_KEYS.CERT_FILTER_TYPE) || 'writeDate',
     certFilterDate: localStorage.getItem(STORAGE_KEYS.CERT_FILTER_DATE) || '',
     certFilterLine: localStorage.getItem(STORAGE_KEYS.CERT_FILTER_LINE) || 'ALL',
     certFilterCategory: 'ALL',
+    certFilterYear: String(new Date().getFullYear()),
     certFilterWeek: 'ALL',
     certFilterStatus: 'ALL',
     certFilterSearch: '',
@@ -277,6 +279,7 @@
     receiverPlanRows: [],
     rpSelectedIds: new Set(),
     rpStatusFilter: 'ALL',
+    rpFilterYear: String(new Date().getFullYear()),
     rpUndoStack: [],
 
     // 공정검사 보고서 양식 & 출력 상태
@@ -2376,23 +2379,50 @@
     async function activateTab(tabId) {
       if (!tabId) return false;
 
-      // 미저장 데이터 확인 (작성 중인 데이터 보호)
-      const isPlanDirty = state.dirtyTabs instanceof Set &&
-        (state.dirtyTabs.has('tab-plan') || state.dirtyTabs.has('tab-receiver-plan'));
-      if (state.isDirty && (
-        state.currentTab === 'tab-inspection' ||
-        state.currentTab === 'tab-production' ||
-        state.currentTab === 'tab-plan' ||
-        state.currentTab === 'tab-receiver-plan' ||
-        isPlanDirty
-      )) {
-        const proceed = confirm('저장되지 않은 변경사항이 있습니다. 다른 탭으로 이동하시겠습니까?');
-        if (!proceed) return false;
-      }
+      // 미저장 데이터 확인: 다른 탭으로 이동 시 실제 변경된 탭만 자동 저장
+      const isPlanDirty = state.dirtyTabs instanceof Set && state.dirtyTabs.has('tab-plan');
+      const isRpDirty = state.dirtyTabs instanceof Set && state.dirtyTabs.has('tab-receiver-plan');
+      const isInspDirty = state.currentTab === 'tab-inspection' &&
+        (state.isDirty || (state.dirtyTabs instanceof Set && state.dirtyTabs.has('tab-inspection')));
+      const isProdDirty = state.currentTab === 'tab-production' &&
+        (state.isDirty || (state.dirtyTabs instanceof Set && state.dirtyTabs.has('tab-production')));
 
-      // 생산일보/일정계획은 탭 이탈 시 미저장 편집을 폐기하지만, 생산계획/수신기계획은 저장 전까지 미저장 상태를 유지
-      if (state.dirtyTabs instanceof Set && (state.currentTab === 'tab-inspection' || state.currentTab === 'tab-production')) {
-        state.dirtyTabs.delete(state.currentTab);
+      if (state.isDirty || isPlanDirty || isRpDirty || isInspDirty || isProdDirty) {
+        if (typeof isGuestReadOnly === 'function' && isGuestReadOnly(false)) {
+          if (state.dirtyTabs instanceof Set) state.dirtyTabs.clear();
+          state.isDirty = false;
+        } else {
+          let didAutoSave = false;
+          try {
+            if (isPlanDirty || (state.currentTab === 'tab-plan' && state.isDirty)) {
+              await savePlanToDb(true);
+              if (state.dirtyTabs instanceof Set) state.dirtyTabs.delete('tab-plan');
+              didAutoSave = true;
+            }
+            if (isRpDirty || (state.currentTab === 'tab-receiver-plan' && state.isDirty)) {
+              await saveReceiverPlanToDb(true);
+              if (state.dirtyTabs instanceof Set) state.dirtyTabs.delete('tab-receiver-plan');
+              didAutoSave = true;
+            }
+            if (isInspDirty) {
+              if (typeof saveInspectionV2ToDb === 'function') await saveInspectionV2ToDb();
+              else await saveInspectionToDb();
+              if (state.dirtyTabs instanceof Set) state.dirtyTabs.delete('tab-inspection');
+              didAutoSave = true;
+            }
+            if (isProdDirty) {
+              if (typeof saveDailyV2ToDb === 'function') await saveDailyV2ToDb();
+              else await saveProductionToDb();
+              if (state.dirtyTabs instanceof Set) state.dirtyTabs.delete('tab-production');
+              didAutoSave = true;
+            }
+          } catch (err) {
+            console.warn('[PMS] 탭 전환 자동 저장 중 오류:', err);
+          }
+          if (didAutoSave) {
+            showToast('변경사항이 자동 저장되었습니다');
+          }
+        }
       }
 
       // 1) 모든 탭 버튼 상태 리셋
@@ -4003,10 +4033,32 @@
     };
   }
 
+  // 검정현황 행의 연도 추출 (생산주차 기준 우선: sourceYear -> weekDate -> writeDate -> inspectDate -> 올해)
+  function getCertRowYear(row) {
+    const fallbackYear = String(new Date().getFullYear());
+    if (!row) return fallbackYear;
+    const srcYr = String(row.sourceYear || '').trim();
+    if (/^\d{4}$/.test(srcYr)) return srcYr;
+    const candidates = [row.weekDate, row.writeDate, row.inspectDate];
+    for (const c of candidates) {
+      const s = String(c || '').trim();
+      if (/^\d{4}/.test(s)) return s.slice(0, 4);
+    }
+    const lotM = String(row.lotNo || '').trim().match(/^(\d{2})-/);
+    if (lotM) return `20${lotM[1]}`;
+    return fallbackYear;
+  }
+
+  // 검정현황 로트/제조번호 채번용 2자리 연도 추출 (이미 입력된 lotNo 앞 2자리 최우선, 미입력 시 생산주차 기준)
+  function getCertRowYy(row) {
+    const lotM = String(row?.lotNo || '').trim().match(/^(\d{2})-/);
+    if (lotM) return lotM[1];
+    return getCertRowYear(row).slice(-2);
+  }
+
   // 동일 형식번호(미보유 시 품목코드) 기준 다음 로트번호 미리보기 감지 (자동 적용하지 않음)
   function getNextLotSuggestionsMap(draftRows) {
     const maxByFormatYear = new Map(); // `${groupKey}__${yy}` -> maxNum
-    const yyDefault = String(new Date().getFullYear()).slice(-2);
 
     const recordLot = (formatNo, code, lotNo) => {
       const groupKey = getCertLotGroupKey(formatNo, code);
@@ -4025,7 +4077,7 @@
     (draftRows || []).forEach(row => {
       const groupKey = getCertLotGroupKey(row.formatNo, row.code);
       if (!groupKey) return;
-      const yy = row.writeDate && row.writeDate.length >= 4 ? row.writeDate.slice(2, 4) : yyDefault;
+      const yy = getCertRowYy(row);
       const key = `${groupKey}__${yy}`;
 
       if (row.lotNo && String(row.lotNo).trim()) {
@@ -4050,15 +4102,6 @@
   // 동일 형식번호(미보유 시 품목코드) + 연도 기준 제조번호 FROM 다음 번호 예측 (미적용)
   function getNextFromSuggestionsMap(draftRows) {
     const maxToByFormatYear = new Map();
-    const yyDefault = String(new Date().getFullYear()).slice(-2);
-
-    const getRowYy = (row) => {
-      const lotM = String(row?.lotNo || '').trim().match(/^(\d{2})-/);
-      if (lotM) return lotM[1];
-      const ref = row?.weekDate || row?.writeDate || row?.inspectDate || '';
-      if (ref.length >= 4 && /^\d{4}/.test(ref)) return ref.slice(2, 4);
-      return yyDefault;
-    };
 
     const recordSerial = (formatNo, code, yy, fromVal, toVal, qtyVal) => {
       const groupKey = getCertLotGroupKey(formatNo, code);
@@ -4071,13 +4114,13 @@
       if (to > prev) maxToByFormatYear.set(key, to);
     };
 
-    (state.certSavedRows || []).forEach(r => recordSerial(r.formatNo, r.code, getRowYy(r), r.from, r.to, r.qty));
+    (state.certSavedRows || []).forEach(r => recordSerial(r.formatNo, r.code, getCertRowYy(r), r.from, r.to, r.qty));
 
     const result = new Map();
     (draftRows || []).forEach(row => {
       const groupKey = getCertLotGroupKey(row.formatNo, row.code);
       if (!groupKey) return;
-      const yy = getRowYy(row);
+      const yy = getCertRowYy(row);
       const key = `${groupKey}__${yy}`;
 
       if (parseSafeInt(row.from) > 0) {
@@ -4097,15 +4140,19 @@
     return result;
   }
 
-  // 동일 형식번호(미보유 시 품목코드) 내 제조번호 중복 및 사이값(구간 겹침) 검사
-  function checkSerialRangeOverlap(formatNo, fromVal, toVal, currentDraftRowId, code) {
+  // 동일 형식번호(미보유 시 품목코드) + 동일 연도 내 제조번호 중복 및 사이값(구간 겹침) 검사
+  function checkSerialRangeOverlap(formatNo, fromVal, toVal, currentDraftRowId, code, targetRowOrYy) {
     const myGroupKey = getCertLotGroupKey(formatNo, code);
     const myFrom = parseSafeInt(fromVal);
     if (!myGroupKey || myFrom <= 0) return false;
     const myTo = parseSafeInt(toVal) || myFrom;
+    const myYy = typeof targetRowOrYy === 'string'
+      ? targetRowOrYy
+      : getCertRowYy(targetRowOrYy || (state.certDraftRows || []).find(d => d.id === currentDraftRowId));
 
     const isOverlapping = (r) => {
       if (getCertLotGroupKey(r.formatNo, r.code) !== myGroupKey) return false;
+      if (getCertRowYy(r) !== myYy) return false;
       const oFrom = parseSafeInt(r.from);
       if (oFrom <= 0) return false;
       const oQty = parseSafeInt(r.qty);
@@ -4352,7 +4399,9 @@
 
     populateCertPlanWeekSelect();
 
-    // [표 2] 조회 필터 동기화 (작업반 / 상태 / 생산주차 / 검색)
+    // [표 2] 조회 필터 동기화 (연도 / 작업반 / 상태 / 생산주차 / 검색)
+    renderCertSavedFilterYears();
+
     const lineSelect = document.getElementById('cert-filter-line');
     if (lineSelect) {
       lineSelect.value = state.certFilterLine || 'ALL';
@@ -4402,14 +4451,47 @@
     return wd;
   }
 
+  function renderCertSavedFilterYears() {
+    const yearSel = document.getElementById('cert-filter-year');
+    if (!yearSel) return;
+    const allSaved = state.certSavedRows || [];
+    const currentYear = String(new Date().getFullYear());
+    const nextYear = String(Number(currentYear) + 1);
+    const yearSet = new Set([currentYear, nextYear]);
+    allSaved.forEach(row => {
+      const yr = getCertRowYear(row);
+      if (/^\d{4}$/.test(yr)) yearSet.add(yr);
+    });
+    const sortedYears = Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+
+    const prevVal = state.certFilterYear || currentYear;
+    yearSel.innerHTML = '<option value="ALL">전체 연도</option>';
+    sortedYears.forEach(yr => {
+      const opt = document.createElement('option');
+      opt.value = yr;
+      opt.textContent = `${yr}년`;
+      yearSel.appendChild(opt);
+    });
+
+    if (prevVal === 'ALL' || yearSet.has(prevVal)) {
+      yearSel.value = prevVal;
+    } else {
+      yearSel.value = currentYear;
+      state.certFilterYear = currentYear;
+    }
+    syncCustomSelect('cert-filter-year');
+  }
+
   function renderCertSavedFilterWeeks() {
     const weekSel = document.getElementById('cert-filter-week');
     if (!weekSel) return;
+    const filterYear = state.certFilterYear || 'ALL';
     const filterLine = state.certFilterLine || 'ALL';
     const allSaved = state.certSavedRows || [];
 
     const weekMap = new Map();
     allSaved.forEach(row => {
+      if (filterYear !== 'ALL' && getCertRowYear(row) !== filterYear) return;
       if (filterLine !== 'ALL' && (row.group || '').trim() !== filterLine) return;
       const wd = String(row.weekDate || '').trim();
       if (!wd) return;
@@ -4510,7 +4592,7 @@
         : (lotHint ? `최근 로트: ${lotHint.prevLot} → 다음 추천: ${lotHint.suggestion}` : '');
 
       // 제조번호 FROM/TO 중복·사이값 여부 확인 및 다음 번호 예측
-      const isDupSerial = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code);
+      const isDupSerial = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code, row);
       const fromHint = fromSuggestions.get(row.id);
       const fromPlaceholder = fromHint ? fromHint.suggestion : '';
       const fromTitle = isDupSerial
@@ -4598,13 +4680,15 @@
     tbody.innerHTML = '';
     const allSaved = state.certSavedRows || [];
 
-    // 필터링 적용 (작업반 / 상태 / 생산주차 / 통합검색)
+    // 필터링 적용 (연도 / 작업반 / 상태 / 생산주차 / 통합검색)
+    const filterYear = state.certFilterYear || 'ALL';
     const filterLine = state.certFilterLine || 'ALL';
     const filterWeek = state.certFilterWeek || 'ALL';
     const filterStatus = state.certFilterStatus || 'ALL';
     const filterSearch = (state.certFilterSearch || '').trim().toLowerCase();
 
     const filteredRows = allSaved.filter(row => {
+      if (filterYear !== 'ALL' && getCertRowYear(row) !== filterYear) return false;
       if (filterLine !== 'ALL' && (row.group || '').trim() !== filterLine) return false;
       if (filterWeek !== 'ALL' && String(row.weekDate || '').trim() !== filterWeek) return false;
       if (filterStatus !== 'ALL') {
@@ -4859,6 +4943,138 @@
     return Number.isFinite(n) ? n.toLocaleString() : String(val);
   }
 
+  // 품목정보 마스터 변경 시 모든 연관 화면(검정현황, 품질검사, 수신기계획, 생산계획, 검정정산) 자동 동기화
+  function syncMasterChangesToAllViews() {
+    const masterMap = new Map();
+    (state.certMasterItems || []).forEach(m => {
+      const key = String(m?.code || '').trim().toLowerCase();
+      if (key) masterMap.set(key, m);
+    });
+
+    const syncCertRow = (r) => {
+      if (!r || !r.code) return false;
+      const m = masterMap.get(String(r.code).trim().toLowerCase());
+      if (!m) return false;
+      let changed = false;
+      const nextName = getDisplayItemName(m);
+      const nextSpec = m.spec || '';
+      const nextFmt = m.formatNo || '';
+      const nextType = m.inspectType || r.type || '품질';
+      const nextGroup = m.group || '';
+      const nextSensor = m.sensor || '';
+      const nextCtrl = m.ctrl || '';
+      const nextGas = m.gas || '';
+
+      if (r.name !== nextName) { r.name = nextName; changed = true; }
+      if ((r.spec || '') !== nextSpec) { r.spec = nextSpec; changed = true; }
+      if ((r.formatNo || '') !== nextFmt) { r.formatNo = nextFmt; changed = true; }
+      if ((r.type || '') !== nextType) { r.type = nextType; changed = true; }
+      if ((r.group || '') !== nextGroup) { r.group = nextGroup; changed = true; }
+      if ((r.sensor || '') !== nextSensor) { r.sensor = nextSensor; changed = true; }
+      if ((r.ctrl || '') !== nextCtrl) { r.ctrl = nextCtrl; changed = true; }
+      if ((r.gas || '') !== nextGas) { r.gas = nextGas; changed = true; }
+      return changed;
+    };
+
+    let certChanged = false;
+    (state.certDraftRows || []).forEach(r => { if (syncCertRow(r)) certChanged = true; });
+    (state.certSavedRows || []).forEach(r => { if (syncCertRow(r)) certChanged = true; });
+
+    let qualChanged = false;
+    (state.qualityRows || []).forEach(r => {
+      if (!r || !r.code) return;
+      const m = masterMap.get(String(r.code).trim().toLowerCase());
+      if (!m) return;
+      const nextName = getDisplayItemName(m);
+      const nextSpec = m.spec || '';
+      const nextFmt = m.formatNo || '';
+      const nextGroup = m.group || '';
+      if (r.name !== nextName) { r.name = nextName; qualChanged = true; }
+      if ((r.spec || '') !== nextSpec) { r.spec = nextSpec; qualChanged = true; }
+      if ((r.formatNo || '') !== nextFmt) { r.formatNo = nextFmt; qualChanged = true; }
+      if ((r.group || '') !== nextGroup) { r.group = nextGroup; qualChanged = true; }
+    });
+
+    if (certChanged) {
+      saveLocalCertData();
+      saveCertDataToDb(true);
+    }
+    if (qualChanged) {
+      if (typeof saveLocalQualityData === 'function') saveLocalQualityData();
+      if (typeof saveQualityRowsToDb === 'function') saveQualityRowsToDb();
+    }
+
+    let rpChanged = false;
+    (state.receiverPlanRows || []).forEach(r => {
+      if (!r || !r.code) return;
+      const m = masterMap.get(String(r.code).trim().toLowerCase());
+      if (!m) return;
+      const nextName = getDisplayItemName(m);
+      const nextItemGroup = (m.itemGroup && m.itemGroup !== '-') ? m.itemGroup : (r.itemGroup || '');
+      const nextFmt = m.formatNo || '';
+      if ((r.name || '') !== nextName) { r.name = nextName; rpChanged = true; }
+      if ((r.itemGroup || '') !== nextItemGroup) { r.itemGroup = nextItemGroup; rpChanged = true; }
+      if ((r.formatNo || '') !== nextFmt) { r.formatNo = nextFmt; rpChanged = true; }
+    });
+
+    if (rpChanged) {
+      if (typeof saveLocalReceiverPlanData === 'function') saveLocalReceiverPlanData();
+      if (typeof saveReceiverPlanToDb === 'function') saveReceiverPlanToDb(true);
+    }
+
+    if (typeof renderPlanModule === 'function') renderPlanModule();
+    if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+    if (typeof renderCertificationModule === 'function') renderCertificationModule();
+    if (typeof renderQualityTable === 'function') renderQualityTable();
+    if (typeof renderCertSettlementModule === 'function') renderCertSettlementModule();
+  }
+
+  function getAllItemGroupOptions() {
+    const set = new Set([
+      'GT1 일체', 'GT1 일반', 'GT1 벽부', 'F3P 가스', 'F3P 복합'
+    ]);
+    (state.certMasterItems || []).forEach(it => {
+      const ig = String(it?.itemGroup || '').trim();
+      if (ig && ig !== '-') set.add(ig);
+    });
+    (state.receiverPlanRows || []).forEach(r => {
+      const ig = String(r?.itemGroup || '').trim();
+      if (ig && ig !== '-') set.add(ig);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
+  }
+
+  function getItemGroupColorClass(groupName) {
+    const g = String(groupName || '').trim();
+    if (!g || g === '-') return '';
+    const fixedColorMap = {
+      'GT1 일체': 'ig-color-4', // 빨간색
+      'GT1 일반': 'ig-color-6', // 주황색
+      'GT1 벽부': 'ig-color-0', // 파란색
+      'F3P 복합': 'ig-color-3', // 보라색
+      'F3P복합': 'ig-color-3',
+      'F3P 가스': 'ig-color-2', // 초록색
+      'F3P가스': 'ig-color-2'
+    };
+    if (fixedColorMap[g]) return fixedColorMap[g];
+
+    const fallbackIndices = [5, 7, 8, 9, 1];
+    const groupSet = new Set();
+    (state.certMasterItems || []).forEach(it => {
+      const ig = String(it?.itemGroup || '').trim();
+      if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
+    });
+    (state.receiverPlanRows || []).forEach(r => {
+      const ig = String(r?.itemGroup || '').trim();
+      if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
+    });
+    groupSet.add(g);
+    const sorted = Array.from(groupSet).sort((a, b) => a.localeCompare(b, 'ko'));
+    const idx = sorted.indexOf(g);
+    const paletteIdx = fallbackIndices[(idx >= 0 ? idx : 0) % fallbackIndices.length];
+    return `ig-color-${paletteIdx}`;
+  }
+
   // (9) 설정 탭: 품목정보 그리드 렌더링
   function renderCertMasterTable() {
     const tbody = document.getElementById('master-cert-items-tbody');
@@ -4901,54 +5117,84 @@
     const elEtc = document.getElementById('count-cert-tab-etc');
     if (elEtc) elEtc.textContent = countEtc;
 
-    const chkAll = document.getElementById('chk-cert-master-all');
-    if (chkAll) chkAll.checked = false;
+    const isEditMode = Boolean(state.certMasterEditMode);
+    const thAction = document.getElementById('th-cert-master-action');
+    if (thAction) thAction.textContent = isEditMode ? '삭제' : '';
+
     const btnEdit = document.getElementById('btn-cert-selected-edit');
-    const btnDel = document.getElementById('btn-cert-selected-delete');
     const btnSave = document.getElementById('btn-cert-inline-save');
     const btnCancel = document.getElementById('btn-cert-inline-cancel');
-    if (btnEdit) btnEdit.style.display = '';
-    if (btnDel) btnDel.style.display = '';
-    if (btnSave) btnSave.style.display = 'none';
-    if (btnCancel) btnCancel.style.display = 'none';
+    if (btnEdit) btnEdit.style.display = isEditMode ? 'none' : '';
+    if (btnSave) btnSave.style.display = isEditMode ? '' : 'none';
+    if (btnCancel) btnCancel.style.display = isEditMode ? '' : 'none';
 
     if (filtered.length === 0) {
       tbody.innerHTML = `<tr><td colspan="17" style="text-align: center; padding: 25px; color: #94a3b8;">등록된 품목이 없습니다. 상단 [+ 신규 품목 등록] 또는 [엑셀 업로드]를 이용하세요.</td></tr>`;
       return;
     }
 
+    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+
     filtered.forEach((item, idx) => {
       const tr = document.createElement('tr');
-      tr.className = 'draggable-row cert-master-row';
-      tr.draggable = true;
+      const igRowCls = getItemGroupColorClass(item.itemGroup);
+      tr.className = (isEditMode ? 'cert-master-row is-editing' : 'draggable-row cert-master-row') + (igRowCls ? ` ${igRowCls}` : '');
+      tr.draggable = !isEditMode;
       tr.dataset.id = item.id;
       tr.dataset.dragIndex = idx;
 
-      const applyTypeVal = getDefaultItemApplyType(item);
-      tr.innerHTML = `
-        <td style="text-align: center;"><input type="checkbox" class="chk-cert-master-row" data-id="${item.id}"></td>
-        <td class="drag-handle-cell" style="text-align: center; cursor: grab; color: #94a3b8;">${idx + 1}</td>
-        <td style="text-align: center;"><span class="badge ${item.useYn === '사용' ? 'badge-success' : 'badge-ghost'}">${item.useYn || '사용'}</span></td>
-        <td style="text-align: center;"><span class="badge ${applyTypeVal === '수동' ? 'badge-apply-manual' : 'badge-apply-auto'}">${applyTypeVal}</span></td>
-        <td style="text-align: center;"><span class="badge" style="background:#f1f5f9; color:#334155;">${item.inspectType || '-'}</span></td>
-        <td style="text-align: center; font-weight:600; color:#0284c7;">${item.group || '-'}</td>
-        <td style="text-align: center;">${item.itemGroup || '-'}</td>
-        <td class="font-bold text-slate-800">${item.code || '-'}</td>
-        <td class="font-bold text-primary">${item.altName || '-'}</td>
-        <td class="text-slate-700">${item.name || '-'}</td>
-        <td class="text-slate-600" title="${item.spec || ''}">${item.spec || '-'}</td>
-        <td style="text-align: center;">${item.formatNo || '-'}</td>
-        <td>${item.modelName || '-'}</td>
-        <td style="text-align: right;">${formatOptionalNum(item.unitPrice)}</td>
-        <td style="text-align: center;">${item.sensor || '-'}</td>
-        <td style="text-align: center;">${item.ctrl || '-'}</td>
-        <td style="text-align: center;">${item.gas || '-'}</td>
-      `;
+      if (isEditMode) {
+        tr.dataset.editing = 'true';
+        tr.innerHTML = `
+          <td style="text-align: center;">
+            <button type="button" class="btn-cert-row-del-x" data-id="${item.id}" title="이 품목 삭제">×</button>
+          </td>
+          <td style="text-align: center; color: #64748b; font-weight: 600;">${idx + 1}</td>
+          <td><select class="cert-inline-edit-input" data-f="useYn"><option value="사용" ${item.useYn === '사용' ? 'selected' : ''}>사용</option><option value="미사용" ${item.useYn === '미사용' ? 'selected' : ''}>미사용</option></select></td>
+          <td><select class="cert-inline-edit-input" data-f="applyType"><option value="자동" ${getDefaultItemApplyType(item) === '자동' ? 'selected' : ''}>자동</option><option value="수동" ${getDefaultItemApplyType(item) === '수동' ? 'selected' : ''}>수동</option></select></td>
+          <td><select class="cert-inline-edit-input" data-f="inspectType"><option value="품질" ${item.inspectType === '품질' ? 'selected' : ''}>품질</option><option value="생산" ${item.inspectType === '생산' ? 'selected' : ''}>생산</option><option value="-" ${item.inspectType === '-' ? 'selected' : ''}>-</option></select></td>
+          <td><select class="cert-inline-edit-input" data-f="group"><option value="감지기반" ${item.group === '감지기반' ? 'selected' : ''}>감지기반</option><option value="유도등반" ${item.group === '유도등반' ? 'selected' : ''}>유도등반</option><option value="수신기반" ${item.group === '수신기반' ? 'selected' : ''}>수신기반</option><option value="기타" ${item.group === '기타' ? 'selected' : ''}>기타</option><option value="-" ${item.group === '-' ? 'selected' : ''}>-</option></select></td>
+          <td><input type="text" class="cert-inline-edit-input" data-f="itemGroup" value="${esc(item.itemGroup)}"></td>
+          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="code" value="${esc(item.code)}"></td>
+          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="altName" value="${esc(item.altName)}"></td>
+          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="name" value="${esc(item.name)}"></td>
+          <td><input type="text" class="cert-inline-edit-input" data-f="spec" value="${esc(item.spec)}"></td>
+          <td><input type="text" class="cert-inline-edit-input" data-f="formatNo" value="${esc(item.formatNo)}"></td>
+          <td><input type="text" class="cert-inline-edit-input" data-f="modelName" value="${esc(item.modelName)}"></td>
+          <td><input type="number" class="cert-inline-edit-input text-right" data-f="unitPrice" value="${esc(item.unitPrice)}"></td>
+          <td><input type="text" class="cert-inline-edit-input text-center" data-f="sensor" value="${esc(item.sensor)}"></td>
+          <td><input type="text" class="cert-inline-edit-input text-center" data-f="ctrl" value="${esc(item.ctrl)}"></td>
+          <td><input type="text" class="cert-inline-edit-input text-center" data-f="gas" value="${esc(item.gas)}"></td>
+        `;
+      } else {
+        const applyTypeVal = getDefaultItemApplyType(item);
+        tr.innerHTML = `
+          <td style="text-align: center; color: #cbd5e1;">·</td>
+          <td class="drag-handle-cell" style="text-align: center; cursor: grab; color: #94a3b8;">${idx + 1}</td>
+          <td style="text-align: center;"><span class="badge ${item.useYn === '사용' ? 'badge-success' : 'badge-ghost'}">${item.useYn || '사용'}</span></td>
+          <td style="text-align: center;"><span class="badge ${applyTypeVal === '수동' ? 'badge-apply-manual' : 'badge-apply-auto'}">${applyTypeVal}</span></td>
+          <td style="text-align: center;"><span class="badge" style="background:#f1f5f9; color:#334155;">${item.inspectType || '-'}</span></td>
+          <td style="text-align: center; font-weight:600; color:#0284c7;">${item.group || '-'}</td>
+          <td style="text-align: center;">${item.itemGroup || '-'}</td>
+          <td class="font-bold text-slate-800">${item.code || '-'}</td>
+          <td class="font-bold text-primary">${item.altName || '-'}</td>
+          <td class="text-slate-700">${item.name || '-'}</td>
+          <td class="text-slate-600" title="${item.spec || ''}">${item.spec || '-'}</td>
+          <td style="text-align: center;">${item.formatNo || '-'}</td>
+          <td>${item.modelName || '-'}</td>
+          <td style="text-align: right;">${formatOptionalNum(item.unitPrice)}</td>
+          <td style="text-align: center;">${item.sensor || '-'}</td>
+          <td style="text-align: center;">${item.ctrl || '-'}</td>
+          <td style="text-align: center;">${item.gas || '-'}</td>
+        `;
+      }
 
       tbody.appendChild(tr);
     });
 
-    bindCertMasterDragAndDrop(tbody);
+    if (!isEditMode) {
+      bindCertMasterDragAndDrop(tbody);
+    }
     updateCertBadgeCounts();
   }
 
@@ -5264,6 +5510,7 @@
     // 검정현황 드롭다운 커스텀 스타일 적용
     enhanceSelectToCustomDropdown('cert-plan-week-select');
     enhanceSelectToCustomDropdown('cert-auto-line-filter');
+    enhanceSelectToCustomDropdown('cert-filter-year');
     enhanceSelectToCustomDropdown('cert-filter-line');
     enhanceSelectToCustomDropdown('cert-filter-status');
     enhanceSelectToCustomDropdown('cert-filter-week');
@@ -5615,8 +5862,10 @@
         return;
       }
 
+      const srcYear = getCertRowYear(src);
       const candidates = (state.certSavedRows || []).filter(r =>
         String(r.code || '').trim() === String(src.code || '').trim() &&
+        getCertRowYear(r) === srcYear &&
         ((src.sourceWeekId && r.sourceWeekId === src.sourceWeekId) || (src.weekDate && r.weekDate === src.weekDate)) &&
         r.status !== '일정완료' && r.status !== '품검요청'
       );
@@ -5681,7 +5930,13 @@
       showToast(`기존 로트(${targetRow.lotNo || '미입력'})에 ${addQty.toLocaleString()}개가 합산되었습니다 (총 ${newQty.toLocaleString()}개).`);
     });
 
-    // 1. [표 2] 상태 / 생산주차 / 통합검색 / 초기화 필터
+    // 1. [표 2] 연도 / 상태 / 생산주차 / 통합검색 / 초기화 필터
+    document.getElementById('cert-filter-year')?.addEventListener('change', (e) => {
+      state.certFilterYear = e.target.value || 'ALL';
+      state.certFilterWeek = 'ALL';
+      renderCertificationModule();
+    });
+
     document.getElementById('cert-filter-status')?.addEventListener('change', (e) => {
       state.certFilterStatus = e.target.value || 'ALL';
       renderCertificationModule();
@@ -5698,6 +5953,7 @@
     });
 
     document.getElementById('btn-cert-filter-reset')?.addEventListener('click', () => {
+      state.certFilterYear = String(new Date().getFullYear());
       state.certFilterLine = 'ALL';
       state.certFilterStatus = 'ALL';
       state.certFilterWeek = 'ALL';
@@ -5807,7 +6063,7 @@
             }
           }
           if (groupKey && parseSafeInt(row.from) > 0) {
-            const isDupSer = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code);
+            const isDupSer = checkSerialRangeOverlap(row.formatNo, row.from, row.to, row.id, row.code, row);
             if (isDupSer) {
               alert(`[중복 경고] ${groupDesc}의 제조번호(${row.from}~${row.to || row.from})가 기존 등록 구간과 겹치거나 사이값입니다.\n제조번호를 수정한 후 다시 등록해주세요.`);
               return;
@@ -6799,6 +7055,7 @@
 
         saveLocalCertData();
         saveCertDataToDb(true);
+        syncMasterChangesToAllViews();
         renderCertMasterTable();
         formAddCert.reset();
       });
@@ -7164,6 +7421,7 @@
         state.certMasterItems = newItems;
         saveLocalCertData();
         await saveCertDataToDb(true);
+        syncMasterChangesToAllViews();
         renderCertMasterTable();
         showToast(`총 ${newItems.length}개 품목이 품목정보에 성공적으로 등록되었습니다`);
       }
@@ -9475,9 +9733,12 @@
         const colorCls = cellColor ? ` plan-cell-color-${cellColor}` : '';
         const hasMemo = row.memos && row.memos[col.key] ? ' plan-has-memo' : '';
         const hasSplit = splitParts ? ' plan-has-split' : '';
+        const splitMarkHtml = splitParts
+          ? `<span class="plan-split-mark" aria-hidden="true">÷${splitParts.length}</span>`
+          : '';
         const titleAttr = titleText ? ` title="${escapeHtmlPlan(titleText)}"` : '';
 
-        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}${hasSplit}"${fixedStyle}${titleAttr}>${disp}</td>`;
+        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}${hasSplit}"${fixedStyle}${titleAttr}>${disp}${splitMarkHtml}</td>`;
       });
       bodyHtml += '</tr>';
     });
@@ -10851,7 +11112,7 @@
           </div>
           <select class="form-input form-input-sm plan-unified-type-sel" data-qid="${q.id}" style="width:140px;">
             <option value="forecast"${q.type === 'forecast' ? ' selected' : ''}>예정물량</option>
-            <option value="weekly"${q.type === 'weekly' ? ' selected' : ''}>기간별재고 (W00)</option>
+            <option value="weekly"${q.type === 'weekly' ? ' selected' : ''}>기간별재고</option>
             <option value="stockLimits"${q.type === 'stockLimits' ? ' selected' : ''}>기초·최소·최대재고</option>
             <option value="unknown"${q.type === 'unknown' ? ' selected' : ''}>종류 미인식</option>
           </select>
@@ -11508,10 +11769,11 @@
         return;
       }
 
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Process')) {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Process' || e.isComposing || e.keyCode === 229)) {
         const col = planGridState.columns[planGridState.anchor.c];
         if (col && col.editable) {
-          if (e.key !== 'Process') {
+          const isIme = e.key === 'Process' || e.isComposing || e.keyCode === 229 || /^[ㄱ-ㅎㅏ-ㅣ가-힣]$/.test(e.key);
+          if (!isIme) {
             e.preventDefault();
             startPlanCellEdit(planGridState.anchor.r, planGridState.anchor.c, e.key, true);
           } else {
@@ -14062,92 +14324,56 @@
       if (typeof renderCertMasterTable === 'function') renderCertMasterTable();
     });
 
-    // 설정: 품목정보 전체 선택 체크박스 & 상단 선택 수정/삭제/저장/취소
-    document.getElementById('chk-cert-master-all')?.addEventListener('change', (e) => {
-      const checked = e.target.checked;
-      document.querySelectorAll('#master-cert-items-tbody .chk-cert-master-row').forEach(chk => {
-        chk.checked = checked;
-      });
-    });
+    // 설정: 품목정보 전체 편집모드 (편집 / 저장 / 취소 / 행별 X 삭제)
+    let certMasterEditSnapshot = null;
 
     document.getElementById('btn-cert-selected-edit')?.addEventListener('click', () => {
-      const checkedBoxes = Array.from(document.querySelectorAll('#master-cert-items-tbody .chk-cert-master-row:checked'));
-      if (checkedBoxes.length === 0) {
-        showToast('수정할 품목을 좌측 체크박스로 선택해주세요.');
-        return;
-      }
-      const esc = (v) => String(v ?? '').replace(/"/g, '&quot;');
-      checkedBoxes.forEach(chk => {
-        const id = chk.dataset.id;
-        const item = (state.certMasterItems || []).find(i => i.id === id);
-        const tr = chk.closest('tr');
-        if (!item || !tr) return;
-        tr.draggable = false;
-        tr.dataset.editing = 'true';
-        tr.innerHTML = `
-          <td style="text-align:center;"><input type="checkbox" class="chk-cert-master-row" data-id="${item.id}" checked disabled></td>
-          <td style="text-align:center; color:#2563eb; font-weight:700;">수정</td>
-          <td><select class="cert-inline-edit-input" data-f="useYn"><option value="사용" ${item.useYn === '사용' ? 'selected' : ''}>사용</option><option value="미사용" ${item.useYn === '미사용' ? 'selected' : ''}>미사용</option></select></td>
-          <td><select class="cert-inline-edit-input" data-f="applyType"><option value="자동" ${getDefaultItemApplyType(item) === '자동' ? 'selected' : ''}>자동</option><option value="수동" ${getDefaultItemApplyType(item) === '수동' ? 'selected' : ''}>수동</option></select></td>
-          <td><select class="cert-inline-edit-input" data-f="inspectType"><option value="품질" ${item.inspectType === '품질' ? 'selected' : ''}>품질</option><option value="생산" ${item.inspectType === '생산' ? 'selected' : ''}>생산</option><option value="-" ${item.inspectType === '-' ? 'selected' : ''}>-</option></select></td>
-          <td><select class="cert-inline-edit-input" data-f="group"><option value="감지기반" ${item.group === '감지기반' ? 'selected' : ''}>감지기반</option><option value="유도등반" ${item.group === '유도등반' ? 'selected' : ''}>유도등반</option><option value="수신기반" ${item.group === '수신기반' ? 'selected' : ''}>수신기반</option><option value="기타" ${item.group === '기타' ? 'selected' : ''}>기타</option><option value="-" ${item.group === '-' ? 'selected' : ''}>-</option></select></td>
-          <td><input type="text" class="cert-inline-edit-input" data-f="itemGroup" value="${esc(item.itemGroup)}"></td>
-          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="code" value="${esc(item.code)}"></td>
-          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="altName" value="${esc(item.altName)}"></td>
-          <td><input type="text" class="cert-inline-edit-input font-bold" data-f="name" value="${esc(item.name)}"></td>
-          <td><input type="text" class="cert-inline-edit-input" data-f="spec" value="${esc(item.spec)}"></td>
-          <td><input type="text" class="cert-inline-edit-input" data-f="formatNo" value="${esc(item.formatNo)}"></td>
-          <td><input type="text" class="cert-inline-edit-input" data-f="modelName" value="${esc(item.modelName)}"></td>
-          <td><input type="number" class="cert-inline-edit-input text-right" data-f="unitPrice" value="${esc(item.unitPrice)}"></td>
-          <td><input type="text" class="cert-inline-edit-input text-center" data-f="sensor" value="${esc(item.sensor)}"></td>
-          <td><input type="text" class="cert-inline-edit-input text-center" data-f="ctrl" value="${esc(item.ctrl)}"></td>
-          <td><input type="text" class="cert-inline-edit-input text-center" data-f="gas" value="${esc(item.gas)}"></td>
-        `;
-      });
-      document.getElementById('btn-cert-selected-edit').style.display = 'none';
-      document.getElementById('btn-cert-selected-delete').style.display = 'none';
-      document.getElementById('btn-cert-inline-save').style.display = '';
-      document.getElementById('btn-cert-inline-cancel').style.display = '';
+      certMasterEditSnapshot = JSON.parse(JSON.stringify(state.certMasterItems || []));
+      state.certMasterEditMode = true;
+      renderCertMasterTable();
     });
 
     document.getElementById('btn-cert-inline-save')?.addEventListener('click', () => {
-      const editingRows = Array.from(document.querySelectorAll('#master-cert-items-tbody tr[data-editing="true"]'));
-      let updatedCount = 0;
-      editingRows.forEach(tr => {
-        const id = tr.dataset.id;
-        const item = (state.certMasterItems || []).find(i => i.id === id);
-        if (!item) return;
-        tr.querySelectorAll('[data-f]').forEach(el => {
-          item[el.dataset.f] = el.value.trim();
-        });
-        updatedCount++;
-      });
-      if (updatedCount > 0) {
-        saveLocalCertData();
-        saveCertDataToDb(true);
-        showToast(`${updatedCount}개 품목정보가 수정되었습니다.`);
-      }
+      saveLocalCertData();
+      saveCertDataToDb(true);
+      syncMasterChangesToAllViews();
+      certMasterEditSnapshot = null;
+      state.certMasterEditMode = false;
       renderCertMasterTable();
+      showToast('품목정보가 저장되고 전체 화면에 동기화되었습니다.');
     });
 
     document.getElementById('btn-cert-inline-cancel')?.addEventListener('click', () => {
+      if (certMasterEditSnapshot) {
+        state.certMasterItems = certMasterEditSnapshot;
+        certMasterEditSnapshot = null;
+      }
+      state.certMasterEditMode = false;
       renderCertMasterTable();
     });
 
-    document.getElementById('btn-cert-selected-delete')?.addEventListener('click', () => {
-      const checkedBoxes = Array.from(document.querySelectorAll('#master-cert-items-tbody .chk-cert-master-row:checked'));
-      if (checkedBoxes.length === 0) {
-        showToast('삭제할 품목을 좌측 체크박스로 선택해주세요.');
-        return;
-      }
-      const ids = new Set(checkedBoxes.map(c => c.dataset.id));
-      if (!confirm(`선택한 ${ids.size}개 품목을 마스터에서 삭제하시겠습니까?`)) return;
-      state.certMasterItems = (state.certMasterItems || []).filter(i => !ids.has(i.id));
-      saveLocalCertData();
-      saveCertDataToDb(true);
-      renderCertMasterTable();
-      showToast(`${ids.size}개 품목이 삭제되었습니다.`);
-    });
+    const masterTbody = document.getElementById('master-cert-items-tbody');
+    if (masterTbody) {
+      const syncMasterEditField = (e) => {
+        if (!state.certMasterEditMode) return;
+        const el = e.target.closest('[data-f]');
+        const tr = e.target.closest('tr');
+        if (!el || !tr) return;
+        const item = (state.certMasterItems || []).find(i => i.id === tr.dataset.id);
+        if (!item) return;
+        item[el.dataset.f] = el.value.trim();
+      };
+      masterTbody.addEventListener('input', syncMasterEditField);
+      masterTbody.addEventListener('change', syncMasterEditField);
+
+      masterTbody.addEventListener('click', (e) => {
+        const delBtn = e.target.closest('.btn-cert-row-del-x');
+        if (!delBtn) return;
+        const id = delBtn.dataset.id;
+        state.certMasterItems = (state.certMasterItems || []).filter(i => i.id !== id);
+        renderCertMasterTable();
+      });
+    }
 
     document.querySelectorAll('.line-proc-select').forEach(sel => {
       sel.addEventListener('change', (e) => {
@@ -16943,8 +17169,71 @@
     return updated;
   }
 
+  function getReceiverPlanRowYear(row) {
+    if (!row) return '';
+    const primaryCandidates = [row.weekDate, row.inspectDate];
+    for (const c of primaryCandidates) {
+      const s = String(c || '').trim();
+      if (/^\d{4}/.test(s)) return s.slice(0, 4);
+    }
+    const lotM = String(row.lotNo || '').trim().match(/^(\d{2})-/);
+    if (lotM) return `20${lotM[1]}`;
+    const py = String(row.planYear || '').trim();
+    if (/^\d{4}$/.test(py)) return py;
+    const fallbackCandidates = [row.receiptDate, row.dueDate];
+    for (const c of fallbackCandidates) {
+      const s = String(c || '').trim();
+      if (/^\d{4}/.test(s)) return s.slice(0, 4);
+    }
+    return '';
+  }
+
+  function getEffectiveRpItemGroup(row) {
+    if (!row) return '';
+    if (row.code) {
+      const mItem = (state.certMasterItems || []).find(i =>
+        String(i.code || '').trim().toLowerCase() === String(row.code || '').trim().toLowerCase()
+      );
+      if (mItem && mItem.itemGroup && mItem.itemGroup !== '-') {
+        return String(mItem.itemGroup).trim();
+      }
+    }
+    return String(row.itemGroup || '').trim();
+  }
+
   function populateReceiverPlanFilterOptions() {
     const rows = state.receiverPlanRows || [];
+    const currentYear = String(new Date().getFullYear());
+    const nextYear = String(Number(currentYear) + 1);
+
+    const yearSel = document.getElementById('rp-filter-year');
+    if (yearSel) {
+      const yearSet = new Set([currentYear, nextYear]);
+      rows.forEach(r => {
+        const yr = getReceiverPlanRowYear(r);
+        if (/^\d{4}$/.test(yr)) yearSet.add(yr);
+      });
+      const sortedYears = Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+      const prevYear = state.rpFilterYear || currentYear;
+      yearSel.innerHTML = '<option value="ALL">전체 연도</option>' +
+        sortedYears.map(yr => `<option value="${yr}">${yr}년</option>`).join('');
+      if (prevYear === 'ALL' || yearSet.has(prevYear)) {
+        yearSel.value = prevYear;
+      } else {
+        yearSel.value = currentYear;
+        state.rpFilterYear = currentYear;
+      }
+      if (typeof syncCustomSelect === 'function') syncCustomSelect('rp-filter-year');
+    }
+
+    const fYear = state.rpFilterYear || 'ALL';
+    const yearFilteredRows = fYear === 'ALL'
+      ? rows
+      : rows.filter(r => {
+        const yr = getReceiverPlanRowYear(r);
+        return yr === fYear || (!yr && fYear === currentYear);
+      });
+
     const fillSelect = (id, allLabel, values, labelFormatter = null) => {
       const sel = document.getElementById(id);
       if (!sel) return;
@@ -16959,25 +17248,31 @@
       if (typeof syncCustomSelect === 'function') syncCustomSelect(id);
     };
 
-    fillSelect('rp-filter-week', '생산주차', rows.map(r => r.weekDate), v => formatCertWeekOptionLabel(v));
-    fillSelect('rp-filter-item', '품목그룹', rows.map(r => r.itemGroup));
+    fillSelect('rp-filter-week', '생산주차', yearFilteredRows.map(r => r.weekDate), v => formatCertWeekOptionLabel(v));
+    fillSelect('rp-filter-item', '품목그룹', yearFilteredRows.map(r => getEffectiveRpItemGroup(r)));
   }
 
   function getFilteredReceiverPlanRows() {
     const rows = state.receiverPlanRows || [];
+    const currentYear = String(new Date().getFullYear());
+    const fYear = state.rpFilterYear || 'ALL';
     const q = (document.getElementById('rp-search-site')?.value || '').trim().toLowerCase();
     const fWeek = document.getElementById('rp-filter-week')?.value || 'ALL';
     const fItem = document.getElementById('rp-filter-item')?.value || 'ALL';
     const fStatus = state.rpStatusFilter || 'ALL';
 
     return rows.filter(row => {
+      if (fYear !== 'ALL') {
+        const yr = getReceiverPlanRowYear(row);
+        if (yr ? yr !== fYear : fYear !== currentYear) return false;
+      }
       if (q) {
         const matched = [row.code, row.name, row.siteName, row.formatNo, row.builder, row.client]
           .some(v => String(v || '').toLowerCase().includes(q));
         if (!matched) return false;
       }
       if (fWeek !== 'ALL' && String(row.weekDate || '').trim() !== fWeek) return false;
-      if (fItem !== 'ALL' && String(row.itemGroup || '').trim() !== fItem) return false;
+      if (fItem !== 'ALL' && getEffectiveRpItemGroup(row) !== fItem) return false;
       if (fStatus !== 'ALL') {
         const st = getReceiverPlanCertStatus(row);
         if (fStatus === '미신청' && st.isSent) return false;
@@ -17050,9 +17345,9 @@
     { key: '_chk', label: '선택', editable: false, cls: 'rp-col-chk', width: 36, fixedLeft: 0 },
     { key: '_no', label: 'NO', editable: false, cls: 'rp-col-no', width: 42, fixedLeft: 36 },
     { key: 'reqNo', field: 'reqNo', label: '제작의뢰번호', editable: true, cls: 'rp-col-req is-mono', width: 130, fixedLeft: 78 },
-    { key: 'code', field: 'code', label: '품목코드', editable: true, cls: 'rp-col-code is-mono', width: 110, fixedLeft: 208 },
+    { key: 'code', field: 'code', label: '품목코드', editable: true, cls: 'rp-col-code is-mono text-center', width: 110, fixedLeft: 208 },
     { key: 'formatNo', field: 'formatNo', label: '형식번호', editable: true, cls: 'rp-col-fmt', width: 85, fixedLeft: 318 },
-    { key: 'itemGroup', field: 'itemGroup', label: '품목그룹', editable: true, cls: 'rp-col-group text-center', width: 95, fixedLeft: 403 },
+    { key: 'itemGroup', field: 'itemGroup', label: '품목그룹', editable: false, cls: 'rp-col-group text-center', width: 95, fixedLeft: 403 },
     { key: 'name', field: 'name', label: '품명', editable: true, cls: 'rp-col-name', width: 130, fixedLeft: 498 },
     { key: 'siteName', field: 'siteName', label: '현장명', editable: true, cls: 'rp-col-site', width: 220, fixedLeft: 628 },
     { key: 'builder', field: 'builder', label: '건설사', editable: true, cls: 'rp-col-builder', width: 115 },
@@ -17120,12 +17415,29 @@
       const visibleKeys = (cols || []).slice(2).map(c => c.key);
       const visibleSet = new Set(visibleKeys);
       const prevRaw = localStorage.getItem(RP_COL_ORDER_STORAGE_KEY);
-      const prevKeys = prevRaw ? JSON.parse(prevRaw) : RP_GRID_COLUMNS.slice(2).map(c => c.key);
-      const missingKeys = (Array.isArray(prevKeys) ? prevKeys : []).filter(k => !visibleSet.has(k));
-      RP_GRID_COLUMNS.slice(2).forEach(c => {
-        if (!visibleSet.has(c.key) && !missingKeys.includes(c.key)) missingKeys.push(c.key);
+      const defaultKeys = RP_GRID_COLUMNS.slice(2).map(c => c.key);
+      const prevKeys = prevRaw ? JSON.parse(prevRaw) : defaultKeys;
+      const baseOrder = Array.isArray(prevKeys) ? [...prevKeys] : [...defaultKeys];
+      defaultKeys.forEach(k => {
+        if (!baseOrder.includes(k)) baseOrder.push(k);
       });
-      localStorage.setItem(RP_COL_ORDER_STORAGE_KEY, JSON.stringify([...visibleKeys, ...missingKeys]));
+
+      let visIdx = 0;
+      const merged = [];
+      baseOrder.forEach(k => {
+        if (visibleSet.has(k)) {
+          if (visIdx < visibleKeys.length) {
+            merged.push(visibleKeys[visIdx++]);
+          }
+        } else {
+          merged.push(k);
+        }
+      });
+      while (visIdx < visibleKeys.length) {
+        merged.push(visibleKeys[visIdx++]);
+      }
+
+      localStorage.setItem(RP_COL_ORDER_STORAGE_KEY, JSON.stringify(merged));
     } catch (e) { /* ignore */ }
   }
 
@@ -17339,11 +17651,10 @@
           return `<td class="${fullCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"${noTitle}>${rIdx + 1}</td>`;
         }
         let val = row[col.field] ?? '';
-        if (col.key === 'itemGroup' && !val && row.code) {
-          const mItem = (state.certMasterItems || []).find(i =>
-            String(i.code || '').trim().toLowerCase() === String(row.code || '').trim().toLowerCase()
-          );
-          if (mItem && mItem.itemGroup && mItem.itemGroup !== '-') val = mItem.itemGroup;
+        if (col.key === 'itemGroup' && row.code) {
+          val = getEffectiveRpItemGroup(row) || val;
+        } else if (col.key === 'name' && row.code) {
+          val = getDisplayNameByCode(row.code, val);
         }
         const escVal = esc(val);
         if (col.key === 'reqNo') {
@@ -17364,7 +17675,8 @@
         return `<td class="${fullCls}${errCls}"${styleAttr} data-r="${rIdx}" data-c="${cIdx}"${titleAttr}>${escVal}</td>`;
       }).join('');
 
-      return `<tr data-rp-id="${row.id}" data-r="${rIdx}" class="${st.rowCls} ${isChecked ? 'is-rp-selected' : ''} ${dueCls}">${cellsHtml}</tr>`;
+      const igRowCls = getItemGroupColorClass(getEffectiveRpItemGroup(row));
+      return `<tr data-rp-id="${row.id}" data-r="${rIdx}" class="${st.rowCls} ${isChecked ? 'is-rp-selected' : ''} ${dueCls} ${igRowCls}">${cellsHtml}</tr>`;
     }).join('');
 
     applyRpSelectionClasses();
@@ -17580,10 +17892,17 @@
         const row = (state.receiverPlanRows || []).find(r => r.id === rowId);
         if (row && mItem) {
           pushRpUndoSnapshot();
+          const prevCode = String(row.code || '').trim().toLowerCase();
+          const nextCode = String(mItem.code || '').trim().toLowerCase();
           row.code = mItem.code || '';
-          row.formatNo = mItem.formatNo && mItem.formatNo !== '-' ? mItem.formatNo : (row.formatNo || '');
-          row.itemGroup = mItem.itemGroup && mItem.itemGroup !== '-' ? mItem.itemGroup : (row.itemGroup || '');
+          row.formatNo = (mItem.formatNo && mItem.formatNo !== '-') ? mItem.formatNo : '';
+          row.itemGroup = (mItem.itemGroup && mItem.itemGroup !== '-') ? mItem.itemGroup : '';
           row.name = getDisplayItemName(mItem);
+          if (prevCode !== nextCode) {
+            row.lotNo = '';
+            row.serialFrom = '';
+            row.serialTo = '';
+          }
           recommendReceiverLotAndSerial([row], false);
           rpGridState.editing = null;
           saveLocalReceiverPlanData();
@@ -17599,6 +17918,12 @@
 
     // 검색/필터 이벤트
     document.getElementById('rp-search-site')?.addEventListener('input', () => renderReceiverPlanModule());
+    document.getElementById('rp-filter-year')?.addEventListener('change', (e) => {
+      state.rpFilterYear = e.target.value || 'ALL';
+      const weekSel = document.getElementById('rp-filter-week');
+      if (weekSel) weekSel.value = 'ALL';
+      renderReceiverPlanModule();
+    });
     ['rp-filter-week', 'rp-filter-item'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', () => renderReceiverPlanModule());
     });
@@ -17642,9 +17967,12 @@
         );
         if (mItem) {
           row.code = mItem.code;
-          if (!row.formatNo && mItem.formatNo && mItem.formatNo !== '-') row.formatNo = mItem.formatNo;
-          if (!row.itemGroup && mItem.itemGroup && mItem.itemGroup !== '-') row.itemGroup = mItem.itemGroup;
-          if (!row.name) row.name = getDisplayItemName(mItem);
+          row.formatNo = (mItem.formatNo && mItem.formatNo !== '-') ? mItem.formatNo : '';
+          row.itemGroup = (mItem.itemGroup && mItem.itemGroup !== '-') ? mItem.itemGroup : '';
+          row.name = getDisplayItemName(mItem);
+          row.lotNo = '';
+          row.serialFrom = '';
+          row.serialTo = '';
           recommendReceiverLotAndSerial([row], false);
         }
       }
@@ -17709,8 +18037,17 @@
       scrollWrap.appendChild(rpImeProxy);
     }
 
+    let isRpImeComposing = false;
+
+    function resetRpImeProxyVisual() {
+      if (!rpImeProxy) return;
+      rpImeProxy.removeAttribute('style');
+    }
+
     function focusRpGrid() {
       if (rpImeProxy) {
+        isRpImeComposing = false;
+        resetRpImeProxyVisual();
         rpImeProxy.value = '';
         rpImeProxy.focus({ preventScroll: true });
       } else {
@@ -17719,7 +18056,45 @@
     }
 
     if (rpImeProxy) {
-      rpImeProxy.addEventListener('input', () => {
+      rpImeProxy.addEventListener('compositionstart', () => {
+        isRpImeComposing = true;
+        if (rpGridState.editing || !rpGridState.anchor) return;
+        const col = rpGridState.columns[rpGridState.anchor.c];
+        const row = rpGridState.rows[rpGridState.anchor.r];
+        if (!col || !col.editable || !row || getReceiverPlanCertStatus(row).isLocked) return;
+        const td = tbody ? tbody.querySelector(`td[data-r="${rpGridState.anchor.r}"][data-c="${rpGridState.anchor.c}"]`) : null;
+        if (td) {
+          const rect = td.getBoundingClientRect();
+          rpImeProxy.style.position = 'fixed';
+          rpImeProxy.style.left = `${rect.left}px`;
+          rpImeProxy.style.top = `${rect.top}px`;
+          rpImeProxy.style.width = `${rect.width}px`;
+          rpImeProxy.style.height = `${rect.height}px`;
+          rpImeProxy.style.opacity = '1';
+          rpImeProxy.style.zIndex = '200';
+          rpImeProxy.style.background = 'var(--bg-card, #ffffff)';
+          rpImeProxy.style.color = 'var(--text-main, #0f172a)';
+          rpImeProxy.style.border = '2px solid #2563eb';
+          rpImeProxy.style.padding = '2px 6px';
+          rpImeProxy.style.fontSize = '12px';
+          rpImeProxy.style.boxSizing = 'border-box';
+        }
+      });
+
+      rpImeProxy.addEventListener('compositionend', () => {
+        isRpImeComposing = false;
+        resetRpImeProxyVisual();
+        const txt = rpImeProxy.value;
+        rpImeProxy.value = '';
+        if (!txt || rpGridState.editing || !rpGridState.anchor) return;
+        const col = rpGridState.columns[rpGridState.anchor.c];
+        if (col && col.editable) {
+          startRpCellEdit(rpGridState.anchor.r, rpGridState.anchor.c, txt, true);
+        }
+      });
+
+      rpImeProxy.addEventListener('input', (e) => {
+        if (isRpImeComposing || e.isComposing) return;
         const txt = rpImeProxy.value;
         rpImeProxy.value = '';
         if (!txt || rpGridState.editing || !rpGridState.anchor) return;
@@ -17771,6 +18146,7 @@
       }
 
       input.addEventListener('keydown', (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter') {
           e.preventDefault();
           commitRpCellEdit(true);
@@ -18097,10 +18473,12 @@
           return;
         }
 
-        if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Process')) {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Process' || e.isComposing || e.keyCode === 229)) {
+          if (e.target === rpImeProxy) return;
           const col = rpGridState.columns[rpGridState.anchor.c];
           if (col && col.editable) {
-            if (e.key !== 'Process') {
+            const isIme = e.key === 'Process' || e.isComposing || e.keyCode === 229 || /^[ㄱ-ㅎㅏ-ㅣ가-힣]$/.test(e.key);
+            if (!isIme) {
               e.preventDefault();
               startRpCellEdit(rpGridState.anchor.r, rpGridState.anchor.c, e.key, true);
             } else {
@@ -18125,10 +18503,14 @@
     }
 
     // + 행 추가 (기존 등록 건 아래쪽에 추가 + 스크롤 하단 이동)
-    document.getElementById('btn-rp-add-row')?.addEventListener('click', () => {
+    const handleRpAddRow = () => {
       pushRpUndoSnapshot();
+      const activeYear = (state.rpFilterYear && state.rpFilterYear !== 'ALL')
+        ? state.rpFilterYear
+        : String(new Date().getFullYear());
       const newRow = createEmptyReceiverPlanRow({
-        receiptDate: getTodayDateString()
+        receiptDate: getTodayDateString(),
+        planYear: activeYear
       });
       state.receiverPlanRows.push(newRow);
       saveLocalReceiverPlanData();
@@ -18144,13 +18526,79 @@
         applyRpSelectionClasses();
         startRpCellEdit(newRowIdx, 2, undefined, false);
       }
+    };
+    document.getElementById('btn-rp-add-row')?.addEventListener('click', handleRpAddRow);
+
+    // + 여러 행 추가 모달
+    const addMultiModal = document.getElementById('rp-add-multi-modal');
+    const addMultiInput = document.getElementById('rp-add-multi-count');
+    const closeAddMultiModal = () => { if (addMultiModal) addMultiModal.style.display = 'none'; };
+
+    const handleRpAddMultiRows = () => {
+      if (addMultiInput) addMultiInput.value = '5';
+      if (addMultiModal) {
+        addMultiModal.style.display = 'flex';
+        setTimeout(() => {
+          addMultiInput?.focus();
+          addMultiInput?.select();
+        }, 20);
+      }
+    };
+
+    const applyRpAddMultiRows = () => {
+      const count = parseInt(addMultiInput?.value || '0', 10);
+      if (!Number.isFinite(count) || count < 1 || count > 200) {
+        showToast('추가할 행의 수를 1~200 사이로 입력하세요.');
+        return;
+      }
+      pushRpUndoSnapshot();
+      const activeYear = (state.rpFilterYear && state.rpFilterYear !== 'ALL')
+        ? state.rpFilterYear
+        : String(new Date().getFullYear());
+      const todayStr = getTodayDateString();
+      let firstNewId = null;
+      for (let i = 0; i < count; i++) {
+        const newRow = createEmptyReceiverPlanRow({
+          receiptDate: todayStr,
+          planYear: activeYear
+        });
+        if (i === 0) firstNewId = newRow.id;
+        state.receiverPlanRows.push(newRow);
+      }
+      closeAddMultiModal();
+      saveLocalReceiverPlanData();
+      markAsDirty(true);
+      renderReceiverPlanModule();
+      if (scrollWrap) {
+        scrollWrap.scrollTop = scrollWrap.scrollHeight;
+      }
+      const firstIdx = firstNewId ? rpGridState.rows.findIndex(r => r.id === firstNewId) : -1;
+      if (firstIdx >= 0) {
+        rpGridState.anchor = { r: firstIdx, c: 2 };
+        rpGridState.focus = { r: firstIdx, c: 2 };
+        applyRpSelectionClasses();
+      }
+      showToast(`${count}개 행이 추가되었습니다.`);
+    };
+
+    document.getElementById('btn-close-rp-add-multi-modal')?.addEventListener('click', closeAddMultiModal);
+    document.getElementById('btn-cancel-rp-add-multi-modal')?.addEventListener('click', closeAddMultiModal);
+    document.getElementById('btn-apply-rp-add-multi-modal')?.addEventListener('click', applyRpAddMultiRows);
+    addMultiInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyRpAddMultiRows();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeAddMultiModal();
+      }
     });
 
     // 행 복제 (아래쪽에 추가 + 스크롤 하단 이동)
-    document.getElementById('btn-rp-clone-row')?.addEventListener('click', () => {
+    const handleRpCloneRow = () => {
       const selIds = Array.from(state.rpSelectedIds || []);
       if (selIds.length === 0) {
-        showToast('복제할 행을 체크박스로 선택해주세요.');
+        showToast('복제할 행을 선택해주세요.');
         return;
       }
       pushRpUndoSnapshot();
@@ -18171,16 +18619,17 @@
       saveLocalReceiverPlanData();
       markAsDirty(true);
       renderReceiverPlanModule();
-      const scrollWrap = document.getElementById('rp-grid-scroll-wrap');
-      if (scrollWrap) scrollWrap.scrollTop = scrollWrap.scrollHeight;
+      const sw = document.getElementById('rp-grid-scroll-wrap');
+      if (sw) sw.scrollTop = sw.scrollHeight;
       showToast(`${clones.length}개 행을 복제하고 다음 로트·제조번호를 채번했습니다.`);
-    });
+    };
+    document.getElementById('btn-rp-clone-row')?.addEventListener('click', handleRpCloneRow);
 
     // 선택 삭제
-    document.getElementById('btn-rp-delete-rows')?.addEventListener('click', () => {
+    const handleRpDeleteRows = () => {
       const selIds = Array.from(state.rpSelectedIds || []);
       if (selIds.length === 0) {
-        showToast('삭제할 행을 체크박스로 선택해주세요.');
+        showToast('삭제할 행을 선택해주세요.');
         return;
       }
       if (!confirm(`선택한 ${selIds.length}개 행을 삭제하시겠습니까?`)) return;
@@ -18191,7 +18640,8 @@
       markAsDirty(true);
       renderReceiverPlanModule();
       showToast(`${selIds.length}개 행이 삭제되었습니다.`);
-    });
+    };
+    document.getElementById('btn-rp-delete-rows')?.addEventListener('click', handleRpDeleteRows);
 
     // 로트/제조번호 추천
     document.getElementById('btn-rp-recommend-lot')?.addEventListener('click', () => {
@@ -18214,10 +18664,10 @@
     // 일괄 편집 모달
     const bulkModal = document.getElementById('rp-bulk-edit-modal');
     const closeBulkModal = () => { if (bulkModal) bulkModal.style.display = 'none'; };
-    document.getElementById('btn-rp-bulk-edit')?.addEventListener('click', () => {
+    const handleRpBulkEdit = () => {
       const selIds = Array.from(state.rpSelectedIds || []);
       if (selIds.length === 0) {
-        showToast('일괄 편집할 행을 체크박스로 선택해주세요.');
+        showToast('일괄 편집할 행을 선택해주세요.');
         return;
       }
       const infoEl = document.getElementById('rp-bulk-target-info');
@@ -18227,7 +18677,8 @@
       if (wEl) wEl.value = '';
       if (iEl) iEl.value = '';
       if (bulkModal) bulkModal.style.display = 'flex';
-    });
+    };
+    document.getElementById('btn-rp-bulk-edit')?.addEventListener('click', handleRpBulkEdit);
     document.getElementById('btn-close-rp-bulk-modal')?.addEventListener('click', closeBulkModal);
     document.getElementById('btn-cancel-rp-bulk-modal')?.addEventListener('click', closeBulkModal);
     document.getElementById('btn-apply-rp-bulk-modal')?.addEventListener('click', () => {
@@ -18416,10 +18867,10 @@
     });
 
     // 명판 인쇄 (26년 명판출력 A1:G14 양식, A4 흑백, 체크박스 순차 출력)
-    document.getElementById('btn-rp-print-label')?.addEventListener('click', () => {
+    const handleRpPrintLabel = () => {
       const selSet = state.rpSelectedIds instanceof Set ? state.rpSelectedIds : new Set();
       if (selSet.size === 0) {
-        showToast('명판을 인쇄할 행을 체크박스로 선택해주세요.');
+        showToast('명판을 인쇄할 행을 선택해주세요.');
         return;
       }
 
@@ -18526,7 +18977,72 @@
       };
       window.addEventListener('afterprint', cleanup);
       setTimeout(() => window.print(), 60);
-    });
+    };
+    document.getElementById('btn-rp-print-label')?.addEventListener('click', handleRpPrintLabel);
+
+    // 수신기계획 마우스 우클릭 컨텍스트 메뉴 (행 추가 / 행 복제 / 일괄 편집 / 명판 인쇄 / 선택 삭제)
+    const rpCtxMenu = document.getElementById('rp-context-menu');
+    let rpCtxRowId = null;
+
+    const closeRpContextMenu = () => {
+      if (rpCtxMenu) rpCtxMenu.style.display = 'none';
+      rpCtxRowId = null;
+    };
+
+    if (scrollWrap && rpCtxMenu) {
+      scrollWrap.addEventListener('contextmenu', (e) => {
+        if (rpGridState.editing) return;
+        e.preventDefault();
+        const tr = e.target.closest('tr[data-rp-id]');
+        rpCtxRowId = tr ? tr.dataset.rpId : null;
+
+        rpCtxMenu.style.display = 'block';
+        const menuW = rpCtxMenu.offsetWidth || 160;
+        const menuH = rpCtxMenu.offsetHeight || 190;
+        const left = Math.min(e.clientX, window.innerWidth - menuW - 8);
+        const top = Math.min(e.clientY, window.innerHeight - menuH - 8);
+        rpCtxMenu.style.left = `${Math.max(8, left)}px`;
+        rpCtxMenu.style.top = `${Math.max(8, top)}px`;
+      });
+
+      rpCtxMenu.addEventListener('click', (e) => {
+        const itemBtn = e.target.closest('[data-rp-action]');
+        if (!itemBtn) return;
+        const action = itemBtn.dataset.rpAction;
+        const targetRowId = rpCtxRowId;
+        closeRpContextMenu();
+
+        if (action === 'add') {
+          handleRpAddRow();
+          return;
+        }
+        if (action === 'add-multi') {
+          handleRpAddMultiRows();
+          return;
+        }
+
+        // 체크된 행이 없을 때 특정 행 위에서 우클릭했다면 해당 행을 자동 선택 대상으로 지정
+        if (!(state.rpSelectedIds instanceof Set)) state.rpSelectedIds = new Set();
+        if (state.rpSelectedIds.size === 0 && targetRowId) {
+          state.rpSelectedIds.add(targetRowId);
+          renderReceiverPlanModule();
+        }
+
+        if (action === 'clone') handleRpCloneRow();
+        else if (action === 'bulk') handleRpBulkEdit();
+        else if (action === 'print') handleRpPrintLabel();
+        else if (action === 'delete') handleRpDeleteRows();
+      });
+
+      document.addEventListener('click', (e) => {
+        if (rpCtxMenu.style.display === 'none') return;
+        if (!e.target.closest('#rp-context-menu')) closeRpContextMenu();
+      });
+      scrollWrap.addEventListener('scroll', closeRpContextMenu);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeRpContextMenu();
+      });
+    }
 
     // 검정현황 표 2(등록 내역)로 바로 전송 ('등록완료' 상태, 1행 = 1대)
     document.getElementById('btn-rp-send-cert')?.addEventListener('click', async () => {

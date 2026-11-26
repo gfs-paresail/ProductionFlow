@@ -475,6 +475,9 @@
                 <h2 class="plan-title">수신기계획</h2>
               </div>
               <div class="rp-inline-filters" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <select id="rp-filter-year" class="form-select form-select-sm font-bold" title="연도 필터">
+                  <option value="ALL">전체 연도</option>
+                </select>
                 <select id="rp-filter-week" class="form-select form-select-sm" title="생산주차 필터">
                   <option value="ALL">생산주차</option>
                 </select>
@@ -486,11 +489,6 @@
             </div>
 
             <div class="plan-toolbar-right" style="flex-wrap: wrap; gap: 6px;">
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-add-row">+ 행 추가</button>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-clone-row" title="체크한 행 복제">행 복제</button>
-              <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-rp-delete-rows">선택 삭제</button>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-bulk-edit" title="체크한 행의 생산주차/수검일자 일괄 변경">일괄 편집</button>
-
               <!-- 표시 옵션 드롭다운 -->
               <div class="plan-dropdown-wrap" id="rp-opt-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-rp-options">표시옵션 ▾</button>
@@ -535,10 +533,6 @@
                 </div>
                 <input type="file" id="input-rp-upload-excel" accept=".xlsx,.xls,.csv" style="display:none;">
               </div>
-
-              <button type="button" class="btn btn-sm btn-outline" id="btn-rp-print-label" title="체크한 행의 명판(A4 흑백)을 순서대로 인쇄">
-                명판 인쇄
-              </button>
 
               <button type="button" class="btn btn-sm btn-primary" id="btn-rp-send-cert" title="체크한 행을 검정현황 등록 내역(표 2)에 등록완료 상태로 검정등록">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -636,6 +630,35 @@
               <button type="button" class="btn btn-sm btn-primary" id="btn-apply-rp-bulk-modal">일괄 적용</button>
             </div>
           </div>
+        </div>
+
+        <!-- 여러 행 추가 모달 -->
+        <div class="cert-modal-overlay" id="rp-add-multi-modal" style="display: none;">
+          <div class="cert-modal-box" style="width: 340px; max-width: 95vw;">
+            <div class="cert-modal-head">
+              <h3>여러 행 추가</h3>
+              <button type="button" class="btn-close-modal" id="btn-close-rp-add-multi-modal">×</button>
+            </div>
+            <div class="cert-modal-body" style="padding: 16px; display:flex; flex-direction:column; gap:10px;">
+              <label for="rp-add-multi-count" style="font-size:12.5px; font-weight:700;">추가할 행의 수를 입력하세요</label>
+              <input type="number" id="rp-add-multi-count" class="form-input form-input-sm" min="1" max="200" value="5" placeholder="예: 5">
+            </div>
+            <div class="cert-modal-foot" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light);">
+              <button type="button" class="btn btn-sm btn-outline" id="btn-cancel-rp-add-multi-modal">취소</button>
+              <button type="button" class="btn btn-sm btn-primary" id="btn-apply-rp-add-multi-modal">추가</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 수신기계획 우클릭 컨텍스트 메뉴 -->
+        <div id="rp-context-menu" class="rp-context-menu" style="display: none;" role="menu">
+          <button type="button" class="rp-ctx-item" data-rp-action="add">+ 행 추가</button>
+          <button type="button" class="rp-ctx-item" data-rp-action="add-multi">+ 여러 행 추가</button>
+          <button type="button" class="rp-ctx-item" data-rp-action="clone">행 복제</button>
+          <button type="button" class="rp-ctx-item" data-rp-action="bulk">일괄 편집</button>
+          <button type="button" class="rp-ctx-item" data-rp-action="print">명판 인쇄</button>
+          <div class="rp-ctx-divider"></div>
+          <button type="button" class="rp-ctx-item is-danger" data-rp-action="delete">선택 삭제</button>
         </div>
       </section>
 
@@ -1202,8 +1225,11 @@
                   <h3 class="section-title">검정 등록 내역</h3>
                   <button type="button" class="btn btn-xs btn-outline" id="btn-cert-saved-expand" title="검정 등록 내역 크게 보기 (상단 1행만 표시)">펼침</button>
 
-                  <!-- 조회 필터 (작업반 / 상태 / 생산주차 / 검색 / 초기화) -->
+                  <!-- 조회 필터 (연도 / 작업반 / 상태 / 생산주차 / 검색 / 초기화) -->
                   <div class="cert-saved-filter-bar" style="display:inline-flex; align-items:center; gap:5px; flex-wrap:wrap; margin-left: 4px;">
+                    <select id="cert-filter-year" class="form-select form-select-sm font-bold" title="연도 필터">
+                      <option value="ALL">전체 연도</option>
+                    </select>
                     <select id="cert-filter-line" class="form-select form-select-sm font-bold" title="작업반 필터">
                       <option value="ALL" selected>작업반</option>
                       <option value="감지기반">감지기반</option>
@@ -1993,7 +2019,7 @@
                     </div>
                     <div>
                       <h3 class="card-title">품목정보</h3>
-                      <p class="card-subtitle">좌측 체크박스 선택 후 상단 [선택 수정] / [선택 삭제] 버튼을 이용하세요.</p>
+                      <p class="card-subtitle">상단 [편집] 버튼을 누르면 전체 행을 바로 수정하거나 행 좌측 × 버튼으로 삭제할 수 있습니다.</p>
                     </div>
                   </div>
 
@@ -2008,13 +2034,12 @@
 
                     <input type="text" id="cert-master-search" class="form-input form-input-sm" placeholder="품목코드/품명 검색..." style="width: 150px;">
 
-                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-selected-edit">선택 수정</button>
-                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-selected-delete">선택 삭제</button>
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-selected-edit">편집</button>
                     <button type="button" class="btn btn-sm btn-save-success" id="btn-cert-inline-save" style="display:none;">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                       저장
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-inline-cancel" style="display:none;">수정 취소</button>
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-inline-cancel" style="display:none;">취소</button>
 
                     <button type="button" class="btn btn-sm btn-primary" id="btn-open-cert-item-modal">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -2037,7 +2062,7 @@
                     <table class="master-table cert-master-table" id="table-cert-master">
                       <thead>
                         <tr>
-                          <th style="width: 34px; text-align: center;"><input type="checkbox" id="chk-cert-master-all" title="전체 선택"></th>
+                          <th id="th-cert-master-action" style="width: 34px; text-align: center;"></th>
                           <th style="width: 36px; text-align: center;">순서</th>
                           <th style="width: 52px; text-align: center;">사용</th>
                           <th style="width: 64px; text-align: center;">신청유형</th>

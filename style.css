@@ -1471,11 +1471,12 @@ html.dark-mode .user-role-circle.role-viewer {
   color: var(--text-main);
 }
 
-/* Toast */
+/* Toast (상단 메뉴바 아래 중앙 슬라이드 다운) */
 .toast-container {
   position: fixed;
-  top: 16px;
-  right: 20px;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 9999;
   pointer-events: none;
 }
@@ -1486,18 +1487,19 @@ html.dark-mode .user-role-circle.role-viewer {
   gap: 10px;
   background-color: #0f172a;
   color: #ffffff;
-  padding: 10px 16px;
+  padding: 9px 18px;
   border-radius: var(--radius-lg);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transform: translateY(-20px) scale(0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transform: translateY(-130%);
   opacity: 0;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
-  pointer-events: auto;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .toast.show {
-  transform: translateY(0) scale(1);
+  transform: translateY(0);
   opacity: 1;
 }
 
@@ -3731,6 +3733,27 @@ tr.row-status-failed td {
   pointer-events: none;
 }
 
+/* 분할 수량 인디케이터 (좌측 하단 미니 배지) */
+.plan-excel-table tbody td .plan-split-mark {
+  position: absolute;
+  bottom: 1px;
+  left: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  padding: 0 3px;
+  border-radius: 3px;
+  background-color: rgba(37, 99, 235, 0.13);
+  color: #1d4ed8;
+  pointer-events: none;
+  letter-spacing: -0.02em;
+}
+
+html.dark-mode .plan-excel-table tbody td .plan-split-mark {
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+}
+
 .plan-palette-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -4620,6 +4643,36 @@ html.dark-mode .cert-inline-edit-input:focus {
   background: #1e293b;
   border-color: #93c5fd;
   outline: none;
+}
+
+.btn-cert-row-del-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-cert-row-del-x:hover {
+  background-color: #fee2e2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+html.dark-mode .btn-cert-row-del-x:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 /* 일정계획: 품목 병합 + 조립/검사/포장 3행 고정 스타일 */
@@ -7676,20 +7729,48 @@ html.dark-mode .rp-summary-chip.is-urgent {
 .rp-col-chk { width: 36px; min-width: 36px; max-width: 36px; text-align: center; }
 .rp-col-no { width: 42px; min-width: 42px; max-width: 42px; text-align: center; color: var(--text-muted); font-weight: 600; }
 .rp-col-req { width: 130px; min-width: 130px; max-width: 130px; }
-.rp-col-code { width: 110px; min-width: 110px; max-width: 110px; }
+.rp-col-code { width: 110px; min-width: 110px; max-width: 110px; text-align: center; }
 .rp-col-fmt { width: 85px; min-width: 85px; max-width: 85px; }
 .rp-col-group { width: 95px; min-width: 95px; max-width: 95px; text-align: center; }
+
+/* 품목그룹별 행 전체 글자 색상 (10색 고대비 팔레트, 볼드 없음) */
+tr.ig-color-0 td, tr.ig-color-0 td:not(:has(.badge)) { color: #2563eb !important; }
+tr.ig-color-1 td, tr.ig-color-1 td:not(:has(.badge)) { color: #b45309 !important; }
+tr.ig-color-2 td, tr.ig-color-2 td:not(:has(.badge)) { color: #047857 !important; }
+tr.ig-color-3 td, tr.ig-color-3 td:not(:has(.badge)) { color: #7c3aed !important; }
+tr.ig-color-4 td, tr.ig-color-4 td:not(:has(.badge)) { color: #dc2626 !important; }
+tr.ig-color-5 td, tr.ig-color-5 td:not(:has(.badge)) { color: #0e7490 !important; }
+tr.ig-color-6 td, tr.ig-color-6 td:not(:has(.badge)) { color: #ea580c !important; }
+tr.ig-color-7 td, tr.ig-color-7 td:not(:has(.badge)) { color: #4338ca !important; }
+tr.ig-color-8 td, tr.ig-color-8 td:not(:has(.badge)) { color: #0f766e !important; }
+tr.ig-color-9 td, tr.ig-color-9 td:not(:has(.badge)) { color: #9333ea !important; }
+
+html.dark-mode tr.ig-color-0 td { color: #60a5fa !important; }
+html.dark-mode tr.ig-color-1 td { color: #fbbf24 !important; }
+html.dark-mode tr.ig-color-2 td { color: #34d399 !important; }
+html.dark-mode tr.ig-color-3 td { color: #a78bfa !important; }
+html.dark-mode tr.ig-color-4 td { color: #f87171 !important; }
+html.dark-mode tr.ig-color-5 td { color: #22d3ee !important; }
+html.dark-mode tr.ig-color-6 td { color: #fb923c !important; }
+html.dark-mode tr.ig-color-7 td { color: #818cf8 !important; }
+html.dark-mode tr.ig-color-8 td { color: #2dd4bf !important; }
+html.dark-mode tr.ig-color-9 td { color: #c084fc !important; }
 .rp-col-name { width: 130px; min-width: 130px; max-width: 130px; }
 .rp-col-site { width: 220px; min-width: 220px; max-width: 220px; box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06); }
 .rp-col-builder { width: 115px; min-width: 115px; max-width: 115px; }
 .rp-col-client { width: 95px; min-width: 95px; max-width: 95px; }
-.rp-col-manager { width: 75px; min-width: 75px; max-width: 75px; }
-.rp-col-date { width: 96px; min-width: 96px; max-width: 96px; }
+.rp-col-manager { width: 75px; min-width: 75px; max-width: 75px; text-align: center; }
+.rp-col-date { width: 96px; min-width: 96px; max-width: 96px; text-align: center; }
 .rp-col-color { width: 120px; min-width: 120px; max-width: 120px; }
 .rp-col-remark { width: 130px; min-width: 130px; max-width: 130px; }
-.rp-col-lot { width: 82px; min-width: 82px; max-width: 82px; }
-.rp-col-ym { width: 68px; min-width: 68px; max-width: 68px; }
-.rp-col-serial { width: 92px; min-width: 92px; max-width: 92px; }
+.rp-col-lot { width: 82px; min-width: 82px; max-width: 82px; text-align: center; }
+.rp-col-ym { width: 68px; min-width: 68px; max-width: 68px; text-align: center; }
+.rp-col-serial { width: 92px; min-width: 92px; max-width: 92px; text-align: center; }
+
+.rp-excel-table th.text-center,
+.rp-excel-table td.text-center {
+  text-align: center;
+}
 
 /* 제작의뢰번호 좌측 상단 검정상태 작은 원형 표시 */
 .rp-excel-table tbody td.rp-col-req {
@@ -7806,6 +7887,70 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-overdue td.rp-col-date-due {
   overflow-y: auto;
   min-width: 280px;
   padding: 4px;
+}
+
+/* 수신기계획 우클릭 컨텍스트 메뉴 */
+.rp-context-menu {
+  position: fixed;
+  z-index: 9500;
+  min-width: 150px;
+  padding: 5px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2), 0 4px 10px -2px rgba(15, 23, 42, 0.1);
+}
+.rp-ctx-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #1e293b;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.rp-ctx-item:hover {
+  background: #f1f5f9;
+  color: #2563eb;
+}
+.rp-ctx-item.is-danger {
+  color: #dc2626;
+}
+.rp-ctx-item.is-danger:hover {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.rp-ctx-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: #e2e8f0;
+}
+html.dark-mode .rp-context-menu {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+html.dark-mode .rp-ctx-item {
+  color: #e2e8f0;
+}
+html.dark-mode .rp-ctx-item:hover {
+  background: #334155;
+  color: #60a5fa;
+}
+html.dark-mode .rp-ctx-item.is-danger {
+  color: #f87171;
+}
+html.dark-mode .rp-ctx-item.is-danger:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+html.dark-mode .rp-ctx-divider {
+  background: #334155;
 }
 
 .rp-ac-item {
@@ -8862,11 +9007,7 @@ body.view-mode-wide .app-bottom-bar {
   color: var(--primary);
   border-color: var(--primary);
 }
-.toast-container {
-  top: auto !important;
-  bottom: 48px !important;
-  pointer-events: none !important;
-}
+/* 하단 바 위 토스트 위치는 상단 메뉴바 아래 슬라이드 정책을 따름 */
 html.dark-mode .app-bottom-bar {
   background: #0f172a;
   border-top-color: #334155;
