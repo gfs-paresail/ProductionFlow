@@ -293,18 +293,29 @@
                 <button type="button" class="plan-seg-btn active" data-view="week">주차</button>
               </div>
 
-              <!-- 품목그룹 합산 보기 ON/OFF 드롭다운 -->
+              <!-- 품목그룹 보기(ON/OFF) · 표시/숨김 · 색상 드롭다운 -->
               <div class="plan-dropdown-wrap" id="plan-item-group-dropdown-wrap">
                 <button type="button" class="btn btn-sm btn-outline" id="btn-plan-item-groups">품목그룹 ▾</button>
-                <div class="plan-dropdown-menu" id="plan-item-group-dropdown-menu" style="min-width: 220px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 8px 6px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
-                    <span style="font-size: 11px; font-weight: 700; color: var(--text-sub);">그룹별 합산 보기 (ON/OFF)</span>
-                    <div style="display:flex; gap:4px;">
-                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-all-on" style="font-size:11px; padding:1px 4px;">전체ON</button>
-                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-all-off" style="font-size:11px; padding:1px 4px;">전체OFF</button>
+                <div class="plan-dropdown-menu" id="plan-item-group-dropdown-menu" style="min-width: 268px;">
+                  <div class="plan-ig-top-bar">
+                    <label class="plan-ig-mode-toggle" title="품목그룹별로 묶어서 합산 및 펼침/접기 보기">
+                      <input type="checkbox" id="chk-plan-group-view-mode">
+                      <span class="plan-ig-mode-switch" aria-hidden="true"></span>
+                      <span class="plan-ig-mode-label">그룹상태로 보기</span>
+                    </label>
+                    <div class="plan-ig-expand-actions" id="plan-ig-expand-actions" style="display:none;">
+                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-expand-all" title="모든 그룹 펼치기">모두펼침</button>
+                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-collapse-all" title="모든 그룹 접기">모두접기</button>
                     </div>
                   </div>
-                  <div id="plan-item-group-checklist" style="max-height: 240px; overflow-y: auto;"></div>
+                  <div class="plan-ig-sub-bar">
+                    <span style="font-size: 10.5px; color: var(--text-sub);">선택된 그룹만 표시</span>
+                    <div style="display:flex; gap:4px;">
+                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-show-all" style="font-size:11px; padding:1px 4px;">전체표시</button>
+                      <button type="button" class="btn btn-xs btn-ghost" id="btn-plan-ig-hide-all" style="font-size:11px; padding:1px 4px;">전체숨김</button>
+                    </div>
+                  </div>
+                  <div id="plan-item-group-checklist" style="max-height: 250px; overflow-y: auto;"></div>
                 </div>
               </div>
 
@@ -352,7 +363,7 @@
                   </label>
                   <label class="plan-opt-item">
                     <input type="checkbox" id="chk-plan-stock-amount">
-                    <span>재고금액으로 보기 (단가 × 재고)</span>
+                    <span>금액(₩)으로 보기</span>
                   </label>
                   <label class="plan-opt-item">
                     <input type="checkbox" id="chk-plan-auto-green" checked>
@@ -407,7 +418,6 @@
                 <button type="button" class="plan-legend-chip" id="btn-plan-cert-unregistered" title="생산계획 수량은 있으나 검정등록이 되지 않은 품목만 필터링">미등록</button>
                 <span class="plan-cell-dot-item"><span class="plan-cell-dot-sample is-reg"></span>등록완료</span>
                 <span class="plan-cell-dot-item"><span class="plan-cell-dot-sample is-apply"></span>검정신청</span>
-                <span class="plan-cell-dot-item"><span class="plan-cell-dot-sample is-qual"></span>품검요청</span>
                 <span class="plan-cell-dot-item"><span class="plan-cell-dot-sample is-done"></span>생산완료</span>
               </div>
             </div>
@@ -554,7 +564,6 @@
                 <button type="button" class="plan-legend-chip" data-rp-status="미신청"><span class="plan-dot dot-pink"></span>미신청 <span class="plan-filter-count-badge is-pending" id="rp-count-pending">0</span></button>
                 <button type="button" class="plan-legend-chip" data-rp-status="등록완료"><span class="cal-status-dot st-reg"></span>검정등록</button>
                 <button type="button" class="plan-legend-chip" data-rp-status="검정신청"><span class="cal-status-dot st-apply"></span>검정신청</button>
-                <button type="button" class="plan-legend-chip" data-rp-status="품검요청"><span class="cal-status-dot st-qual"></span>품검요청</button>
                 <button type="button" class="plan-legend-chip" data-rp-status="일정완료"><span class="cal-status-dot st-done"></span>일정완료</button>
               </div>
               <span class="plan-legend-divider" aria-hidden="true">|</span>
@@ -1240,7 +1249,6 @@
                       <option value="ALL" selected>상태</option>
                       <option value="등록완료">검정등록</option>
                       <option value="검정신청">검정신청</option>
-                      <option value="품검요청">품검요청</option>
                       <option value="일정완료">일정완료</option>
                       <option value="부적합">부적합</option>
                     </select>
@@ -1252,24 +1260,20 @@
                   </div>
                 </div>
                 <div class="section-actions-wrap" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                  <!-- 검정신청 / 품검요청 / 선택삭제 / CSV 버튼군 -->
+                  <!-- 검정신청 / 생산완료 / 수정 / 삭제 버튼군 -->
                   <div class="cert-btn-group" style="display:inline-flex; gap:6px;">
-                    <button type="button" class="btn btn-sm" id="btn-cert-apply-inspection" style="background-color:#f59e0b; color:#fff; font-weight:700;" title="선택된 일정의 상태를 [검정신청]으로 변경">
+                    <button type="button" class="btn btn-sm" id="btn-cert-apply-inspection" style="background-color:#f59e0b; color:#fff; font-weight:700;" title="선택된 일정의 상태를 [검정신청]으로 변경 (구분이 [품질]인 항목은 품질검사 메뉴로 이관)">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
                       검정신청
-                    </button>
-                    <button type="button" class="btn btn-sm" id="btn-cert-request-quality" style="background-color:#7c3aed; color:#fff; font-weight:700;" title="선택된 일정 중 구분이 [품질]인 항목을 품질검사 메뉴로 이관">
-                      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-                      품검요청
                     </button>
                     <button type="button" class="btn btn-sm btn-save-success" id="btn-cert-complete-production" title="선택된 일정 중 구분이 [생산]인 항목을 완료(일정완료) 처리">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
                       생산완료
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-edit-saved" title="등록완료 상태인 선택 항목 수정 (품검요청·완료 건 불가)">
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-edit-saved" title="등록완료 상태인 선택 항목 수정 (검정신청·완료 건 불가)">
                       수정
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-del-saved-selected" title="선택된 내역 영구 삭제 (품검요청·일정완료 제외)">
+                    <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-cert-del-saved-selected" title="선택된 내역 영구 삭제 (검정신청·일정완료 제외)">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                       삭제
                     </button>
@@ -1904,7 +1908,7 @@
                 <span class="section-indicator bar-quality" style="background-color: #10b981;"></span>
                 <span class="section-badge badge-quality" style="background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">품질 검사 대상</span>
                 <h3 class="section-title">품질검사 대기 및 진행 목록</h3>
-                <span class="section-desc">검정현황에서 <strong>[품검요청]</strong>된 품목 중 구분이 '품질'인 대상 목록입니다. 검사 완료 후 [검사합격]을 누르면 검정현황의 일정이 완료 처리됩니다.</span>
+                <span class="section-desc">검정현황에서 <strong>[검정신청]</strong>된 품목 중 구분이 '품질'인 대상 목록입니다. 검사 완료 후 [검사합격]을 누르면 검정현황의 일정이 완료 처리됩니다.</span>
               </div>
             </div>
 
@@ -2495,6 +2499,50 @@
                       <span id="admin-range-preview-badge" class="badge" style="background:#e2e8f0; color:#334155; font-size:12px; padding:4px 10px;">대상: 0건</span>
                       <button type="button" class="btn btn-sm btn-outline text-danger" id="btn-admin-delete-range" style="margin-left:auto;">기간 데이터 삭제</button>
                     </div>
+
+                    <!-- 생산계획(W1~W53) 백업 파일 복원 · DB 저장 바 -->
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px; border:1px solid var(--border-light); border-radius:8px; background:var(--bg-subtle, #f8fafc);">
+                      <strong style="font-size:13px; color:var(--text-primary);">생산계획(W1~W53) 백업 복원</strong>
+                      <select id="admin-plan-backup-year" class="form-select" style="width:auto; min-width:95px;" title="적용 연도">
+                        <option value="2026" selected>2026년</option>
+                        <option value="2025">2025년</option>
+                        <option value="2027">2027년</option>
+                      </select>
+                      <select id="admin-plan-backup-mode" class="form-select" style="width:auto; min-width:155px;" title="적용 방식">
+                        <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
+                        <option value="merge">기존 데이터에 병합 (파일 값 갱신)</option>
+                      </select>
+                      <input type="file" id="input-admin-plan-backup-file" accept=".csv,.json" style="display:none;">
+                      <button type="button" class="btn btn-sm btn-primary" id="btn-admin-plan-backup-restore">백업 파일 선택 &amp; DB 저장</button>
+                      <span id="admin-plan-backup-status" style="font-size:12px; color:var(--text-secondary);">CSV(주차별 백업) 또는 JSON 파일 지원</span>
+                    </div>
+
+                    <!-- 수신기계획 백업 파일 복원 · DB 저장 바 -->
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px; border:1px solid var(--border-light); border-radius:8px; background:var(--bg-subtle, #f8fafc);">
+                      <strong style="font-size:13px; color:var(--text-primary);">수신기계획 백업 복원</strong>
+                      <select id="admin-rp-backup-mode" class="form-select" style="width:auto; min-width:155px;" title="적용 방식">
+                        <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
+                        <option value="append">기존 목록 뒤에 추가</option>
+                      </select>
+                      <input type="file" id="input-admin-rp-backup-file" accept=".csv,.json" style="display:none;">
+                      <button type="button" class="btn btn-sm btn-primary" id="btn-admin-rp-backup-restore">백업 파일 선택 &amp; DB 저장</button>
+                      <span id="admin-rp-backup-status" style="font-size:12px; color:var(--text-secondary);">수신기계획 백업 CSV 또는 JSON 파일 지원</span>
+                    </div>
+
+                    <!-- 검정현황 백업 파일 복원 · DB 저장 바 -->
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px; border:1px solid var(--border-light); border-radius:8px; background:var(--bg-subtle, #f8fafc);">
+                      <strong style="font-size:13px; color:var(--text-primary);">검정현황 백업 복원</strong>
+                      <select id="admin-cert-backup-mode" class="form-select" style="width:auto; min-width:155px;" title="적용 방식">
+                        <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
+                        <option value="append">기존 목록에 추가</option>
+                      </select>
+                      <select id="admin-cert-backup-cutoff-week" class="form-select" style="width:auto; min-width:185px;" title="선택한 주차 이하 데이터를 일정완료 상태로 처리">
+                        <option value="">원본 상태 유지 (시트 기준)</option>
+                      </select>
+                      <input type="file" id="input-admin-cert-backup-file" accept=".csv,.json" style="display:none;">
+                      <button type="button" class="btn btn-sm btn-primary" id="btn-admin-cert-backup-restore">백업 파일 선택 &amp; DB 저장</button>
+                      <span id="admin-cert-backup-status" style="font-size:12px; color:var(--text-secondary);">검정현황 백업 CSV 또는 JSON 파일 지원</span>
+                    </div>
                   </div>
                 </div>
 
@@ -2506,7 +2554,7 @@
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
                       </div>
                       <div>
-                        <h3 class="card-title">검정현황 잠금 항목 관리 (일정완료·품검요청 포함 수정/삭제)</h3>
+                        <h3 class="card-title">검정현황 잠금 항목 관리 (일정완료·검정신청 포함 수정/삭제)</h3>
                         <p class="card-subtitle">일반 화면에서 잠겨있는 완료 항목도 조회·상태 변경·수정·강제 삭제할 수 있습니다.</p>
                       </div>
                     </div>
@@ -2517,7 +2565,7 @@
                       <select id="admin-cert-status-filter" class="form-select" style="width:auto;">
                         <option value="ALL">전체 상태</option>
                         <option value="일정완료">일정완료(잠금)</option>
-                        <option value="품검요청">품검요청(잠금)</option>
+                        <option value="검정신청">검정신청(잠금)</option>
                         <option value="등록완료">등록완료</option>
                         <option value="불합격">불합격</option>
                       </select>
@@ -2530,7 +2578,7 @@
                       <div style="margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                         <select id="admin-cert-bulk-status" class="form-select" style="width:auto;">
                           <option value="등록완료">등록완료로 되돌리기</option>
-                          <option value="품검요청">품검요청으로 변경</option>
+                          <option value="검정신청">검정신청으로 변경</option>
                           <option value="일정완료">일정완료로 변경</option>
                           <option value="불합격">불합격으로 변경</option>
                         </select>
@@ -2611,7 +2659,7 @@
                   <label for="admin-edit-cert-status">상태</label>
                   <select id="admin-edit-cert-status" class="form-select">
                     <option value="등록완료">등록완료</option>
-                    <option value="품검요청">품검요청</option>
+                    <option value="검정신청">검정신청</option>
                     <option value="일정완료">일정완료</option>
                     <option value="불합격">불합격</option>
                   </select>

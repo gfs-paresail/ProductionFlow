@@ -3723,12 +3723,12 @@
       prodBadge.title = `일보 미작성 작업반: ${prodIncompleteCount}개 반`;
     }
 
-    // 4) 품질검사: 품검요청이 등록된 건수
-    const qualReqCount = (state.certSavedRows || []).filter(r => r && r.status === '품검요청').length;
+    // 4) 품질검사: 품질검사 대기 목록(state.qualityRows) 건수
+    const qualReqCount = (state.qualityRows || []).length;
     const qualBadge = document.getElementById('badge-quality-req-count');
     if (qualBadge) {
       qualBadge.textContent = qualReqCount > 0 ? String(qualReqCount) : '';
-      qualBadge.title = `품검요청 등록 건수: ${qualReqCount}건`;
+      qualBadge.title = `품질검사 대기 건수: ${qualReqCount}건`;
     }
   }
 
@@ -4695,6 +4695,8 @@
         const st = String(row.status || '등록완료').trim();
         if (filterStatus === '일정완료') {
           if (st !== '일정완료' && st !== '검정완료') return false;
+        } else if (filterStatus === '검정신청') {
+          if (st !== '검정신청' && st !== '품검요청') return false;
         } else if (st !== filterStatus) {
           return false;
         }
@@ -4723,14 +4725,11 @@
 
         let statusBadge = '';
         let rowClass = '';
-        if (status === '검정신청') {
-          statusBadge = `<span class="cert-status-badge status-applied">검정신청</span>`;
-          rowClass = 'row-status-applied';
-        } else if (status === '품검요청') {
+        if (status === '검정신청' || status === '품검요청') {
           const reqCnt = parseSafeInt(row.requestCount);
-          const reqLabel = reqCnt > 1 ? `품검요청 (${reqCnt})` : '품검요청';
-          statusBadge = `<span class="cert-status-badge status-requested">${reqLabel}</span>`;
-          rowClass = 'row-status-requested';
+          const reqLabel = reqCnt > 1 ? `검정신청 (${reqCnt})` : '검정신청';
+          statusBadge = `<span class="cert-status-badge status-applied">${reqLabel}</span>`;
+          rowClass = 'row-status-applied';
         } else if (status === '부적합') {
           statusBadge = `<span class="cert-status-badge status-failed">부적합</span>`;
           rowClass = 'row-status-failed';
@@ -4875,7 +4874,7 @@
     if (filtered.length === 0) {
       const emptyGuide = viewMode === 'passed'
         ? '합격완료 처리된 품질검사 내역이 없습니다.'
-        : '품검 요청된 일정이 없습니다. [검정현황] 화면에서 일정을 선택 후 <strong>[품검요청]</strong>을 누르면 이 화면에 추가됩니다.';
+        : '검정신청된 일정이 없습니다. [검정현황] 화면에서 일정을 선택 후 <strong>[검정신청]</strong>을 누르면 이 화면에 추가됩니다.';
       tbody.innerHTML = `<tr><td colspan="23" style="text-align: center; padding: 35px; color: #94a3b8; font-size: 13.5px;">
         <svg style="width:15px;height:15px;vertical-align:-2px;margin-right:4px;opacity:0.75;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>${emptyGuide}
       </td></tr>`;
@@ -4888,10 +4887,10 @@
         tr.dataset.id = row.id;
 
         const reqCnt = parseSafeInt(row.requestCount);
-        const qualStatusLabel = reqCnt > 1 ? `품검요청 (${reqCnt})` : '품검요청';
+        const qualStatusLabel = reqCnt > 1 ? `품검대기 (${reqCnt})` : '품검대기';
         const statusBadgeHtml = viewMode === 'passed'
           ? '<span class="cert-status-badge status-completed"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>일정완료</span>'
-          : `<span class="cert-status-badge status-requested">${qualStatusLabel}</span>`;
+          : `<span class="cert-status-badge status-applied">${qualStatusLabel}</span>`;
 
         tr.innerHTML = `
           <td class="col-cert-check" style="text-align: center;">
@@ -6118,7 +6117,7 @@
       });
     }
 
-    // 3-C. [검정신청] 버튼
+    // 3-C. [검정신청] 버튼 (품질·생산 모두 [검정신청] 상태로 변경, 구분이 '품질'인 것만 품질검사 메뉴로 이관)
     const btnApplyInspection = document.getElementById('btn-cert-apply-inspection');
     if (btnApplyInspection) {
       btnApplyInspection.addEventListener('click', async () => {
@@ -6129,48 +6128,22 @@
         }
 
         const checkedIds = checkedBoxes.map(cb => cb.dataset.id);
-        let updatedCount = 0;
-        state.certSavedRows.forEach(row => {
-          if (checkedIds.includes(row.id) && row.status !== '일정완료') {
-            row.status = '검정신청';
-            updatedCount++;
-          }
-        });
-
-        await saveCertDataToDb(true);
-        renderCertSavedTable();
-        showToast(`선택한 ${updatedCount}건의 일정이 [검정신청] 상태로 변경되었습니다.`);
-        if (checkAllCertSaved) checkAllCertSaved.checked = false;
-      });
-    }
-
-    // 3-D. [품검요청] 버튼 (구분이 '품질'인 것만 품질검사 메뉴로 이관, '생산'은 제외 및 알림)
-    const btnRequestQuality = document.getElementById('btn-cert-request-quality');
-    if (btnRequestQuality) {
-      btnRequestQuality.addEventListener('click', async () => {
-        const checkedBoxes = Array.from(document.querySelectorAll('#cert-saved-tbody .check-cert-saved-row:checked'));
-        if (checkedBoxes.length === 0) {
-          alert('품검요청할 일정을 1건 이상 선택해 주세요.');
-          return;
-        }
-
-        const checkedIds = checkedBoxes.map(cb => cb.dataset.id);
-        const selectedRows = state.certSavedRows.filter(r => checkedIds.includes(r.id));
+        const selectedRows = state.certSavedRows.filter(r => checkedIds.includes(r.id) && r.status !== '일정완료');
 
         const qualityTargetRows = selectedRows.filter(r => (r.type || '').trim() === '품질');
-        const productionCancelledRows = selectedRows.filter(r => (r.type || '').trim() !== '품질');
+        const productionTargetRows = selectedRows.filter(r => (r.type || '').trim() !== '품질');
 
         qualityTargetRows.forEach(row => {
           const nextReqCount = (row.status === '부적합' || (row.failCount || 0) > 0)
             ? ((row.failCount || 0) + 1)
             : (row.requestCount || 1);
-          row.status = '품검요청';
+          row.status = '검정신청';
           row.requestCount = nextReqCount;
           const existingIdx = (state.qualityRows || []).findIndex(q => (q.certRowId === row.id || q.id === row.id));
           const qItem = {
             ...row,
             certRowId: row.id,
-            status: '품검요청',
+            status: '검정신청',
             requestCount: nextReqCount,
             requestedAt: Date.now()
           };
@@ -6182,19 +6155,22 @@
           }
         });
 
-        await saveCertDataToDb(true);
-        await saveQualityRowsToDb();
+        productionTargetRows.forEach(row => {
+          row.status = '검정신청';
+        });
 
-        // 사용자 요청 필수 메시지 형식:
-        // "총 4건중. 품질검사요청 3건, 생산제품검사 1건 (요청취소)"
+        await saveCertDataToDb(true);
+        if (qualityTargetRows.length > 0) {
+          await saveQualityRowsToDb();
+        }
+
         const total = selectedRows.length;
         const qualCount = qualityTargetRows.length;
-        const prodCount = productionCancelledRows.length;
-        let msg = `총 ${total}건 중 품질검사요청 ${qualCount}건`;
-        if (prodCount > 0) {
-          msg += `, 생산제품검사 ${prodCount}건 (요청취소)`;
-        }
-        alert(msg);
+        const prodCount = productionTargetRows.length;
+        const msg = prodCount > 0
+          ? `총 ${total}건 검정신청 완료 (품질검사 이관 ${qualCount}건, 생산 ${prodCount}건)`
+          : `총 ${qualCount}건 검정신청 및 품질검사 이관 완료`;
+        showToast(msg);
 
         renderCertSavedTable();
         renderQualityTable();
@@ -6376,17 +6352,18 @@
 
         const checkedIds = checkedBoxes.map(cb => cb.dataset.id);
         const targetRows = state.certSavedRows.filter(r => checkedIds.includes(r.id));
-        const validRows = targetRows.filter(r => r.status !== '일정완료' && r.status !== '품검요청');
-        const lockedRows = targetRows.filter(r => r.status === '일정완료' || r.status === '품검요청');
+        const isLockedStatus = (st) => st === '일정완료' || st === '검정신청' || st === '품검요청';
+        const validRows = targetRows.filter(r => !isLockedStatus(r.status));
+        const lockedRows = targetRows.filter(r => isLockedStatus(r.status));
 
         if (validRows.length === 0) {
-          alert('선택한 항목이 모두 [품검요청/일정완료] 상태이므로 삭제할 수 없습니다.');
+          alert('선택한 항목이 모두 [검정신청/일정완료] 상태이므로 삭제할 수 없습니다.');
           return;
         }
 
         let confirmMsg = `선택한 ${validRows.length}건을 삭제하시겠습니까?`;
         if (lockedRows.length > 0) {
-          confirmMsg += `\n(※ 품검요청·일정완료된 ${lockedRows.length}건은 삭제 대상에서 제외됩니다.)`;
+          confirmMsg += `\n(※ 검정신청·일정완료된 ${lockedRows.length}건은 삭제 대상에서 제외됩니다.)`;
         }
         if (!confirm(confirmMsg)) return;
 
@@ -6824,8 +6801,8 @@
       if (target.classList.contains('btn-del-cert-saved')) {
         const id = target.dataset.id;
         const targetRow = (state.certSavedRows || []).find(r => r.id === id);
-        if (targetRow && (targetRow.status === '일정완료' || targetRow.status === '품검요청')) {
-          alert(`[${targetRow.status}] 상태인 일정은 수정·취소·삭제할 수 없습니다.`);
+        if (targetRow && (targetRow.status === '일정완료' || targetRow.status === '검정신청' || targetRow.status === '품검요청')) {
+          alert(`[${targetRow.status === '품검요청' ? '검정신청' : targetRow.status}] 상태인 일정은 수정·취소·삭제할 수 없습니다.`);
           return;
         }
         if (confirm('이 검정 등록 내역을 삭제하시겠습니까?')) {
@@ -8466,6 +8443,10 @@
       stockAmountUnit: '만원',
       autoGreenOnMove: true,
       colorFilter: 'ALL',
+      groupViewMode: false,
+      expandedItemGroups: [],
+      hiddenItemGroups: [],
+      itemGroupColors: {},
       mergedItemGroups: [],
       itemGroupOrder: [],
       weeks: generateYearWeeks('2026'),
@@ -8524,6 +8505,12 @@
       stockAmountUnit: ['만원', '백만원', '천만원'].includes(raw.stockAmountUnit) ? raw.stockAmountUnit : '만원',
       autoGreenOnMove: raw.autoGreenOnMove !== undefined ? Boolean(raw.autoGreenOnMove) : true,
       colorFilter: raw.colorFilter || 'ALL',
+      groupViewMode: raw.groupViewMode !== undefined
+        ? Boolean(raw.groupViewMode)
+        : (Array.isArray(raw.mergedItemGroups) && raw.mergedItemGroups.length > 0),
+      expandedItemGroups: Array.isArray(raw.expandedItemGroups) ? raw.expandedItemGroups : [],
+      hiddenItemGroups: Array.isArray(raw.hiddenItemGroups) ? raw.hiddenItemGroups : [],
+      itemGroupColors: (raw.itemGroupColors && typeof raw.itemGroupColors === 'object') ? { ...raw.itemGroupColors } : {},
       mergedItemGroups: Array.isArray(raw.mergedItemGroups) ? raw.mergedItemGroups : [],
       itemGroupOrder: Array.isArray(raw.itemGroupOrder) ? raw.itemGroupOrder : [],
       weeks: baseWeeks,
@@ -8758,32 +8745,34 @@
     const groupHeaders = []; // { type: 'week'|'month', id, label, colspan }
 
     const pushWeekCols = (w) => {
+      const amtSuffix = pd.showStockAmount ? '(₩)' : '';
       groupHeaders.push({ type: 'week', id: w.id, label: w.label, colspan: subCount });
-      dynamicCols.push({ key: `${w.id}:prod`, weekId: w.id, field: 'prod', label: '생산', fixed: false, editable: true, cls: 'plan-col-week plan-col-prod', isNum: true });
-      dynamicCols.push({ key: `${w.id}:forecast`, weekId: w.id, field: 'forecast', label: '출고예정', fixed: false, editable: false, cls: 'plan-col-week plan-col-forecast plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${w.id}:prod`, weekId: w.id, field: 'prod', label: `생산${amtSuffix}`, fixed: false, editable: true, cls: 'plan-col-week plan-col-prod', isNum: true });
+      dynamicCols.push({ key: `${w.id}:forecast`, weekId: w.id, field: 'forecast', label: `출고예정${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-forecast plan-cell-readonly', isNum: true });
       if (!pd.hideActualCol) {
-        dynamicCols.push({ key: `${w.id}:actual`, weekId: w.id, field: 'actual', label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-actual plan-cell-readonly', isNum: true });
+        dynamicCols.push({ key: `${w.id}:actual`, weekId: w.id, field: 'actual', label: `실출고${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-actual plan-cell-readonly', isNum: true });
       }
       if (!pd.hideCompareCols) {
         dynamicCols.push({ key: `${w.id}:compare`, weekId: w.id, field: 'compare', label: '입고비교', fixed: false, editable: false, cls: 'plan-col-week plan-col-compare plan-cell-readonly', isNum: true });
         dynamicCols.push({ key: `${w.id}:diff`, weekId: w.id, field: 'diff', label: '차이수량', fixed: false, editable: false, cls: 'plan-col-week plan-col-diff plan-cell-readonly', isNum: true });
       }
-      dynamicCols.push({ key: `${w.id}:stock`, weekId: w.id, field: 'stock', label: pd.showStockAmount ? '재고금액' : '재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-stock plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${w.id}:stock`, weekId: w.id, field: 'stock', label: `재고${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-stock plan-cell-readonly', isNum: true });
     };
 
     const pushMonthCols = (m) => {
       const mId = `M${m}`;
+      const amtSuffix = pd.showStockAmount ? '(₩)' : '';
       groupHeaders.push({ type: 'month', id: mId, label: `${m}월 합계`, colspan: subCount });
-      dynamicCols.push({ key: `${mId}:prod`, month: m, field: 'prod', isMonth: true, label: '생산', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
-      dynamicCols.push({ key: `${mId}:forecast`, month: m, field: 'forecast', isMonth: true, label: '출고예정', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${mId}:prod`, month: m, field: 'prod', isMonth: true, label: `생산${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${mId}:forecast`, month: m, field: 'forecast', isMonth: true, label: `출고예정${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
       if (!pd.hideActualCol) {
-        dynamicCols.push({ key: `${mId}:actual`, month: m, field: 'actual', isMonth: true, label: '실출고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
+        dynamicCols.push({ key: `${mId}:actual`, month: m, field: 'actual', isMonth: true, label: `실출고${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
       }
       if (!pd.hideCompareCols) {
         dynamicCols.push({ key: `${mId}:compare`, month: m, field: 'compare', isMonth: true, label: '입고비교', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
         dynamicCols.push({ key: `${mId}:diff`, month: m, field: 'diff', isMonth: true, label: '차이수량', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-cell-readonly', isNum: true });
       }
-      dynamicCols.push({ key: `${mId}:stock`, month: m, field: 'stock', isMonth: true, label: pd.showStockAmount ? '재고금액' : '기말재고', fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-col-stock plan-cell-readonly', isNum: true });
+      dynamicCols.push({ key: `${mId}:stock`, month: m, field: 'stock', isMonth: true, label: `기말재고${amtSuffix}`, fixed: false, editable: false, cls: 'plan-col-week plan-col-month-sum plan-col-stock plan-cell-readonly', isNum: true });
     };
 
     if (pd.viewMode === 'month') {
@@ -8820,6 +8809,32 @@
     return { orderedGroups: [...ordered, ...remaining], groupCounts };
   }
 
+  const PLAN_GROUP_DEFAULT_PALETTE = [
+    '#4f46e5', '#0284c7', '#059669', '#d97706', '#dc2626',
+    '#7c3aed', '#0d9488', '#ea580c', '#2563eb', '#db2777'
+  ];
+
+  function getPlanItemGroupColorHex(groupName, idxHint = 0) {
+    const pd = state.planData || getDefaultPlanData();
+    const custom = pd.itemGroupColors && pd.itemGroupColors[groupName];
+    if (custom && /^#[0-9a-fA-F]{6}$/.test(custom)) return custom;
+    const idx = idxHint >= 0 ? idxHint : 0;
+    return PLAN_GROUP_DEFAULT_PALETTE[idx % PLAN_GROUP_DEFAULT_PALETTE.length];
+  }
+
+  function buildPlanGroupColorStyleAttr(hexColor) {
+    if (!hexColor || !/^#[0-9a-fA-F]{6}$/.test(hexColor)) return '';
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+    const isDark = document.documentElement.classList.contains('dark-mode');
+    const bgAlpha = isDark ? 0.22 : 0.09;
+    const fixedAlpha = isDark ? 0.34 : 0.15;
+    const borderAlpha = isDark ? 0.50 : 0.28;
+    const childAlpha = isDark ? 0.15 : 0.06;
+    return `--plan-grp-color:${hexColor};--plan-grp-bg:rgba(${r},${g},${b},${bgAlpha});--plan-grp-fixed-bg:rgba(${r},${g},${b},${fixedAlpha});--plan-grp-border:rgba(${r},${g},${b},${borderAlpha});--plan-grp-child-bg:rgba(${r},${g},${b},${childAlpha});`;
+  }
+
   function getPlanCarryOverBaseStock(pd, targetYear, item, visitedYears = new Set()) {
     const yr = String(targetYear || pd.year || '2026');
     if (visitedYears.has(yr)) return item.baseStock || '';
@@ -8852,8 +8867,14 @@
     const mainGroups = ['감지기반', '유도등반', '수신기반'];
     const { months, weeks: periodWeeks } = getPlanPeriodWeeksAndMonths();
 
+    const hiddenSet = new Set(pd.hiddenItemGroups || []);
     const computedRows = masterItems
       .filter(item => (item.useYn || '사용') === '사용')
+      .filter(item => {
+        const ig = (item.itemGroup || '').trim();
+        if (ig && hiddenSet.has(ig)) return false;
+        return true;
+      })
       .filter(item => {
         if (groupFilter === 'ALL') return true;
         if (groupFilter === '기타') return !mainGroups.includes(item.group);
@@ -8958,12 +8979,14 @@
         };
       });
 
-    // 품목그룹별 ON/OFF 합산 처리 (품목그룹 순서대로 그룹 행 상단 배치 후 미그룹/OFF 품목 표시)
-    const mergedSet = new Set(pd.mergedItemGroups || []);
+    // 품목그룹 보기 ON/OFF 처리 (그룹 순서대로 그룹 헤더 행 배치, 펼침 시 바로 아래에 소속 품목 표시)
+    const isGroupView = Boolean(pd.groupViewMode);
+    const expandedSet = new Set(pd.expandedItemGroups || []);
     let finalRows = computedRows;
-    if (mergedSet.size > 0) {
+    if (isGroupView) {
       const { orderedGroups } = getOrderedPlanItemGroups();
       const groupBuckets = new Map();
+      const groupMembersMap = new Map();
       const ungroupedRows = [];
       const addNumOrEmpty = (a, b) => {
         const sa = String(a ?? '').trim();
@@ -8972,20 +8995,25 @@
         return String(parsePlanNum(sa) + parsePlanNum(sb));
       };
 
+      const AMT_FIELDS = ['prod', 'forecast', 'actual', 'stock'];
       computedRows.forEach(row => {
-        if (row.itemGroup && mergedSet.has(row.itemGroup)) {
+        if (row.itemGroup) {
           let grp = groupBuckets.get(row.itemGroup);
           if (!grp) {
             const unitPriceNum = parsePlanNum(row.unitPrice);
             const cloneWeeks = {};
             Object.keys(row.weeks || {}).forEach(wk => {
               const rw = row.weeks[wk] || {};
-              cloneWeeks[wk] = { ...rw, stockAmountWon: parsePlanNum(rw.stock) * unitPriceNum };
+              const extraAmt = {};
+              AMT_FIELDS.forEach(f => { extraAmt[`${f}AmountWon`] = parsePlanNum(rw[f]) * unitPriceNum; });
+              cloneWeeks[wk] = { ...rw, ...extraAmt };
             });
             const cloneMonths = {};
             Object.keys(row.months || {}).forEach(mk => {
               const rm = row.months[mk] || {};
-              cloneMonths[mk] = { ...rm, stockAmountWon: parsePlanNum(rm.stock) * unitPriceNum };
+              const extraAmt = {};
+              AMT_FIELDS.forEach(f => { extraAmt[`${f}AmountWon`] = parsePlanNum(rm[f]) * unitPriceNum; });
+              cloneMonths[mk] = { ...rm, ...extraAmt };
             });
             grp = {
               code: '[그룹]',
@@ -9003,9 +9031,11 @@
               colors: { ...(row.colors || {}) },
               memos: { ...(row.memos || {}) },
               isGroupRow: true,
+              isExpanded: expandedSet.has(row.itemGroup),
               memberCount: 1
             };
             groupBuckets.set(row.itemGroup, grp);
+            groupMembersMap.set(row.itemGroup, [{ ...row, isGroupChild: true, parentGroup: row.itemGroup }]);
           } else {
             grp.memberCount += 1;
             grp.baseStock = addNumOrEmpty(grp.baseStock, row.baseStock);
@@ -9014,7 +9044,7 @@
 
             const unitPriceNum = parsePlanNum(row.unitPrice);
             Object.keys(row.weeks || {}).forEach(wk => {
-              const gw = grp.weeks[wk] || (grp.weeks[wk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: 0, stockAmountWon: 0 });
+              const gw = grp.weeks[wk] || (grp.weeks[wk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: 0, prodAmountWon: 0, forecastAmountWon: 0, actualAmountWon: 0, stockAmountWon: 0 });
               const rw = row.weeks[wk] || {};
               gw.prod = addNumOrEmpty(gw.prod, rw.prod);
               gw.forecast = addNumOrEmpty(gw.forecast, rw.forecast);
@@ -9022,11 +9052,13 @@
               gw.compare = addNumOrEmpty(gw.compare, rw.compare);
               gw.diff = addNumOrEmpty(gw.diff, rw.diff);
               gw.stock = parsePlanNum(gw.stock) + parsePlanNum(rw.stock);
-              gw.stockAmountWon = (gw.stockAmountWon || 0) + (parsePlanNum(rw.stock) * unitPriceNum);
+              AMT_FIELDS.forEach(f => {
+                gw[`${f}AmountWon`] = (gw[`${f}AmountWon`] || 0) + (parsePlanNum(rw[f]) * unitPriceNum);
+              });
             });
 
             Object.keys(row.months || {}).forEach(mk => {
-              const gm = grp.months[mk] || (grp.months[mk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: '', stockAmountWon: 0 });
+              const gm = grp.months[mk] || (grp.months[mk] = { prod: '', forecast: '', actual: '', compare: '', diff: '', stock: '', prodAmountWon: 0, forecastAmountWon: 0, actualAmountWon: 0, stockAmountWon: 0 });
               const rm = row.months[mk] || {};
               gm.prod = addNumOrEmpty(gm.prod, rm.prod);
               gm.forecast = addNumOrEmpty(gm.forecast, rm.forecast);
@@ -9034,7 +9066,9 @@
               gm.compare = addNumOrEmpty(gm.compare, rm.compare);
               gm.diff = addNumOrEmpty(gm.diff, rm.diff);
               gm.stock = addNumOrEmpty(gm.stock, rm.stock);
-              gm.stockAmountWon = (gm.stockAmountWon || 0) + (parsePlanNum(rm.stock) * unitPriceNum);
+              AMT_FIELDS.forEach(f => {
+                gm[`${f}AmountWon`] = (gm[`${f}AmountWon`] || 0) + (parsePlanNum(rm[f]) * unitPriceNum);
+              });
             });
 
             Object.keys(row.colors || {}).forEach(ck => {
@@ -9050,6 +9084,7 @@
               const st = grp.weeks[pw.id] ? parsePlanNum(grp.weeks[pw.id].stock) : 0;
               return st < 0 || (grp.minStock !== null && grp.minStock > 0 && st < grp.minStock);
             });
+            groupMembersMap.get(row.itemGroup).push({ ...row, isGroupChild: true, parentGroup: row.itemGroup });
           }
           grp.name = `📦 ${row.itemGroup} (${grp.memberCount}종)`;
         } else {
@@ -9058,11 +9093,17 @@
       });
 
       finalRows = [];
-      orderedGroups.forEach(gName => {
-        if (groupBuckets.has(gName)) finalRows.push(groupBuckets.get(gName));
-      });
-      groupBuckets.forEach((grp, gName) => {
-        if (!orderedGroups.includes(gName)) finalRows.push(grp);
+      const pushGroupAndChildren = (gName) => {
+        if (!groupBuckets.has(gName)) return;
+        const grp = groupBuckets.get(gName);
+        finalRows.push(grp);
+        if (grp.isExpanded) {
+          finalRows.push(...(groupMembersMap.get(gName) || []));
+        }
+      };
+      orderedGroups.forEach(gName => pushGroupAndChildren(gName));
+      groupBuckets.forEach((_, gName) => {
+        if (!orderedGroups.includes(gName)) pushGroupAndChildren(gName);
       });
       finalRows.push(...ungroupedRows);
     }
@@ -9166,11 +9207,11 @@
       if (lock.hasApplied && newQty < lock.lockedQty) {
         return {
           ok: false,
-          reason: `검정신청·품검요청된 수량(${lock.lockedQty.toLocaleString()}개)보다 적게 수정하거나 삭제할 수 없습니다.`
+          reason: `검정신청된 수량(${lock.lockedQty.toLocaleString()}개)보다 적게 수정하거나 삭제할 수 없습니다.`
         };
       }
 
-      // 검정신청/품검요청 상태에서 수량이 증가한 경우, 증가분 자동 로트 분할
+      // 검정신청 상태에서 수량이 증가한 경우, 증가분 자동 로트 분할
       const prevSplits = state.planData?.rowsByCode?.[code]?.splits?.[col.weekId];
       const hasPrevSplits = Array.isArray(prevSplits) && prevSplits.length >= 2 &&
         prevSplits.reduce((a, b) => a + parsePlanNum(b), 0) === oldQty;
@@ -9307,6 +9348,7 @@
 
     if (changed) {
       saveLocalCertData();
+      if (typeof saveCertDataToDb === 'function') saveCertDataToDb(true);
       if (typeof renderCertDraftTable === 'function') renderCertDraftTable();
       if (typeof renderCertSavedTable === 'function') renderCertSavedTable();
       if (typeof renderInspectionTable === 'function') renderInspectionTable();
@@ -9332,11 +9374,13 @@
   function buildPlanSummaryRowHtml(rows, cols, fixedCount) {
     const pd = state.planData || getDefaultPlanData();
     const showAmt = Boolean(pd.showStockAmount);
+    const AMT_FIELDS = ['prod', 'forecast', 'actual', 'stock'];
     const unitDivisor = pd.stockAmountUnit === '천만원' ? 10000000 : (pd.stockAmountUnit === '백만원' ? 1000000 : 10000);
-    const getRowStockWon = (row, col) => {
+    const getRowFieldWon = (row, col) => {
       if (row.isGroupRow) {
-        if (col.isMonth && col.month) return Number(row.months?.[`M${col.month}`]?.stockAmountWon || 0);
-        if (col.weekId) return Number(row.weeks?.[col.weekId]?.stockAmountWon || 0);
+        const amtKey = `${col.field}AmountWon`;
+        if (col.isMonth && col.month) return Number(row.months?.[`M${col.month}`]?.[amtKey] || 0);
+        if (col.weekId) return Number(row.weeks?.[col.weekId]?.[amtKey] || 0);
         return 0;
       }
       return parsePlanNum(getPlanCellRawValue(row, col)) * parsePlanNum(row.unitPrice);
@@ -9344,14 +9388,16 @@
 
     const totals = new Array(cols.length).fill(0);
     rows.forEach(row => {
+      if (row.isGroupRow && row.isExpanded) return; // 펼쳐진 그룹은 하위 개별 품목 행에서 합산되므로 중복 합산 방지
       cols.forEach((col, cIdx) => {
-        if (showAmt && col.field === 'stock') {
-          totals[cIdx] += getRowStockWon(row, col);
+        if (showAmt && AMT_FIELDS.includes(col.field)) {
+          totals[cIdx] += getRowFieldWon(row, col);
         } else if (col.key === 'baseStock' || col.weekId || col.isMonth) {
           totals[cIdx] += parsePlanNum(getPlanCellRawValue(row, col));
         }
       });
     });
+    const summaryItemCount = rows.reduce((acc, r) => acc + (r.isGroupRow ? (r.isExpanded ? 0 : (r.memberCount || 0)) : 1), 0);
 
     const pos = pd.summaryPos || 'bottom';
     let html = '<tr class="plan-summary-row">';
@@ -9368,18 +9414,17 @@
           </select>
         </td>`;
       } else if (col.key === 'name') {
-        html += `<td class="${col.cls}${fixedCls}" style="left:${col.left}px; text-align:left; font-family:Pretendard,sans-serif;">${rows.length}개 품목</td>`;
+        html += `<td class="${col.cls}${fixedCls}" style="left:${col.left}px; text-align:left; font-family:Pretendard,sans-serif;">${summaryItemCount}개 품목</td>`;
       } else if (cIdx < fixedCount && col.key !== 'baseStock') {
         html += `<td class="${col.cls}${fixedCls}"${fixedStyle}></td>`;
       } else {
-        const dispTotal = (showAmt && col.field === 'stock') ? Math.round(totals[cIdx] / unitDivisor) : totals[cIdx];
+        const isAmtCol = showAmt && AMT_FIELDS.includes(col.field);
+        const dispTotal = isAmtCol ? Math.round(totals[cIdx] / unitDivisor) : totals[cIdx];
         const negCls = (col.field === 'stock' && dispTotal < 0) ? ' plan-stock-negative' : '';
         const diffCls = (col.field === 'diff')
           ? (dispTotal < 0 ? ' plan-diff-neg' : (dispTotal > 0 ? ' plan-diff-pos' : ''))
           : '';
-        const totalHtml = (showAmt && col.field === 'stock')
-          ? `<span class="plan-amt-cell"><span class="plan-amt-won">₩</span><span>${dispTotal.toLocaleString('ko-KR')}</span></span>`
-          : dispTotal.toLocaleString('ko-KR');
+        const totalHtml = dispTotal.toLocaleString('ko-KR');
         html += `<td class="${col.cls}${fixedCls}${negCls}${diffCls}"${fixedStyle}>${totalHtml}</td>`;
       }
     });
@@ -9461,38 +9506,52 @@
       ch.classList.toggle('active', ch.dataset.color === (pd.colorFilter || 'ALL'));
     });
 
-    // 품목그룹 ON/OFF 및 순서 변경 체크리스트 동기화
+    // 품목그룹 보기 ON/OFF, 표시/숨김, 그룹별 색상 및 순서 변경 체크리스트 동기화
+    const igModeChk = document.getElementById('chk-plan-group-view-mode');
+    const igExpandActions = document.getElementById('plan-ig-expand-actions');
     const igListEl = document.getElementById('plan-item-group-checklist');
     const igBtn = document.getElementById('btn-plan-item-groups');
-    const mergedArr = Array.isArray(pd.mergedItemGroups) ? pd.mergedItemGroups : [];
+    const isGroupView = Boolean(pd.groupViewMode);
+    const hiddenSet = new Set(pd.hiddenItemGroups || []);
+    if (igModeChk) igModeChk.checked = isGroupView;
+    if (igExpandActions) igExpandActions.style.display = isGroupView ? 'flex' : 'none';
+
+    const { orderedGroups, groupCounts } = getOrderedPlanItemGroups();
     if (igListEl) {
-      const { orderedGroups, groupCounts } = getOrderedPlanItemGroups();
       if (orderedGroups.length === 0) {
         igListEl.innerHTML = `<div style="padding: 8px; font-size: 11.5px; color: #94a3b8; text-align:center;">품목정보에 등록된 품목그룹이 없습니다.</div>`;
       } else {
         igListEl.innerHTML = orderedGroups.map((g, gIdx) => {
-          const isOn = mergedArr.includes(g);
+          const isVisible = !hiddenSet.has(g);
           const cnt = groupCounts.get(g);
           const escG = escapeHtmlPlan(g);
+          const colorHex = getPlanItemGroupColorHex(g, gIdx);
           return `
             <div class="plan-ig-row" draggable="true" data-group="${escG}">
               <label class="plan-ig-left">
                 <span class="plan-ig-handle" title="드래그하여 순서 변경">⋮⋮</span>
-                <input type="checkbox" class="chk-plan-item-group" value="${escG}" ${isOn ? 'checked' : ''}>
-                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escG} <small style="color:#94a3b8;">(${cnt})</small></span>
+                <input type="checkbox" class="chk-plan-item-group" value="${escG}" ${isVisible ? 'checked' : ''} title="체크 시 표시 / 해제 시 숨김">
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;${isVisible ? '' : ' opacity:0.45; text-decoration:line-through;'}">${escG} <small style="color:#94a3b8;">(${cnt})</small></span>
               </label>
-              <div class="plan-ig-move-btns">
-                <button type="button" class="plan-ig-move-btn" data-group="${escG}" data-dir="up" title="위로" ${gIdx === 0 ? 'disabled' : ''}>▲</button>
-                <button type="button" class="plan-ig-move-btn" data-group="${escG}" data-dir="down" title="아래로" ${gIdx === orderedGroups.length - 1 ? 'disabled' : ''}>▼</button>
-              </div>
+              <input type="color" class="plan-ig-color-input" data-group="${escG}" value="${colorHex}" title="그룹 색상 지정 (그룹상태일 때만 표시)">
             </div>`;
         }).join('');
       }
     }
     if (igBtn) {
-      igBtn.textContent = mergedArr.length > 0 ? `품목그룹 (${mergedArr.length}) ▾` : '품목그룹 ▾';
-      igBtn.classList.toggle('btn-primary', mergedArr.length > 0);
-      igBtn.classList.toggle('btn-outline', mergedArr.length === 0);
+      const hiddenCnt = orderedGroups.filter(g => hiddenSet.has(g)).length;
+      if (isGroupView && hiddenCnt > 0) {
+        igBtn.textContent = `품목그룹 (그룹 · ${hiddenCnt}숨김) ▾`;
+      } else if (isGroupView) {
+        igBtn.textContent = `품목그룹 (그룹ON) ▾`;
+      } else if (hiddenCnt > 0) {
+        igBtn.textContent = `품목그룹 (${hiddenCnt}숨김) ▾`;
+      } else {
+        igBtn.textContent = '품목그룹 ▾';
+      }
+      const isActive = isGroupView || hiddenCnt > 0;
+      igBtn.classList.toggle('btn-primary', isActive);
+      igBtn.classList.toggle('btn-outline', !isActive);
     }
 
     updatePlanUndoButton();
@@ -9513,6 +9572,7 @@
     const visibleColKeys = cols.slice(fixedCount).map(c => c.key);
     const colorCounts = { yellow: 0, pink: 0, green: 0, blue: 0, orange: 0 };
     allRowsForColorCounts.forEach(r => {
+      if (r.isGroupRow && r.isExpanded) return;
       const cMap = r.colors || {};
       visibleColKeys.forEach(k => {
         const c = cMap[k];
@@ -9616,9 +9676,8 @@
     const unitDivisor = pd.stockAmountUnit === '천만원' ? 10000000 : (pd.stockAmountUnit === '백만원' ? 1000000 : 10000);
     const certStatusMap = {};
     const getCertStageRank = (st) => {
-      if (st === '일정완료') return 4;
-      if (st === '품검요청') return 3;
-      if (st === '검정신청') return 2;
+      if (st === '일정완료') return 3;
+      if (st === '검정신청' || st === '품검요청') return 2;
       return 1; // 등록완료 / 부적합 등
     };
     (state.certSavedRows || []).forEach(r => {
@@ -9640,26 +9699,39 @@
       if (rank < entry.minRank) entry.minRank = rank;
       entry.statusQty[st] = (entry.statusQty[st] || 0) + qty;
     });
+    const { orderedGroups } = pd.groupViewMode ? getOrderedPlanItemGroups() : { orderedGroups: [] };
+    const groupIdxMap = new Map(orderedGroups.map((g, i) => [g, i]));
     let bodyHtml = '';
     rows.forEach((row, rIdx) => {
-      const grpRowCls = row.isGroupRow ? ' class="plan-group-summary-row"' : '';
-      bodyHtml += `<tr data-r="${rIdx}" data-code="${escapeHtmlPlan(row.code)}"${grpRowCls}>`;
+      let rowCls = '';
+      if (row.isGroupRow) rowCls = ' class="plan-group-summary-row"';
+      else if (row.isGroupChild) rowCls = ' class="plan-group-child-row"';
+
+      let rowStyleAttr = '';
+      if (pd.groupViewMode && (row.isGroupRow || row.isGroupChild)) {
+        const gName = row.isGroupRow ? row.itemGroup : row.parentGroup;
+        const gHex = getPlanItemGroupColorHex(gName, groupIdxMap.get(gName) ?? 0);
+        const cssVars = buildPlanGroupColorStyleAttr(gHex);
+        if (cssVars) rowStyleAttr = ` style="${cssVars}"`;
+      }
+      bodyHtml += `<tr data-r="${rIdx}" data-code="${escapeHtmlPlan(row.code)}"${rowCls}${rowStyleAttr}>`;
       cols.forEach((col, cIdx) => {
         const raw = col.key === 'rowNo' ? String(rIdx + 1) : getPlanCellRawValue(row, col);
         let disp = col.key === 'rowNo'
           ? String(rIdx + 1)
           : (col.isNum ? formatPlanCellDisplay(raw) : escapeHtmlPlan(raw));
-        let stockWon = 0;
-        if (pd.showStockAmount && col.field === 'stock' && raw !== '') {
+        const isAmtCol = pd.showStockAmount && ['prod', 'forecast', 'actual', 'stock'].includes(col.field);
+        let cellWon = 0;
+        if (isAmtCol && raw !== '') {
           if (row.isGroupRow) {
-            stockWon = (col.isMonth && col.month)
-              ? Number(row.months?.[`M${col.month}`]?.stockAmountWon || 0)
-              : Number(row.weeks?.[col.weekId]?.stockAmountWon || 0);
+            const amtKey = `${col.field}AmountWon`;
+            cellWon = (col.isMonth && col.month)
+              ? Number(row.months?.[`M${col.month}`]?.[amtKey] || 0)
+              : Number(row.weeks?.[col.weekId]?.[amtKey] || 0);
           } else {
-            stockWon = parsePlanNum(raw) * parsePlanNum(row.unitPrice);
+            cellWon = parsePlanNum(raw) * parsePlanNum(row.unitPrice);
           }
-          const amtNumStr = Math.round(stockWon / unitDivisor).toLocaleString('ko-KR');
-          disp = `<span class="plan-amt-cell"><span class="plan-amt-won">₩</span><span>${amtNumStr}</span></span>`;
+          disp = Math.round(cellWon / unitDivisor).toLocaleString('ko-KR');
         }
         const fixedCls = col.fixed ? ` plan-fixed-col${col.isLastFixed ? ' plan-fixed-last' : ''}` : '';
         const fixedStyle = col.fixed ? ` style="left:${col.left}px;"` : '';
@@ -9672,50 +9744,61 @@
           else if (dn > 0) diffCls = ' plan-diff-pos';
         }
 
-        // 적정재고 상태 색상 및 툴팁
+        // 적정재고 상태 기호(▲ / - / ▼) 및 툴팁 (배경색 없이 우측 소형 기호로 표시)
         let stockCls = '';
+        let stockMark = '';
+        let stockMarkCls = '';
         let titleText = col.key === 'name' ? row.name : '';
         if (col.field === 'stock' && raw !== '') {
           const sn = parsePlanNum(raw);
+          const pctText = (row.maxStock !== null && row.maxStock > 0)
+            ? ` · 적정 대비 ${Math.round((sn / row.maxStock) * 1000) / 10}%`
+            : '';
           if (sn < 0) {
             stockCls = ' plan-stock-negative';
-            titleText = `결품 (${sn.toLocaleString()})`;
+            stockMark = '▼';
+            stockMarkCls = 'is-neg';
+            titleText = `결품 (${sn.toLocaleString()})${pctText}`;
           } else if (row.minStock !== null && row.minStock > 0 && sn < row.minStock) {
             stockCls = ' plan-stock-low';
-            titleText = `부족 (최소 ${row.minStock.toLocaleString()} 미만)`;
+            stockMark = '▼';
+            stockMarkCls = 'is-low';
+            titleText = `부족 (최소 ${row.minStock.toLocaleString()} 미만)${pctText}`;
           } else if (row.maxStock !== null && row.maxStock > 0 && sn > row.maxStock) {
             stockCls = ' plan-stock-high';
-            titleText = `과다 (최대 ${row.maxStock.toLocaleString()} 초과)`;
+            stockMark = '▲';
+            stockMarkCls = 'is-high';
+            titleText = `과다 (최대 ${row.maxStock.toLocaleString()} 초과)${pctText}`;
           } else if ((row.minStock !== null && row.minStock > 0) || (row.maxStock !== null && row.maxStock > 0)) {
             stockCls = ' plan-stock-ok';
-            titleText = `적정 (${(row.minStock || 0).toLocaleString()} ~ ${(row.maxStock || '-').toLocaleString()})`;
+            stockMark = '-';
+            stockMarkCls = 'is-ok';
+            titleText = `적정 (${(row.minStock || 0).toLocaleString()} ~ ${(row.maxStock || '-').toLocaleString()})${pctText}`;
           }
-          if (pd.showStockAmount) {
-            const amtLabel = `수량: ${sn.toLocaleString()} / 금액: ${stockWon.toLocaleString()}원`;
-            titleText = titleText ? `${titleText} · ${amtLabel}` : amtLabel;
+          if (stockMark) {
+            disp = `<span class="plan-stock-cell"><span class="plan-stock-val">${disp}</span><span class="plan-stock-mark ${stockMarkCls}" aria-hidden="true">${stockMark}</span></span>`;
           }
         }
 
-        // 생산 셀 검정 진행 상태 표시 (4단계: 회색 등록완료 · 주황 검정신청 · 보라 품검요청 · 초록 생산완료)
+        // 생산 셀 검정 진행 상태 표시 (3단계: 회색 등록완료 · 노랑 검정신청 · 초록 생산완료)
         let certCls = '';
         if (col.weekId && col.field === 'prod' && !col.isMonth) {
           const pQty = parsePlanNum(raw);
           const stInfo = certStatusMap[`${row.code}__${col.weekId}`];
           if (pQty > 0 && stInfo && stInfo.totalQty > 0) {
             let effRank = stInfo.minRank;
-            if (effRank === 4 && stInfo.doneQty < pQty) {
+            if (effRank === 3 && stInfo.doneQty < pQty) {
               effRank = 1; // 일부 수량만 등록·완료된 경우 아직 미등록 잔량이 있으므로 등록완료(회색)로 표시
             }
             const stageMeta = {
               1: { cls: ' plan-cert-reg', label: '등록완료' },
               2: { cls: ' plan-cert-apply', label: '검정신청' },
-              3: { cls: ' plan-cert-qual', label: '품검요청' },
-              4: { cls: ' plan-cert-done', label: '생산완료' }
+              3: { cls: ' plan-cert-done', label: '생산완료' }
             }[effRank];
             certCls = stageMeta.cls;
             const statusParts = Object.entries(stInfo.statusQty)
               .filter(([, q]) => q > 0)
-              .map(([s, q]) => `${s === '일정완료' ? '생산완료' : s} ${q.toLocaleString()}`);
+              .map(([s, q]) => `${s === '일정완료' ? '생산완료' : (s === '품검요청' ? '검정신청' : s)} ${q.toLocaleString()}`);
             const detailStr = statusParts.length > 1 ? ` [${statusParts.join(' · ')}]` : '';
             titleText = `${stageMeta.label} (${stInfo.totalQty.toLocaleString()} / ${pQty.toLocaleString()})${detailStr}`;
           }
@@ -9728,6 +9811,11 @@
           const splitText = `분할 ${splitParts.map(n => parsePlanNum(n).toLocaleString('ko-KR')).join('/')}`;
           titleText = titleText ? `${splitText} · ${titleText}` : splitText;
         }
+        if (isAmtCol && raw !== '') {
+          const qtyNum = parsePlanNum(raw);
+          const amtLabel = `수량: ${qtyNum.toLocaleString()} / 금액: ${cellWon.toLocaleString()}원`;
+          titleText = titleText ? `${titleText} · ${amtLabel}` : amtLabel;
+        }
 
         const cellColor = row.colors ? row.colors[col.key] : '';
         const colorCls = cellColor ? ` plan-cell-color-${cellColor}` : '';
@@ -9737,8 +9825,15 @@
           ? `<span class="plan-split-mark" aria-hidden="true">÷${splitParts.length}</span>`
           : '';
         const titleAttr = titleText ? ` title="${escapeHtmlPlan(titleText)}"` : '';
+        let cellContentHtml = `${disp}${splitMarkHtml}`;
+        if (row.isGroupRow && col.key === 'name') {
+          const escG = escapeHtmlPlan(row.itemGroup);
+          const arrow = row.isExpanded ? '▼' : '▶';
+          const toggleTitle = row.isExpanded ? '클릭하여 품목 접기' : '클릭하여 품목 펼치기';
+          cellContentHtml = `<button type="button" class="plan-group-toggle-btn" data-group="${escG}" title="${toggleTitle}">${arrow}</button><span>${escapeHtmlPlan(row.itemGroup)}</span><span class="plan-group-count">(${row.memberCount}종)</span>`;
+        }
 
-        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}${hasSplit}"${fixedStyle}${titleAttr}>${disp}${splitMarkHtml}</td>`;
+        bodyHtml += `<td data-r="${rIdx}" data-c="${cIdx}" class="${col.cls}${fixedCls}${diffCls}${stockCls}${certCls}${colorCls}${hasMemo}${hasSplit}"${fixedStyle}${titleAttr}>${cellContentHtml}</td>`;
       });
       bodyHtml += '</tr>';
     });
@@ -10729,7 +10824,7 @@
     setupDropdown('plan-opt-dropdown-wrap', 'btn-plan-options');
     setupDropdown('plan-io-dropdown-wrap', 'btn-plan-io-menu');
 
-    // 품목그룹 ON/OFF 체크박스 및 전체 ON/OFF
+    // 품목그룹 보기 ON/OFF, 표시/숨김 체크박스, 그룹 색상, 전체 펼침/접기
     const commitPlanItemGroupChange = () => {
       planGridState.anchor = null;
       planGridState.focus = null;
@@ -10738,51 +10833,75 @@
       renderPlanModule();
     };
 
+    document.getElementById('chk-plan-group-view-mode')?.addEventListener('change', (e) => {
+      if (!state.planData) loadLocalPlanData();
+      state.planData.groupViewMode = Boolean(e.target.checked);
+      commitPlanItemGroupChange();
+    });
+
+    document.getElementById('btn-plan-ig-expand-all')?.addEventListener('click', () => {
+      if (!state.planData) loadLocalPlanData();
+      const { orderedGroups } = getOrderedPlanItemGroups();
+      state.planData.expandedItemGroups = [...orderedGroups];
+      commitPlanItemGroupChange();
+    });
+
+    document.getElementById('btn-plan-ig-collapse-all')?.addEventListener('click', () => {
+      if (!state.planData) loadLocalPlanData();
+      state.planData.expandedItemGroups = [];
+      commitPlanItemGroupChange();
+    });
+
     document.getElementById('plan-item-group-checklist')?.addEventListener('change', (e) => {
       const chk = e.target.closest('.chk-plan-item-group');
-      if (!chk) return;
-      const gName = chk.value;
-      const cur = new Set(state.planData.mergedItemGroups || []);
-      if (chk.checked) cur.add(gName);
-      else cur.delete(gName);
-      state.planData.mergedItemGroups = Array.from(cur);
+      if (chk) {
+        const gName = chk.value;
+        const hidden = new Set(state.planData.hiddenItemGroups || []);
+        if (chk.checked) hidden.delete(gName);
+        else hidden.add(gName);
+        state.planData.hiddenItemGroups = Array.from(hidden);
+        commitPlanItemGroupChange();
+        return;
+      }
+      const colorInput = e.target.closest('.plan-ig-color-input');
+      if (colorInput) {
+        const gName = colorInput.dataset.group;
+        if (gName) {
+          if (!state.planData.itemGroupColors || typeof state.planData.itemGroupColors !== 'object') {
+            state.planData.itemGroupColors = {};
+          }
+          state.planData.itemGroupColors[gName] = colorInput.value;
+          commitPlanItemGroupChange();
+        }
+      }
+    });
+
+    document.getElementById('plan-item-group-checklist')?.addEventListener('click', (e) => {
+      if (e.target.closest('.plan-ig-color-input')) {
+        e.stopPropagation();
+      }
+    });
+
+    document.getElementById('btn-plan-ig-show-all')?.addEventListener('click', () => {
+      if (!state.planData) loadLocalPlanData();
+      state.planData.hiddenItemGroups = [];
       commitPlanItemGroupChange();
     });
 
-    document.getElementById('btn-plan-ig-all-on')?.addEventListener('click', () => {
+    document.getElementById('btn-plan-ig-hide-all')?.addEventListener('click', () => {
+      if (!state.planData) loadLocalPlanData();
       const allGroups = Array.from(document.querySelectorAll('#plan-item-group-checklist .chk-plan-item-group')).map(c => c.value);
-      state.planData.mergedItemGroups = allGroups;
+      state.planData.hiddenItemGroups = allGroups;
       commitPlanItemGroupChange();
     });
 
-    document.getElementById('btn-plan-ig-all-off')?.addEventListener('click', () => {
-      state.planData.mergedItemGroups = [];
-      commitPlanItemGroupChange();
-    });
-
-    // 품목그룹 순서 변경 (▲/▼ 버튼 & 드래그 앤 드롭)
+    // 품목그룹 순서 변경 (드래그 앤 드롭)
     const igChecklistEl = document.getElementById('plan-item-group-checklist');
     if (igChecklistEl) {
       const applyItemGroupOrder = (newOrder) => {
         state.planData.itemGroupOrder = newOrder;
         commitPlanItemGroupChange();
       };
-
-      igChecklistEl.addEventListener('click', (e) => {
-        const moveBtn = e.target.closest('.plan-ig-move-btn');
-        if (!moveBtn) return;
-        e.stopPropagation();
-        const gName = moveBtn.dataset.group;
-        const dir = moveBtn.dataset.dir;
-        const { orderedGroups } = getOrderedPlanItemGroups();
-        const idx = orderedGroups.indexOf(gName);
-        if (idx === -1) return;
-        const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= orderedGroups.length) return;
-        const next = [...orderedGroups];
-        [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-        applyItemGroupOrder(next);
-      });
 
       let draggedGroup = null;
       igChecklistEl.addEventListener('dragstart', (e) => {
@@ -11485,6 +11604,24 @@
     // 마우스 선택, 범위 드래그 & ALT + 드래그 주차 이동
     tbody.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
+      const groupToggleBtn = e.target.closest('.plan-group-toggle-btn');
+      if (groupToggleBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const gName = groupToggleBtn.dataset.group;
+        if (gName && state.planData) {
+          const exp = new Set(state.planData.expandedItemGroups || []);
+          if (exp.has(gName)) exp.delete(gName);
+          else exp.add(gName);
+          state.planData.expandedItemGroups = Array.from(exp);
+          planGridState.anchor = null;
+          planGridState.focus = null;
+          saveLocalPlanData();
+          savePlanToDb(true);
+          renderPlanModule();
+        }
+        return;
+      }
       closePlanContextPalette();
       const td = e.target.closest('td[data-r][data-c]');
       if (!td) return;
@@ -15284,16 +15421,15 @@
   function normalizeCalSchedStatus(rawStatus) {
     const s = String(rawStatus || '').trim();
     if (s === '일정완료') return '일정완료';
-    if (s === '품검요청') return '품검요청';
-    if (s === '검정신청') return '검정신청';
+    if (s === '검정신청' || s === '품검요청') return '검정신청';
     return '등록완료';
   }
 
   function getCalSchedStatusMeta(status) {
     switch (status) {
       case '일정완료': return { label: '일정완료', dotCls: 'st-done' };
-      case '품검요청': return { label: '품검요청', dotCls: 'st-qual' };
-      case '검정신청': return { label: '검정신청', dotCls: 'st-apply' };
+      case '검정신청':
+      case '품검요청': return { label: '검정신청', dotCls: 'st-apply' };
       default: return { label: '검정등록', dotCls: 'st-reg' };
     }
   }
@@ -15364,6 +15500,7 @@
             itemGroup,
             code: cRow.code || '',
             name: dispName,
+            site: String(cRow.site || '').trim(),
             lotNo: String(cRow.lotNo || '').trim(),
             lotQty: parseSafeInt(cRow.qty),
             planQty,
@@ -15560,7 +15697,6 @@
       const statusDefs = [
         { key: '등록완료', label: '검정등록', cls: 'st-reg' },
         { key: '검정신청', label: '검정신청', cls: 'st-apply' },
-        { key: '품검요청', label: '품검요청', cls: 'st-qual' },
         { key: '일정완료', label: '일정완료', cls: 'st-done' }
       ];
       const statusPills = statusDefs.map(sd => {
@@ -15711,13 +15847,15 @@
             const stMeta = getCalSchedStatusMeta(it.status);
             const isDimmed = statusFilter !== 'ALL' && it.status !== statusFilter;
             const pct = it.planQty > 0 ? Math.round((it.actualQty / it.planQty) * 100) : 0;
-            const tooltip = [
-              `[${it.lineName}] ${it.name}`,
+            const tooltipLines = [`[${it.lineName}] ${it.name}`];
+            if (it.site) tooltipLines.push(it.site);
+            tooltipLines.push(
               `로트번호 : ${it.lotNo || '-'}`,
               `로트수량 : ${it.lotQty.toLocaleString()}`,
               `계획 : ${it.planQty.toLocaleString()} / 실적 : ${it.actualQty.toLocaleString()} (${pct}%)`,
               `상태 : ${stMeta.label}`
-            ].join('\n');
+            );
+            const tooltip = tooltipLines.join('\n').replace(/"/g, '&quot;');
             return `
               <div class="cal-sched-chip ${lineCls} ${isDimmed ? 'is-dimmed' : ''}" data-date="${ds}" data-week-date="${it.weekDate}" title="${tooltip}">
                 <span class="cal-sched-chip-name">${it.name}</span>
@@ -15788,13 +15926,22 @@
             const pct = it.planQty > 0 ? Math.round((it.actualQty / it.planQty) * 100) : 0;
             const isPrinted = !!(state.reportPrintedMap && state.reportPrintedMap[it.certRowId]);
             const rptStyle = isPrinted ? ' style="background:#dcfce7; color:#15803d; border-color:#86efac;"' : '';
+            const safeSite = it.site
+              ? it.site.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+              : '';
+            const siteHtml = safeSite
+              ? `<div class="cal-detail-item-site" title="${safeSite}">${safeSite}</div>`
+              : '';
             return `
               <div class="cal-detail-item ${lineCls}">
                 <div class="cal-detail-item-main">
-                  <div class="cal-detail-item-name" title="${it.name}">${it.name}</div>
-                  <div class="cal-detail-item-sub">
-                    ${it.lineName} · 로트 ${it.lotNo || '-'} (${it.lotQty.toLocaleString()}) · 계획 <strong>${it.planQty.toLocaleString()}</strong> / 실적 ${it.actualQty.toLocaleString()} (${pct}%) · <span class="cal-status-dot ${stMeta.dotCls}" style="vertical-align:middle;"></span> ${stMeta.label}
+                  <div class="cal-detail-item-name">
+                    <span class="cal-detail-item-name-text" title="${it.name}">${it.name}</span>
+                    <span class="cal-detail-item-status"><span class="cal-status-dot ${stMeta.dotCls}"></span> ${stMeta.label}</span>
                   </div>
+                  ${siteHtml}
+                  <div class="cal-detail-item-sub">${it.lineName} · 로트 ${it.lotNo || '-'} (${it.lotQty.toLocaleString()})</div>
+                  <div class="cal-detail-item-sub">계획 <strong>${it.planQty.toLocaleString()}</strong> / 실적 ${it.actualQty.toLocaleString()} (${pct}%)</div>
                 </div>
                 <button type="button" class="cal-detail-jump-btn" data-report-cert-id="${it.certRowId}"${rptStyle} title="${isPrinted ? '공정검사보고서 출력 완료 (클릭 시 다시 다운로드)' : '공정검사보고서 출력 (.xlsx 다운로드)'}">${isPrinted ? '완료' : '출력'}</button>
               </div>
@@ -17079,10 +17226,7 @@
     if (st === '일정완료') {
       return { label: '일정완료', normStatus: '일정완료', cls: 'is-applied', dotCls: 'rp-dot-done', rowCls: 'is-rp-row-completed is-rp-row-locked', isSent: true, isEditableInCert: false, isLocked: true };
     }
-    if (st === '품검요청') {
-      return { label: '품검요청', normStatus: '품검요청', cls: 'is-applied', dotCls: 'rp-dot-qual', rowCls: 'is-rp-row-applied is-rp-row-locked', isSent: true, isEditableInCert: false, isLocked: true };
-    }
-    if (st === '검정신청') {
+    if (st === '검정신청' || st === '품검요청') {
       return { label: '검정신청', normStatus: '검정신청', cls: 'is-applied', dotCls: 'rp-dot-apply', rowCls: 'is-rp-row-applied is-rp-row-locked', isSent: true, isEditableInCert: false, isLocked: true };
     }
     return { label: '검정등록', normStatus: '등록완료', cls: 'is-registered', dotCls: 'rp-dot-reg', rowCls: 'is-rp-row-registered', isSent: true, isEditableInCert: true, isLocked: false };
@@ -21893,11 +22037,12 @@
       }
 
       tbody.innerHTML = rows.map(r => {
-        const st = r.status || '등록완료';
-        const isLocked = st === '일정완료' || st === '품검요청';
+        const rawSt = r.status || '등록완료';
+        const st = rawSt === '품검요청' ? '검정신청' : rawSt;
+        const isLocked = st === '일정완료' || st === '검정신청';
         const badgeStyle = st === '일정완료'
           ? 'background:#dcfce7; color:#15803d;'
-          : st === '품검요청'
+          : st === '검정신청'
             ? 'background:#fef3c7; color:#b45309;'
             : st === '불합격'
               ? 'background:#fee2e2; color:#b91c1c;'
@@ -21983,6 +22128,469 @@
     });
 
     document.getElementById('btn-admin-full-backup')?.addEventListener('click', downloadAdminFullBackupJson);
+
+    // 생산계획(W1~W53) 백업 파일(CSV/JSON) 일괄 복원 및 DB 저장
+    const planBackupFileInp = document.getElementById('input-admin-plan-backup-file');
+    const planBackupBtn = document.getElementById('btn-admin-plan-backup-restore');
+    const planBackupStatus = document.getElementById('admin-plan-backup-status');
+
+    const applyPlanBackupRecords = async (records, targetYear, mode, fileName) => {
+      if (!records || records.length === 0) {
+        alert('복원할 품목 데이터가 없습니다.');
+        return;
+      }
+      if (!state.planData) loadLocalPlanData();
+      if (!state.planData) state.planData = getDefaultPlanData();
+      if (!state.planData.rowsByYear || typeof state.planData.rowsByYear !== 'object') {
+        state.planData.rowsByYear = {};
+      }
+      if (mode === 'overwrite' || !state.planData.rowsByYear[targetYear]) {
+        state.planData.rowsByYear[targetYear] = {};
+      }
+      const yearRows = state.planData.rowsByYear[targetYear];
+      const masterMap = new Map((state.certMasterItems || []).map(it => [String(it.code || '').trim().toLowerCase(), it]));
+      let appliedCount = 0;
+      let weekCellCount = 0;
+
+      records.forEach(rec => {
+        const code = String(rec.code || '').trim();
+        if (!code) return;
+        const master = masterMap.get(code.toLowerCase());
+        const canonicalCode = master ? master.code : code;
+        if (!yearRows[canonicalCode]) {
+          yearRows[canonicalCode] = { weeks: {}, colors: {}, memos: {}, splits: {} };
+        }
+        const row = yearRows[canonicalCode];
+        if (!row.weeks) row.weeks = {};
+
+        if (rec.baseStock !== undefined && rec.baseStock !== null && String(rec.baseStock).trim() !== '') {
+          row.baseStock = String(rec.baseStock).trim();
+          if (master) master.baseStock = row.baseStock;
+        }
+        if (master) {
+          if (rec.minStock !== undefined && String(rec.minStock).trim() !== '') master.minStock = String(rec.minStock).trim();
+          if (rec.optStock !== undefined && String(rec.optStock).trim() !== '') master.maxStock = String(rec.optStock).trim();
+        }
+
+        Object.entries(rec.weeks || {}).forEach(([wId, wObj]) => {
+          if (!row.weeks[wId]) row.weeks[wId] = {};
+          const dst = row.weeks[wId];
+          ['prod', 'forecast', 'actual'].forEach(f => {
+            const val = wObj?.[f];
+            if (val !== undefined && val !== null && String(val).trim() !== '') {
+              dst[f] = String(val).trim();
+              weekCellCount++;
+            } else if (mode === 'overwrite') {
+              dst[f] = '';
+            }
+          });
+        });
+        appliedCount++;
+      });
+
+      if (String(state.planData.year || '2026') === String(targetYear)) {
+        state.planData.rowsByCode = yearRows;
+      }
+      saveLocalCertData();
+      await saveCertDataToDb(true);
+      saveLocalPlanData();
+      await savePlanToDb(false);
+      if (typeof renderPlanModule === 'function') renderPlanModule();
+      await appendAdminAuditLog('백업 복원', '생산계획', `${targetYear}년 ${appliedCount}개 품목 (${weekCellCount}개 셀, ${mode === 'overwrite' ? '덮어쓰기' : '병합'}) - ${fileName}`);
+      renderAdminDataStats();
+      renderAdminAuditTable();
+      if (planBackupStatus) {
+        planBackupStatus.textContent = `완료: ${targetYear}년 ${appliedCount}개 품목 (${weekCellCount.toLocaleString()}개 값) DB 저장됨`;
+        planBackupStatus.style.color = '#15803d';
+      }
+      showToast(`생산계획 ${targetYear}년 ${appliedCount}개 품목이 DB에 복원/저장되었습니다.`);
+    };
+
+    planBackupBtn?.addEventListener('click', () => {
+      if (planBackupFileInp) {
+        planBackupFileInp.value = '';
+        planBackupFileInp.click();
+      }
+    });
+
+    planBackupFileInp?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const targetYear = document.getElementById('admin-plan-backup-year')?.value || '2026';
+      const mode = document.getElementById('admin-plan-backup-mode')?.value || 'overwrite';
+      if (!confirm(`[${file.name}] 파일을 ${targetYear}년 생산계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '병합'} 후 DB에 저장하시겠습니까?`)) {
+        e.target.value = '';
+        return;
+      }
+      try {
+        if (planBackupStatus) {
+          planBackupStatus.textContent = '파일 분석 및 DB 저장 중...';
+          planBackupStatus.style.color = 'var(--text-secondary)';
+        }
+        const records = [];
+        if (/\.json$/i.test(file.name)) {
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          const list = Array.isArray(parsed?.items) ? parsed.items : (Array.isArray(parsed) ? parsed : []);
+          list.forEach(it => {
+            const code = String(it.Code ?? it.code ?? '').trim();
+            if (!code) return;
+            const weeks = {};
+            Object.entries(it.Weeks || it.weeks || {}).forEach(([wId, wv]) => {
+              weeks[wId] = {
+                prod: wv?.prod ?? '',
+                forecast: wv?.forecast ?? '',
+                actual: wv?.actual ?? ''
+              };
+            });
+            records.push({
+              code,
+              baseStock: it.BaseStock ?? it.baseStock,
+              minStock: it.MinStock ?? it.minStock,
+              optStock: it.OptStock ?? it.optStock,
+              weeks
+            });
+          });
+        } else {
+          if (!window.XLSXEngine) throw new Error('XLSXEngine 없음');
+          const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
+          const rows = parsed?.data || [];
+          if (rows.length < 2) throw new Error('데이터 행이 없습니다.');
+          const hdr = (rows[0] || []).map(c => String(c || '').trim());
+          const idxCode = hdr.findIndex(h => h === '코드' || h === '품목코드');
+          if (idxCode < 0) throw new Error('[코드] 컬럼을 찾을 수 없습니다.');
+          const idxBase = hdr.findIndex(h => h.startsWith('기초재고'));
+          const idxMin = hdr.findIndex(h => h === '최소재고');
+          const idxOpt = hdr.findIndex(h => h === '적정재고' || h === '최대재고');
+
+          const weekCols = {};
+          hdr.forEach((h, cIdx) => {
+            const m = h.match(/^(W\d+)_(생산|출고예정|실출고)$/);
+            if (m) {
+              const wId = m[1];
+              if (!weekCols[wId]) weekCols[wId] = {};
+              if (m[2] === '생산') weekCols[wId].prod = cIdx;
+              else if (m[2] === '출고예정') weekCols[wId].forecast = cIdx;
+              else if (m[2] === '실출고') weekCols[wId].actual = cIdx;
+            }
+          });
+
+          for (let r = 1; r < rows.length; r++) {
+            const row = rows[r];
+            if (!row) continue;
+            const code = String(row[idxCode] ?? '').trim();
+            if (!code) continue;
+            const weeks = {};
+            Object.entries(weekCols).forEach(([wId, cols]) => {
+              weeks[wId] = {
+                prod: cols.prod !== undefined ? String(row[cols.prod] ?? '').trim() : '',
+                forecast: cols.forecast !== undefined ? String(row[cols.forecast] ?? '').trim() : '',
+                actual: cols.actual !== undefined ? String(row[cols.actual] ?? '').trim() : ''
+              };
+            });
+            records.push({
+              code,
+              baseStock: idxBase >= 0 ? String(row[idxBase] ?? '').trim() : undefined,
+              minStock: idxMin >= 0 ? String(row[idxMin] ?? '').trim() : undefined,
+              optStock: idxOpt >= 0 ? String(row[idxOpt] ?? '').trim() : undefined,
+              weeks
+            });
+          }
+        }
+        await applyPlanBackupRecords(records, targetYear, mode, file.name);
+      } catch (err) {
+        console.error('생산계획 백업 복원 오류:', err);
+        if (planBackupStatus) {
+          planBackupStatus.textContent = `오류: ${err.message || '파일 처리 실패'}`;
+          planBackupStatus.style.color = '#dc2626';
+        }
+        alert('백업 파일을 불러오는 중 오류가 발생했습니다: ' + (err.message || err));
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    // 수신기계획 백업 파일(CSV/JSON) 일괄 복원 및 DB 저장
+    const rpBackupFileInp = document.getElementById('input-admin-rp-backup-file');
+    const rpBackupBtn = document.getElementById('btn-admin-rp-backup-restore');
+    const rpBackupStatus = document.getElementById('admin-rp-backup-status');
+
+    rpBackupBtn?.addEventListener('click', () => {
+      if (rpBackupFileInp) {
+        rpBackupFileInp.value = '';
+        rpBackupFileInp.click();
+      }
+    });
+
+    rpBackupFileInp?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const mode = document.getElementById('admin-rp-backup-mode')?.value || 'overwrite';
+      if (!confirm(`[${file.name}] 파일을 수신기계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '추가'} 후 DB에 저장하시겠습니까?`)) {
+        e.target.value = '';
+        return;
+      }
+      try {
+        if (rpBackupStatus) {
+          rpBackupStatus.textContent = '파일 분석 및 DB 저장 중...';
+          rpBackupStatus.style.color = 'var(--text-secondary)';
+        }
+        const importedRows = [];
+        if (/\.json$/i.test(file.name)) {
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          const list = Array.isArray(parsed?.rows) ? parsed.rows : (Array.isArray(parsed) ? parsed : []);
+          list.forEach(it => {
+            if (!it || typeof it !== 'object') return;
+            importedRows.push(trimRpRow(createEmptyReceiverPlanRow(it)));
+          });
+        } else {
+          if (!window.XLSXEngine) throw new Error('XLSXEngine 없음');
+          const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
+          const rows = parsed?.data || [];
+          if (rows.length < 2) throw new Error('데이터 행이 없습니다.');
+          const hdr = (rows[0] || []).map(c => String(c || '').trim());
+          const colIdx = (names) => hdr.findIndex(h => names.includes(h));
+          const mapIdx = {
+            reqNo: colIdx(['제작의뢰번호', 'reqNo']),
+            code: colIdx(['품목코드', '제품코드', 'code']),
+            formatNo: colIdx(['형식번호', 'formatNo']),
+            itemGroup: colIdx(['품목그룹', '구분', 'itemGroup']),
+            name: colIdx(['품명', 'MODEL', 'name']),
+            siteName: colIdx(['현장명', 'siteName']),
+            builder: colIdx(['건설사', 'builder']),
+            client: colIdx(['거래선', 'client']),
+            manager: colIdx(['담당자', 'manager']),
+            receiptDate: colIdx(['접수일', '제작의뢰서 접수일', 'receiptDate']),
+            dueDate: colIdx(['납기일자', '제작의뢰서 납기일자', 'dueDate']),
+            issueReqDate: colIdx(['불출일', '자재불출 요청일', 'issueReqDate']),
+            weekDate: colIdx(['생산주차', '생산주차 마감일', 'weekDate']),
+            inspectDate: colIdx(['수검일자', 'KFI검사 마감일', 'inspectDate']),
+            colorInfo: colIdx(['외함색상', '색상정보', 'colorInfo']),
+            remark: colIdx(['비고', 'remark']),
+            lotNo: colIdx(['로트번호', 'Lot no.', 'lotNo']),
+            mfgYm: colIdx(['제조년월', 'mfgYm']),
+            serialFrom: colIdx(['제조번호 FROM', 'serialFrom']),
+            serialTo: colIdx(['제조번호 TO', 'serialTo'])
+          };
+          for (let r = 1; r < rows.length; r++) {
+            const row = rows[r];
+            if (!row) continue;
+            const obj = {};
+            let hasVal = false;
+            Object.entries(mapIdx).forEach(([k, idx]) => {
+              if (idx >= 0) {
+                const v = String(row[idx] ?? '').trim();
+                obj[k] = v;
+                if (v) hasVal = true;
+              }
+            });
+            if (!hasVal) continue;
+            importedRows.push(trimRpRow(createEmptyReceiverPlanRow(obj)));
+          }
+        }
+
+        if (importedRows.length === 0) {
+          alert('복원할 수신기계획 데이터가 없습니다.');
+          return;
+        }
+        if (mode === 'overwrite') {
+          state.receiverPlanRows = importedRows;
+        } else {
+          state.receiverPlanRows = (state.receiverPlanRows || []).concat(importedRows);
+        }
+        await saveReceiverPlanToDb(false);
+        if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+        await appendAdminAuditLog('백업 복원', '수신기계획', `${importedRows.length}건 (${mode === 'overwrite' ? '덮어쓰기' : '추가'}) - ${file.name}`);
+        renderAdminDataStats();
+        renderAdminAuditTable();
+        if (rpBackupStatus) {
+          rpBackupStatus.textContent = `완료: ${importedRows.length.toLocaleString()}건 DB 저장됨`;
+          rpBackupStatus.style.color = '#15803d';
+        }
+      } catch (err) {
+        console.error('수신기계획 백업 복원 오류:', err);
+        if (rpBackupStatus) {
+          rpBackupStatus.textContent = `오류: ${err.message || '파일 처리 실패'}`;
+          rpBackupStatus.style.color = '#dc2626';
+        }
+        alert('백업 파일을 불러오는 중 오류가 발생했습니다: ' + (err.message || err));
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    // 검정현황 백업 파일(CSV/JSON) 일괄 복원 및 DB 저장
+    const certBackupFileInp = document.getElementById('input-admin-cert-backup-file');
+    const certBackupBtn = document.getElementById('btn-admin-cert-backup-restore');
+    const certBackupStatus = document.getElementById('admin-cert-backup-status');
+    const certBackupCutoffSel = document.getElementById('admin-cert-backup-cutoff-week');
+
+    if (certBackupCutoffSel && certBackupCutoffSel.options.length <= 1 && typeof generateYearWeeks === 'function') {
+      const wks2026 = generateYearWeeks('2026');
+      wks2026.forEach(w => {
+        const dt = typeof getPlanWeekFridayDates === 'function' ? getPlanWeekFridayDates('2026', w.id) : null;
+        const wDate = dt?.weekDate || dt?.rawFridayStr || '';
+        if (!wDate) return;
+        const opt = document.createElement('option');
+        opt.value = wDate;
+        opt.textContent = `${w.id} 이하 (~${wDate}) 완료처리`;
+        certBackupCutoffSel.appendChild(opt);
+      });
+    }
+
+    certBackupBtn?.addEventListener('click', () => {
+      if (certBackupFileInp) {
+        certBackupFileInp.value = '';
+        certBackupFileInp.click();
+      }
+    });
+
+    certBackupFileInp?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const mode = document.getElementById('admin-cert-backup-mode')?.value || 'overwrite';
+      const cutoffDate = certBackupCutoffSel?.value || '';
+      const cutoffLabel = cutoffDate ? `${certBackupCutoffSel.options[certBackupCutoffSel.selectedIndex]?.textContent}` : '원본 상태 유지';
+      if (!confirm(`[${file.name}] 파일을 검정현황에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '추가'} (${cutoffLabel}) 후 DB에 저장하시겠습니까?`)) {
+        e.target.value = '';
+        return;
+      }
+      try {
+        if (certBackupStatus) {
+          certBackupStatus.textContent = '파일 분석 및 DB 저장 중...';
+          certBackupStatus.style.color = 'var(--text-secondary)';
+        }
+        const rawRecords = [];
+        if (/\.json$/i.test(file.name)) {
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          const list = Array.isArray(parsed?.rows) ? parsed.rows : (Array.isArray(parsed) ? parsed : []);
+          list.forEach(it => {
+            if (it && typeof it === 'object') rawRecords.push(it);
+          });
+        } else {
+          if (!window.XLSXEngine) throw new Error('XLSXEngine 없음');
+          const parsed = await window.XLSXEngine.parseSpreadsheetFile(file);
+          const rows = parsed?.data || [];
+          if (rows.length < 2) throw new Error('데이터 행이 없습니다.');
+          const hdr = (rows[0] || []).map(c => String(c || '').trim());
+          const colIdx = (names) => hdr.findIndex(h => names.includes(h));
+          const m = {
+            id: colIdx(['ID', 'PID', 'id']),
+            status: colIdx(['상태', 'status']),
+            sheetStatus: colIdx(['원본진행', '진행', 'sheetStatus']),
+            type: colIdx(['구분', 'type']),
+            writeDate: colIdx(['작성일자', 'writeDate']),
+            inspectDate: colIdx(['KFI수검일자', 'KFI 수검일자 (생산주 +7)', 'inspectDate']),
+            weekDate: colIdx(['생산주차', '생산주차 (매주 금)', 'weekDate']),
+            code: colIdx(['품목코드', 'code']),
+            name: colIdx(['제품명', '제 품 명', 'name']),
+            spec: colIdx(['규격', '규 격', 'spec']),
+            formatNo: colIdx(['형식번호', '형식 번호', 'formatNo']),
+            qty: colIdx(['신청수량', 'qty']),
+            lotNo: colIdx(['로트번호', 'lotNo']),
+            from: colIdx(['제조번호FROM', '제조번호 FROM', 'from']),
+            to: colIdx(['제조번호TO', '제조번호 TO', 'to']),
+            passNo: colIdx(['합격표시번호', 'passNo']),
+            site: colIdx(['비고(현장명)', '비고 (현장명)', 'site']),
+            color: colIdx(['외함색상', 'color']),
+            dept: colIdx(['요청부서', 'dept']),
+            sensor: colIdx(['감지', 'sensor']),
+            ctrl: colIdx(['제어', 'ctrl'])
+          };
+          for (let r = 1; r < rows.length; r++) {
+            const row = rows[r];
+            if (!row) continue;
+            const obj = {};
+            let hasVal = false;
+            Object.entries(m).forEach(([k, idx]) => {
+              if (idx >= 0) {
+                const v = String(row[idx] ?? '').trim();
+                obj[k] = v;
+                if (v) hasVal = true;
+              }
+            });
+            if (hasVal && (obj.code || obj.name)) rawRecords.push(obj);
+          }
+        }
+
+        if (rawRecords.length === 0) {
+          alert('복원할 검정현황 데이터가 없습니다.');
+          return;
+        }
+
+        const nowIso = new Date().toISOString();
+        let completedCnt = 0;
+        const importedRows = rawRecords.map(rec => {
+          const row = createNewDraftRow({
+            id: rec.id || ('cert_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+            checked: false,
+            code: String(rec.code || '').trim(),
+            name: String(rec.name || '').trim(),
+            spec: String(rec.spec || '').trim(),
+            formatNo: String(rec.formatNo || '').trim(),
+            type: String(rec.type || '').trim(),
+            writeDate: String(rec.writeDate || '').trim(),
+            inspectDate: String(rec.inspectDate || '').trim(),
+            weekDate: String(rec.weekDate || '').trim(),
+            qty: String(rec.qty || '').trim(),
+            lotNo: String(rec.lotNo || '').trim(),
+            from: String(rec.from || '').trim(),
+            to: String(rec.to || '').trim(),
+            passNo: String(rec.passNo || '').trim(),
+            site: String(rec.site || '').trim(),
+            color: String(rec.color || '').trim(),
+            dept: String(rec.dept || '').trim(),
+            sensor: String(rec.sensor || '').trim(),
+            ctrl: String(rec.ctrl || '').trim(),
+            savedAt: rec.savedAt || nowIso
+          });
+
+          const refDate = row.weekDate || row.inspectDate || row.writeDate || '';
+          if (cutoffDate) {
+            if (refDate && refDate <= cutoffDate) {
+              row.status = '일정완료';
+            } else if (rec.sheetStatus === '신청완료' || rec.status === '검정신청') {
+              row.status = '검정신청';
+            } else {
+              row.status = '등록완료';
+            }
+          } else {
+            row.status = rec.status || (rec.sheetStatus === '검사완료' ? '일정완료' : (rec.sheetStatus === '신청완료' ? '검정신청' : '등록완료'));
+          }
+          if (row.status === '일정완료') completedCnt++;
+          return row;
+        });
+
+        if (mode === 'overwrite') {
+          state.certSavedRows = importedRows;
+        } else {
+          state.certSavedRows = importedRows.concat(state.certSavedRows || []);
+        }
+        saveLocalCertData();
+        await saveCertDataToDb(true);
+        if (typeof renderCertificationModule === 'function') renderCertificationModule();
+        await appendAdminAuditLog('백업 복원', '검정현황', `${importedRows.length}건 (완료 ${completedCnt}건, ${cutoffLabel}) - ${file.name}`);
+        renderAdminDataStats();
+        renderAdminCertTable();
+        renderAdminAuditTable();
+        if (certBackupStatus) {
+          certBackupStatus.textContent = `완료: ${importedRows.length.toLocaleString()}건 (완료 ${completedCnt.toLocaleString()}건) DB 저장됨`;
+          certBackupStatus.style.color = '#15803d';
+        }
+        showToast(`검정현황 ${importedRows.length}건이 DB에 복원/저장되었습니다.`);
+      } catch (err) {
+        console.error('검정현황 백업 복원 오류:', err);
+        if (certBackupStatus) {
+          certBackupStatus.textContent = `오류: ${err.message || '파일 처리 실패'}`;
+          certBackupStatus.style.color = '#dc2626';
+        }
+        alert('백업 파일을 불러오는 중 오류가 발생했습니다: ' + (err.message || err));
+      } finally {
+        e.target.value = '';
+      }
+    });
 
     document.getElementById('admin-data-stats-tbody')?.addEventListener('click', (e) => {
       const btn = e.target.closest('.btn-admin-reset-mod');
