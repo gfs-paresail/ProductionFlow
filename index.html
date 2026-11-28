@@ -23,7 +23,7 @@
     <!-- 상단 글로벌 네비게이션 헤더 (1단 슬림 + 노트북 해상도 최적화) -->
     <header class="app-header">
       <div class="header-left">
-        <div class="logo-badge">
+        <div class="logo-badge" id="btn-logo-dashboard" role="button" tabindex="0" title="대시보드로 이동">
           <svg class="icon-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
           </svg>
@@ -91,7 +91,7 @@
         </div>
 
         <!-- 3. 일정계획 (단일 화면 - 내부 반별 분리 표시) -->
-        <button class="nav-tab active" data-tab="tab-inspection" role="tab" aria-selected="true">
+        <button class="nav-tab" data-tab="tab-inspection" role="tab" aria-selected="false">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
             <line x1="16" y1="2" x2="16" y2="6"></line>
@@ -232,6 +232,62 @@
 
     <!-- 메인 컨텐츠 영역 -->
     <main class="main-content">
+
+      <!-- ============================================ -->
+      <!-- 탭 0: [대시보드] (현장 이슈 / 생산계획 KPI) -->
+      <!-- ============================================ -->
+      <section id="tab-dashboard" class="tab-pane active" role="tabpanel">
+        <div class="dash-container">
+          <!-- 상단 컨트롤 헤더 -->
+          <div class="dash-header card">
+            <div class="dash-header-left">
+              <h2 class="dash-title" id="dash-main-title">현장 이슈 대시보드</h2>
+              <span class="dash-subtitle" id="dash-main-subtitle">오늘 확인 및 처리가 필요한 항목</span>
+            </div>
+            <div class="dash-header-right">
+              <!-- 뷰 전환 세그먼트 -->
+              <div class="dash-seg-group" id="dash-view-switcher" role="group" aria-label="대시보드 화면 전환">
+                <button type="button" class="dash-seg-btn active" data-dash-view="issues">현장 이슈</button>
+                <button type="button" class="dash-seg-btn" data-dash-view="kpi">생산계획 KPI</button>
+              </div>
+
+              <!-- 현장 이슈 필터 -->
+              <div class="dash-ctrl-group" id="dash-issues-controls">
+                <div class="dash-pill-group" id="dash-issue-line-filters">
+                  <button type="button" class="dash-pill-btn active" data-line="ALL">전체</button>
+                  <button type="button" class="dash-pill-btn" data-line="감지기반">감지기반</button>
+                  <button type="button" class="dash-pill-btn" data-line="유도등반">유도등반</button>
+                  <button type="button" class="dash-pill-btn" data-line="수신기반">수신기반</button>
+                </div>
+              </div>
+
+              <!-- 생산계획 KPI 필터 -->
+              <div class="dash-ctrl-group" id="dash-kpi-controls" style="display:none;">
+                <select id="dash-kpi-year" class="form-select form-select-sm" title="조회 연도"></select>
+                <select id="dash-kpi-month" class="form-select form-select-sm" title="기준 월"></select>
+                <div class="dash-seg-group" id="dash-kpi-unit-switcher" role="group" aria-label="집계 단위">
+                  <button type="button" class="dash-seg-btn active" data-unit="qty">수량</button>
+                  <button type="button" class="dash-seg-btn" data-unit="amount">금액</button>
+                </div>
+                <div class="dash-pill-group" id="dash-kpi-line-filters">
+                  <button type="button" class="dash-pill-btn active" data-line="ALL">전체</button>
+                  <button type="button" class="dash-pill-btn" data-line="감지기반">감지기반</button>
+                  <button type="button" class="dash-pill-btn" data-line="유도등반">유도등반</button>
+                  <button type="button" class="dash-pill-btn" data-line="수신기반">수신기반</button>
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-sm btn-outline" id="btn-dash-refresh" title="대시보드 새로고침">새로고침</button>
+            </div>
+          </div>
+
+          <!-- 뷰 1: 현장 이슈 대시보드 -->
+          <div id="dash-view-issues" class="dash-view-pane"></div>
+
+          <!-- 뷰 2: 생산계획 KPI 대시보드 -->
+          <div id="dash-view-kpi" class="dash-view-pane" style="display:none;"></div>
+        </div>
+      </section>
 
       <!-- ============================================ -->
       <!-- 탭 1: [생산계획] (엑셀형 그리드) -->
@@ -683,7 +739,7 @@
       <!-- ============================================ -->
       <!-- 탭 2: [일정계획] (구 검정 일정 / 생산현황) -->
       <!-- ============================================ -->
-      <section id="tab-inspection" class="tab-pane active" role="tabpanel">
+      <section id="tab-inspection" class="tab-pane" role="tabpanel">
         <div class="inspection-layout-wrap">
           
           <!-- 좌측 사이드바: 검정현황 생산주차 통합 목록 및 연도/월 필터 -->
@@ -1873,14 +1929,6 @@
           <div class="panel-header-card quality-toolbar-card">
             <div class="panel-toolbar quality-toolbar">
               <div class="toolbar-group">
-                <label for="quality-filter-date" class="toolbar-label">
-                  <span class="label-badge" style="background-color: #10b981;">기준일자</span>
-                </label>
-                <div class="date-picker-wrap">
-                  <input type="date" id="quality-filter-date" class="input-date font-bold text-primary">
-                </div>
-                <button type="button" class="btn btn-sm btn-outline" id="btn-quality-today">오늘</button>
-                <button type="button" class="btn btn-sm btn-outline" id="btn-quality-all" title="날짜 및 주차 필터 해제하고 전체 목록 표시">전체</button>
                 <select id="quality-filter-week" class="form-select form-select-sm font-bold" title="생산주차별 필터" style="min-width: 140px;">
                   <option value="ALL">전체 주차</option>
                 </select>
@@ -1904,6 +1952,7 @@
                   <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>
                   합격취소
                 </button>
+                <input type="text" id="quality-filter-search" class="form-input form-input-sm" placeholder="통합검색..." style="width: 220px;" title="품목코드, 품명, 규격, 형식번호, 로트번호, 합격표시번호, 현장명, 요청부서 검색">
 
                 <span class="cert-filter-status-pill" id="quality-filter-status-pill">
                   <span>전체 품검 대상 조회</span>
@@ -3357,6 +3406,8 @@
   <!-- pdf-lib & pdf.js (PDF 양식 미리보기 · 위치 지정 · 바로 인쇄) -->
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Chart.js (인터랙티브 대시보드 차트) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <!-- 검정현황 & 신규 품목정보 마스터 기본 데이터셋 -->
   <script src="cert-data.js?v=4.3"></script>
   <!-- Firebase App 및 Cloud Firestore SDK (Compat v10) -->

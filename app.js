@@ -212,8 +212,20 @@
   // 2. 전역 상태 (State)
   // =========================================================================
   const state = {
-    currentTab: 'tab-inspection',
+    currentTab: 'tab-dashboard',
     viewMode: localStorage.getItem(STORAGE_KEYS.VIEW_MODE) || 'default',
+    dashboardView: 'issues', // 'issues' | 'kpi'
+    dashboardIssueLine: 'ALL',
+    dashboardKpiYear: String(new Date().getFullYear()),
+    dashboardKpiMonth: new Date().getMonth() + 1,
+    dashboardKpiUnit: 'qty', // 'qty' | 'amount'
+    dashboardKpiLine: 'ALL',
+    dashboardKpiItemCode: 'ALL',
+    dashboardKpiItemSearch: '',
+    dashboardKpiExpandedGroups: new Set(),
+    dashboardKpiChartMode: 'prod', // 'prod' | 'stock' | 'compare'
+    dashboardKpiPeriod: 'month', // 'month' | 'quarter' | 'week'
+    dashboardKpiSeries: { prod: true, forecast: true, actual: true, stock: false },
 
     // 마스터 데이터
     commonItems: [],
@@ -2465,7 +2477,9 @@
 
       // 4) 탭별 데이터 렌더링 (예외 발생 시에도 화면 전환 상태는 유지)
       try {
-        if (tabId === 'tab-plan') {
+        if (tabId === 'tab-dashboard') {
+          renderDashboardModule();
+        } else if (tabId === 'tab-plan') {
           renderPlanModule();
         } else if (tabId === 'tab-receiver-plan') {
           renderReceiverPlanModule();
@@ -4894,12 +4908,17 @@
       if (typeof syncCustomSelect === 'function') syncCustomSelect('quality-filter-week');
     }
 
+    const filterSearch = (state.qualityFilterSearch || '').trim().toLowerCase();
     const filtered = allQuality.filter(row => {
-      if (filterDate && !(row.writeDate === filterDate || row.inspectDate === filterDate || row.weekDate === filterDate)) {
-        return false;
-      }
       if (filterWeek && filterWeek !== 'ALL' && String(row.weekDate || '').trim() !== filterWeek) {
         return false;
+      }
+      if (filterSearch) {
+        const hay = [
+          row.code, row.name, row.spec, row.formatNo,
+          row.lotNo, row.passNo, row.site, row.dept, row.group
+        ].map(v => String(v || '').toLowerCase()).join(' ');
+        if (!hay.includes(filterSearch)) return false;
       }
       return true;
     });
@@ -6586,40 +6605,6 @@
       });
     }
 
-    const qualFilterDateInput = document.getElementById('quality-filter-date');
-    if (qualFilterDateInput) {
-      qualFilterDateInput.value = state.qualityFilterDate || '';
-      qualFilterDateInput.addEventListener('change', (e) => {
-        state.qualityFilterDate = e.target.value;
-        saveLocalQualityRows();
-        renderQualityTable();
-        updateQualityFilterPill();
-      });
-    }
-
-    const btnQualityToday = document.getElementById('btn-quality-today');
-    if (btnQualityToday) {
-      btnQualityToday.addEventListener('click', () => {
-        state.qualityFilterDate = getTodayDateString();
-        if (qualFilterDateInput) qualFilterDateInput.value = state.qualityFilterDate;
-        saveLocalQualityRows();
-        renderQualityTable();
-        updateQualityFilterPill();
-      });
-    }
-
-    const btnQualityAll = document.getElementById('btn-quality-all');
-    if (btnQualityAll) {
-      btnQualityAll.addEventListener('click', () => {
-        state.qualityFilterDate = '';
-        state.qualityFilterWeek = 'ALL';
-        if (qualFilterDateInput) qualFilterDateInput.value = '';
-        saveLocalQualityRows();
-        renderQualityTable();
-        updateQualityFilterPill();
-      });
-    }
-
     const qualFilterWeekSel = document.getElementById('quality-filter-week');
     if (qualFilterWeekSel) {
       qualFilterWeekSel.addEventListener('change', (e) => {
@@ -6629,12 +6614,25 @@
       });
     }
 
+    const qualSearchInp = document.getElementById('quality-filter-search');
+    if (qualSearchInp) {
+      let qualSearchTimer = null;
+      qualSearchInp.addEventListener('input', (e) => {
+        state.qualityFilterSearch = e.target.value || '';
+        clearTimeout(qualSearchTimer);
+        qualSearchTimer = setTimeout(() => {
+          renderQualityTable();
+          updateQualityFilterPill();
+        }, 200);
+      });
+    }
+
     function updateQualityFilterPill() {
       const pill = document.getElementById('quality-filter-status-pill');
       if (!pill) return;
       const parts = [];
-      if (state.qualityFilterDate) parts.push(`일자: ${state.qualityFilterDate}`);
       if (state.qualityFilterWeek && state.qualityFilterWeek !== 'ALL') parts.push(`주차: ${state.qualityFilterWeek}`);
+      if ((state.qualityFilterSearch || '').trim()) parts.push(`검색: ${(state.qualityFilterSearch || '').trim()}`);
       if (parts.length > 0) {
         pill.innerHTML = `<span>필터: ${parts.join(' · ')}</span>`;
         pill.classList.add('active');
@@ -20079,6 +20077,7 @@
     const settingsPerm = isAdminRole ? 'edit' : ((perms.settings && perms.settings !== 'none') ? perms.settings : (u.canApprove ? 'edit' : 'none'));
 
     const tabMap = {
+      'tab-dashboard': 'view',
       'tab-plan': (planPerm === 'none' && recvPerm === 'none') ? 'none' : (planPerm === 'edit' || recvPerm === 'edit' ? 'edit' : 'view'),
       'tab-receiver-plan': recvPerm,
       'tab-certification': isAdminRole ? 'edit' : (perms.cert || 'view'),
@@ -20131,6 +20130,18 @@
     }
 
     if (isAdminRole) renderAuthManagePane();
+
+    // 대시보드 내 생산계획 KPI 전환 버튼 권한 연동
+    const dashKpiBtn = document.querySelector('#dash-view-switcher [data-dash-view="kpi"]');
+    if (dashKpiBtn) {
+      dashKpiBtn.style.display = planPerm === 'none' ? 'none' : '';
+      if (planPerm === 'none' && state.dashboardView === 'kpi') {
+        state.dashboardView = 'issues';
+      }
+    }
+    if (state.currentTab === 'tab-dashboard' && typeof renderDashboardModule === 'function') {
+      renderDashboardModule();
+    }
   }
 
   function openUserAccountModal() {
@@ -20400,6 +20411,8 @@
       setAuthOverlayVisible(false);
       applyAuthPermissions();
       updateSessionTimerUI();
+      state.dashboardView = 'issues';
+      await activateTab('tab-dashboard');
       showToast(`${user.name}님 환영합니다.`);
 
       if (user.mustChangePassword) {
@@ -22989,6 +23002,1286 @@
   // =========================================================================
   // 16. DOM 준비 완료 및 시스템 기동
   // =========================================================================
+  // =========================================================================
+  // 11. 통합 대시보드 모듈 (뷰 1: 현장 이슈 / 뷰 2: 생산계획 KPI)
+  // =========================================================================
+  function getDashUserPermissions() {
+    const u = state.currentUser;
+    if (!u) return { plan: 'view', receiverPlan: 'view', cert: 'view', inspection: 'view', production: 'view', workhours: 'view', attendance: 'view', quality: 'view', settings: 'none', canApprove: false };
+    const isAdmin = u.role === 'admin';
+    const perms = u.permissions || {};
+    const planPerm = isAdmin ? 'edit' : (perms.plan || 'view');
+    return {
+      plan: planPerm,
+      receiverPlan: isAdmin ? 'edit' : (perms.receiverPlan || planPerm),
+      cert: isAdmin ? 'edit' : (perms.cert || 'view'),
+      inspection: isAdmin ? 'edit' : (perms.inspection || 'view'),
+      production: isAdmin ? 'edit' : (perms.production || 'view'),
+      workhours: isAdmin ? 'edit' : (perms.workhours || 'view'),
+      attendance: isAdmin ? 'edit' : (perms.attendance || 'view'),
+      quality: isAdmin ? 'edit' : (perms.quality || 'view'),
+      settings: isAdmin ? 'edit' : ((perms.settings && perms.settings !== 'none') ? perms.settings : (u.canApprove ? 'edit' : 'none')),
+      canApprove: !!(isAdmin || u.canApprove)
+    };
+  }
+
+  function formatDashDateLabel(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return dateStr;
+    const dayName = DAYS_OF_WEEK[d.getDay()] || '';
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${dayName})`;
+  }
+
+  function formatDashAmount(won) {
+    const val = Math.round(Number(won) || 0);
+    if (Math.abs(val) >= 100000000) return `${(val / 100000000).toFixed(2)}억원`;
+    if (Math.abs(val) >= 10000) return `${formatNumberDisplay(Math.round(val / 10000))}만원`;
+    return `${formatNumberDisplay(val)}원`;
+  }
+
+  function formatDashDeltaBadge(curVal, prevVal, unitSuffix = '') {
+    if (!prevVal && !curVal) return '<span class="dash-delta-flat">변동 없음</span>';
+    if (!prevVal) return `<span class="dash-delta-up">▲ 신규 (${formatNumberDisplay(curVal)}${unitSuffix})</span>`;
+    const diff = curVal - prevVal;
+    const pct = ((diff / prevVal) * 100).toFixed(1);
+    if (diff > 0) return `<span class="dash-delta-up">▲ ${pct}% (+${formatNumberDisplay(diff)}${unitSuffix})</span>`;
+    if (diff < 0) return `<span class="dash-delta-down">▼ ${Math.abs(Number(pct)).toFixed(1)}% (${formatNumberDisplay(diff)}${unitSuffix})</span>`;
+    return '<span class="dash-delta-flat">0.0% (전월 동일)</span>';
+  }
+
+  async function navigateFromDashboard(tabId, subMode = '') {
+    if (!tabId) return;
+    if (tabId === 'tab-production' && (subMode === 'daily' || subMode === 'workhours')) {
+      state.activeLines.daily = subMode;
+      const chip = document.getElementById('chip-daily-line');
+      if (chip) chip.textContent = subMode === 'workhours' ? '공수집계' : '일보작성';
+    } else if (tabId === 'tab-attendance' && (subMode === 'attendance' || subMode === 'schedule')) {
+      state.calendarMode = subMode;
+      const chip = document.getElementById('chip-cal-mode');
+      if (chip) chip.textContent = subMode === 'schedule' ? '생산일정' : '근태관리';
+    }
+    await activateTab(tabId);
+    if (tabId === 'tab-settings' && subMode === 'auth') {
+      const authBtn = document.querySelector('#tab-settings [data-settings-tab="auth"]');
+      if (authBtn) authBtn.click();
+    }
+  }
+
+  function syncDashboardHeaderControls() {
+    const view = state.dashboardView || 'issues';
+    const titleEl = document.getElementById('dash-main-title');
+    const subEl = document.getElementById('dash-main-subtitle');
+    const issuesPane = document.getElementById('dash-view-issues');
+    const kpiPane = document.getElementById('dash-view-kpi');
+    const issuesCtrls = document.getElementById('dash-issues-controls');
+    const kpiCtrls = document.getElementById('dash-kpi-controls');
+
+    if (titleEl) titleEl.textContent = view === 'kpi' ? '생산계획 KPI 대시보드' : '현장 이슈 대시보드';
+    if (subEl) {
+      subEl.textContent = view === 'kpi'
+        ? `${state.dashboardKpiYear}년 ${state.dashboardKpiMonth}월 기준 · 연간/월간 생산량 추이, 증감률 및 계획 달성률`
+        : `${formatDashDateLabel(getTodayDateString())} · 오늘 확인 및 처리가 필요한 항목`;
+    }
+    if (issuesPane) issuesPane.style.display = view === 'issues' ? '' : 'none';
+    if (kpiPane) kpiPane.style.display = view === 'kpi' ? '' : 'none';
+    if (issuesCtrls) issuesCtrls.style.display = view === 'issues' ? '' : 'none';
+    if (kpiCtrls) kpiCtrls.style.display = view === 'kpi' ? '' : 'none';
+
+    document.querySelectorAll('#dash-view-switcher .dash-seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.dashView === view);
+    });
+    document.querySelectorAll('#dash-issue-line-filters .dash-pill-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.line === (state.dashboardIssueLine || 'ALL'));
+    });
+    document.querySelectorAll('#dash-kpi-unit-switcher .dash-seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.unit === (state.dashboardKpiUnit || 'qty'));
+    });
+    document.querySelectorAll('#dash-kpi-line-filters .dash-pill-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.line === (state.dashboardKpiLine || 'ALL'));
+    });
+  }
+
+  function populateDashKpiFilters() {
+    const yearSel = document.getElementById('dash-kpi-year');
+    const monthSel = document.getElementById('dash-kpi-month');
+    const pd = state.planData || {};
+    const curYear = String(new Date().getFullYear());
+    const yearsSet = new Set([curYear, String(Number(curYear) - 1), String(pd.year || curYear)]);
+    if (pd.rowsByYear && typeof pd.rowsByYear === 'object') {
+      Object.keys(pd.rowsByYear).forEach(y => { if (/^\d{4}$/.test(y)) yearsSet.add(y); });
+    }
+    const years = [...yearsSet].sort((a, b) => Number(b) - Number(a));
+    if (!yearsSet.has(String(state.dashboardKpiYear))) state.dashboardKpiYear = pd.year || curYear;
+
+    if (yearSel) {
+      yearSel.innerHTML = years.map(y => `<option value="${y}">${y}년</option>`).join('');
+      yearSel.value = String(state.dashboardKpiYear);
+    }
+    if (monthSel) {
+      monthSel.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}월</option>`).join('');
+      monthSel.value = String(state.dashboardKpiMonth || (new Date().getMonth() + 1));
+    }
+  }
+
+  function getInspV2ItemsForDash() {
+    const cache = new Map();
+    const curWk = state.inspV2Data && state.inspV2Data.weekKey ? state.inspV2Data.weekKey : '';
+    if (curWk && state.inspV2Data && state.inspV2Data.items) {
+      cache.set(curWk, state.inspV2Data.items);
+    }
+    return (row) => {
+      const wk = `${row.year || new Date().getFullYear()}_${row.sourceWeekId || 'MANUAL'}`;
+      if (!cache.has(wk)) {
+        let itemsObj = null;
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.INSP_V2_PREFIX + wk);
+          if (raw) itemsObj = JSON.parse(raw).items || {};
+        } catch (e) { /* ignore */ }
+        cache.set(wk, itemsObj || {});
+      }
+      return cache.get(wk)[row.id] || null;
+    };
+  }
+
+  function renderDashboardIssues() {
+    const host = document.getElementById('dash-view-issues');
+    if (!host) return;
+    const perms = getDashUserPermissions();
+    const lineFilter = state.dashboardIssueLine || 'ALL';
+    const todayStr = getTodayDateString();
+    const matchLine = (ln) => lineFilter === 'ALL' || String(ln || '').trim() === lineFilter;
+
+    // 1) 일정계획 미배정 로트 & 오늘의 작업 일정
+    const getInspItem = getInspV2ItemsForDash();
+    const activeCertRows = (state.certSavedRows || []).filter(r => r && r.status !== '일정완료' && matchLine(r.line));
+    const unplannedRows = [];
+    const todayInspRows = [];
+    activeCertRows.forEach(r => {
+      const itState = getInspItem(r);
+      const excl = (itState && itState.excludedProcs) || {};
+      const dp = (itState && itState.dailyPlans) || {};
+      const hasAnyPlan = Object.values(dp).some(pObj =>
+        pObj && ['assembly', 'inspect', 'pack'].some(p => !excl[p] && parseSafeInt(pObj[p]) > 0)
+      );
+      if (!hasAnyPlan) unplannedRows.push(r);
+      const todayPlan = dp[todayStr];
+      if (todayPlan && ['assembly', 'inspect', 'pack'].some(p => !excl[p] && parseSafeInt(todayPlan[p]) > 0)) {
+        todayInspRows.push({ row: r, todayPlan });
+      }
+    });
+
+    // 2) 품질검사 대기
+    const qualityRows = (state.qualityRows || []).filter(r => r && matchLine(r.line));
+
+    // 3) 수신기 납기임박 & 미신청
+    const rpRows = lineFilter === 'ALL' || lineFilter === '수신기반' ? (state.receiverPlanRows || []) : [];
+    const certIdx = typeof buildReceiverCertIndex === 'function' ? buildReceiverCertIndex() : null;
+    const rpUrgentList = [];
+    let rpPendingCount = 0;
+    rpRows.forEach(r => {
+      const st = typeof getReceiverPlanCertStatus === 'function' ? getReceiverPlanCertStatus(r, certIdx) : { isSent: false, label: '미신청' };
+      if (!st.isSent) rpPendingCount++;
+      const dueCls = typeof getRpDueClass === 'function' ? getRpDueClass(r.dueDate, st.isSent) : '';
+      if (dueCls) {
+        const diffDays = r.dueDate ? Math.ceil((new Date(`${r.dueDate}T00:00:00`) - new Date(`${todayStr}T00:00:00`)) / 86400000) : 99;
+        rpUrgentList.push({ row: r, status: st, diffDays });
+      }
+    });
+    rpUrgentList.sort((a, b) => a.diffDays - b.diffDays);
+
+    // 4) 오늘 생산일보 작성 여부 (반별)
+    const targetProdDate = state.productionDate || todayStr;
+    let prodEntries = [];
+    if (state.dailyV2Data && Array.isArray(state.dailyV2Data.entries)) {
+      prodEntries = state.dailyV2Data.entries;
+    } else {
+      try {
+        const rawD = localStorage.getItem(STORAGE_KEYS.DAILY_V2_PREFIX + targetProdDate);
+        if (rawD) prodEntries = JSON.parse(rawD).entries || [];
+      } catch (e) { /* ignore */ }
+    }
+    const prodLines = ['감지기반', '유도등반', '수신기반'].filter(matchLine);
+    const prodStatusList = prodLines.map(ln => {
+      const lineEntries = prodEntries.filter(ent => ent && String(ent.line || '').trim() === ln);
+      let totalQty = 0;
+      let totalHours = 0;
+      const done = lineEntries.some(ent => {
+        if (parseSafeInt(ent.qty) > 0) return true;
+        if (ent.workerHours && Object.values(ent.workerHours).some(v => parseFloat(v) > 0)) return true;
+        if (ent.isLoss && parseFloat(ent.lossHours || ent.hours || 0) > 0) return true;
+        if (String(ent.note || ent.itemName || '').trim()) return true;
+        return false;
+      });
+      lineEntries.forEach(ent => {
+        totalQty += parseSafeInt(ent.qty);
+        if (ent.workerHours) {
+          Object.values(ent.workerHours).forEach(v => { totalHours += (parseFloat(v) || 0); });
+        }
+      });
+      return { line: ln, done, totalQty, totalHours };
+    });
+    const prodDoneCnt = prodStatusList.filter(x => x.done).length;
+
+    // 5) 검정 진행 파이프라인
+    const allCert = (state.certSavedRows || []).filter(r => r && matchLine(r.line));
+    const pipeCounts = {
+      등록완료: allCert.filter(r => !r.status || r.status === '등록완료').length,
+      검정신청: allCert.filter(r => r.status === '검정신청').length,
+      품검요청: allCert.filter(r => r.status === '품검요청').length,
+      일정완료: allCert.filter(r => r.status === '일정완료').length
+    };
+
+    // 6) 오늘 근태 변동
+    const typeMap = new Map((state.attendanceTypes || []).map(t => [t.id, t]));
+    const workerMap = new Map((state.workers || []).map(w => [w.id, w]));
+    const todayAtt = (state.attendanceRecords || []).filter(rec => {
+      if (!rec) return false;
+      const s = rec.startDate || rec.date || '';
+      const e = rec.endDate || rec.startDate || rec.date || '';
+      if (!s || todayStr < s || todayStr > e) return false;
+      const w = workerMap.get(rec.workerId);
+      const grp = w ? (w.group || '') : '';
+      return lineFilter === 'ALL' || grp === lineFilter;
+    });
+
+    // 7) 관리자 가입/비번초기화 요청
+    const pendingAuthCnt = perms.canApprove
+      ? (state.authUsers || []).filter(u => u && (u.status === 'pending' || u.resetRequested)).length
+      : 0;
+
+    // KPI 카드 HTML
+    const kpiCards = [];
+    if (perms.inspection !== 'none') {
+      kpiCards.push(`
+        <div class="dash-kpi-card tone-blue is-clickable" data-dash-goto="tab-inspection">
+          <div class="dash-kpi-top"><span class="dash-kpi-label">일정계획 미배정</span><span class="dash-kpi-link">이동 →</span></div>
+          <div class="dash-kpi-value">${formatNumberDisplay(unplannedRows.length)}건</div>
+          <div class="dash-kpi-sub">오늘 예정 일정 ${formatNumberDisplay(todayInspRows.length)}건</div>
+        </div>
+      `);
+    }
+    if (perms.quality !== 'none') {
+      kpiCards.push(`
+        <div class="dash-kpi-card tone-amber is-clickable" data-dash-goto="tab-quality">
+          <div class="dash-kpi-top"><span class="dash-kpi-label">품질검사 대기</span><span class="dash-kpi-link">이동 →</span></div>
+          <div class="dash-kpi-value">${formatNumberDisplay(qualityRows.length)}건</div>
+          <div class="dash-kpi-sub">${qualityRows.length > 0 ? '즉시 품검 확인 필요' : '대기 항목 없음'}</div>
+        </div>
+      `);
+    }
+    if (perms.receiverPlan !== 'none') {
+      kpiCards.push(`
+        <div class="dash-kpi-card tone-red is-clickable" data-dash-goto="tab-receiver-plan">
+          <div class="dash-kpi-top"><span class="dash-kpi-label">수신기 납기임박 / 미신청</span><span class="dash-kpi-link">이동 →</span></div>
+          <div class="dash-kpi-value">${formatNumberDisplay(rpUrgentList.length)}건 <span style="font-size:14px;color:var(--text-sub);font-weight:600;">/ ${formatNumberDisplay(rpPendingCount)}건</span></div>
+          <div class="dash-kpi-sub">${rpUrgentList[0] ? `최단 D${rpUrgentList[0].diffDays <= 0 ? (rpUrgentList[0].diffDays === 0 ? '-Day' : '+' + Math.abs(rpUrgentList[0].diffDays)) : '-' + rpUrgentList[0].diffDays} (${escapeHtmlPlan(rpUrgentList[0].row.siteName || rpUrgentList[0].row.name || '')})` : '납기 임박 건 없음'}</div>
+        </div>
+      `);
+    }
+    if (perms.production !== 'none') {
+      kpiCards.push(`
+        <div class="dash-kpi-card tone-emerald is-clickable" data-dash-goto="tab-production" data-dash-sub="daily">
+          <div class="dash-kpi-top"><span class="dash-kpi-label">생산일보 (${escapeHtmlPlan(targetProdDate)})</span><span class="dash-kpi-link">작성 →</span></div>
+          <div class="dash-kpi-value">${prodDoneCnt} / ${prodStatusList.length}반 완료</div>
+          <div class="dash-kpi-sub">${prodDoneCnt < prodStatusList.length ? `${prodStatusList.filter(x => !x.done).map(x => x.line).join(', ')} 대기` : '전체 작업반 작성 완료'}</div>
+        </div>
+      `);
+    }
+    if (perms.attendance !== 'none') {
+      kpiCards.push(`
+        <div class="dash-kpi-card tone-purple is-clickable" data-dash-goto="tab-attendance" data-dash-sub="attendance">
+          <div class="dash-kpi-top"><span class="dash-kpi-label">금일 근태 · 승인 알림</span><span class="dash-kpi-link">이동 →</span></div>
+          <div class="dash-kpi-value">부재 ${formatNumberDisplay(todayAtt.length)}명</div>
+          <div class="dash-kpi-sub">${perms.canApprove ? `가입·초기화 대기 ${pendingAuthCnt}건` : '오늘 근태 변동 인원'}</div>
+        </div>
+      `);
+    }
+
+    // 좌측: 긴급 처리 필요 (납기임박 + 미배정)
+    const urgentItemsHtml = [
+      ...rpUrgentList.slice(0, 4).map(({ row, status, diffDays }) => {
+        const dBadge = diffDays < 0 ? `D+${Math.abs(diffDays)}` : (diffDays === 0 ? 'D-Day' : `D-${diffDays}`);
+        return `
+          <div class="dash-list-row">
+            <div class="dash-list-main">
+              <span class="dash-badge is-red">${dBadge}</span>
+              <span class="dash-badge is-purple">수신기</span>
+              <span class="dash-list-text">${escapeHtmlPlan(row.siteName || row.name || row.code || '-')}</span>
+            </div>
+            <span class="dash-list-meta">${escapeHtmlPlan(status.label || '미신청')}</span>
+            <button type="button" class="btn btn-xs btn-outline" data-dash-goto="tab-receiver-plan">확인</button>
+          </div>
+        `;
+      }),
+      ...unplannedRows.slice(0, 4).map(r => `
+        <div class="dash-list-row">
+          <div class="dash-list-main">
+            <span class="dash-badge is-amber">미배정</span>
+            <span class="dash-badge is-blue">${escapeHtmlPlan(r.line || '-')}</span>
+            <span class="dash-list-text">${escapeHtmlPlan(r.name || '-')} <small style="color:var(--text-muted);">(LOT ${escapeHtmlPlan(r.lotNo || '-')})</small></span>
+          </div>
+          <span class="dash-list-meta">${formatNumberDisplay(r.qty || 0)}개</span>
+          <button type="button" class="btn btn-xs btn-outline" data-dash-goto="tab-inspection">배정</button>
+        </div>
+      `)
+    ].join('');
+
+    // 우측: 품질검사 대기 & 오늘 작업 일정
+    const qualityListHtml = qualityRows.slice(0, 4).map(r => `
+      <div class="dash-list-row">
+        <div class="dash-list-main">
+          <span class="dash-badge is-amber">대기</span>
+          <span class="dash-list-text">${escapeHtmlPlan(r.name || '-')} <small style="color:var(--text-muted);">(LOT ${escapeHtmlPlan(r.lotNo || '-')})</small></span>
+        </div>
+        <span class="dash-list-meta">${formatNumberDisplay(r.qty || 0)}개</span>
+      </div>
+    `).join('');
+
+    const todayInspHtml = todayInspRows.slice(0, 4).map(({ row, todayPlan }) => {
+      const sumToday = parseSafeInt(todayPlan.assembly) + parseSafeInt(todayPlan.inspect) + parseSafeInt(todayPlan.pack);
+      return `
+        <div class="dash-list-row">
+          <div class="dash-list-main">
+            <span class="dash-badge is-blue">${escapeHtmlPlan(row.line || '-')}</span>
+            <span class="dash-list-text">${escapeHtmlPlan(row.name || '-')} <small style="color:var(--text-muted);">(LOT ${escapeHtmlPlan(row.lotNo || '-')})</small></span>
+          </div>
+          <span class="dash-list-meta">금일 ${formatNumberDisplay(sumToday)}개</span>
+        </div>
+      `;
+    }).join('');
+
+    // 하단 3열: 검정 파이프라인 / 생산일보 / 근태+관리자알림
+    const prodRowsHtml = prodStatusList.map(item => `
+      <div class="dash-list-row">
+        <div class="dash-list-main">
+          <span class="dash-badge ${item.done ? 'is-green' : 'is-amber'}">${item.done ? '작성완료' : '미작성'}</span>
+          <span class="dash-list-text">${escapeHtmlPlan(item.line)}</span>
+        </div>
+        <span class="dash-list-meta">${item.done ? `실적 ${formatNumberDisplay(item.totalQty)} · ${item.totalHours.toFixed(1)}H` : '입력 대기'}</span>
+      </div>
+    `).join('');
+
+    const attListHtml = todayAtt.slice(0, 5).map(rec => {
+      const w = workerMap.get(rec.workerId);
+      const t = typeMap.get(rec.typeId);
+      const wName = w ? w.name : (rec.workerName || '-');
+      const wGrp = w ? w.group : '';
+      const tName = t ? t.name : (rec.typeName || '변동');
+      return `
+        <div class="dash-list-row">
+          <div class="dash-list-main">
+            <span class="dash-badge is-purple">${escapeHtmlPlan(tName)}</span>
+            <span class="dash-list-text">${escapeHtmlPlan(wName)}</span>
+          </div>
+          <span class="dash-list-meta">${escapeHtmlPlan(wGrp)}</span>
+        </div>
+      `;
+    }).join('');
+
+    host.innerHTML = `
+      <div class="dash-kpi-grid">${kpiCards.join('')}</div>
+
+      <div class="dash-grid-2">
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <div class="dash-card-title">
+              <span>긴급 처리 필요 (납기임박 · 일정 미배정)</span>
+              <span class="dash-count-pill ${rpUrgentList.length + unplannedRows.length > 0 ? 'is-danger' : ''}">${rpUrgentList.length + unplannedRows.length}건</span>
+            </div>
+            <button type="button" class="dash-head-action" data-dash-goto="tab-inspection">일정계획 →</button>
+          </div>
+          <div class="dash-list">
+            ${urgentItemsHtml || '<div class="dash-empty">현재 납기임박 또는 일정 미배정 이슈가 없습니다.</div>'}
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <div class="dash-card-title">
+              <span>품질검사 대기 &amp; 오늘의 작업 일정</span>
+              <span class="dash-count-pill ${qualityRows.length > 0 ? 'is-amber' : ''}">품검 ${qualityRows.length}건</span>
+            </div>
+            <button type="button" class="dash-head-action" data-dash-goto="tab-quality">품질검사 →</button>
+          </div>
+          <div class="dash-list">
+            ${qualityListHtml || '<div class="dash-empty">품질검사 대기 항목이 없습니다.</div>'}
+            ${todayInspHtml ? `<div style="margin-top:4px;font-size:11px;font-weight:700;color:var(--text-sub);">오늘(${escapeHtmlPlan(todayStr)}) 예정 작업</div>${todayInspHtml}` : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="dash-grid-3">
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <div class="dash-card-title"><span>검정 진행 현황</span></div>
+            <button type="button" class="dash-head-action" data-dash-goto="tab-certification">검정현황 →</button>
+          </div>
+          <div class="dash-pipeline" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+            <div class="dash-pipe-step"><span class="dash-pipe-label">등록완료</span><span class="dash-pipe-val" style="color:var(--primary);">${pipeCounts.등록완료}</span></div>
+            <div class="dash-pipe-step"><span class="dash-pipe-label">검정신청</span><span class="dash-pipe-val" style="color:var(--purple);">${pipeCounts.검정신청}</span></div>
+            <div class="dash-pipe-step"><span class="dash-pipe-label">품검요청</span><span class="dash-pipe-val" style="color:#d97706;">${pipeCounts.품검요청}</span></div>
+            <div class="dash-pipe-step"><span class="dash-pipe-label">일정완료</span><span class="dash-pipe-val" style="color:var(--success);">${pipeCounts.일정완료}</span></div>
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <div class="dash-card-title"><span>반별 생산일보 현황</span></div>
+            <button type="button" class="dash-head-action" data-dash-goto="tab-production" data-dash-sub="daily">일보작성 →</button>
+          </div>
+          <div class="dash-list">${prodRowsHtml}</div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <div class="dash-card-title"><span>금일 근태 변동</span><span class="dash-count-pill">${todayAtt.length}명</span></div>
+            <button type="button" class="dash-head-action" data-dash-goto="tab-attendance" data-dash-sub="attendance">캘린더 →</button>
+          </div>
+          <div class="dash-list">
+            ${attListHtml || '<div class="dash-empty">오늘 등록된 근태 변동 인원이 없습니다.</div>'}
+          </div>
+          ${pendingAuthCnt > 0 ? `
+            <div class="dash-alert-strip">
+              <span>관리자 알림: 가입승인 / 비번초기화 ${pendingAuthCnt}건</span>
+              <button type="button" class="btn btn-xs btn-outline" data-dash-goto="tab-settings" data-dash-sub="auth">처리하기</button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  let dashKpiChartInstance = null;
+
+  function computeDashPlanAnalytics(pd, targetYear, targetMonth, unit, lineFilter) {
+    const prevYear = String(Number(targetYear) - 1);
+    const mainLines = ['감지기반', '유도등반', '수신기반'];
+    const getYearRowsMap = (yr) => {
+      if (yr === String(pd.year)) return pd.rowsByCode || {};
+      return (pd.rowsByYear && pd.rowsByYear[yr]) || {};
+    };
+    const curRowsMap = getYearRowsMap(targetYear);
+    const prevRowsMap = getYearRowsMap(prevYear);
+    const curWeeks = String(pd.year) === targetYear && Array.isArray(pd.weeks) ? pd.weeks : generateYearWeeks(targetYear);
+    const prevWeeks = String(pd.year) === prevYear && Array.isArray(pd.weeks) ? pd.weeks : generateYearWeeks(prevYear);
+
+    const activeItems = (state.certMasterItems || []).filter(item => {
+      if (!item || (item.useYn || '사용') !== '사용') return false;
+      if (lineFilter === 'ALL') return true;
+      return item.group === lineFilter;
+    });
+
+    const itemStatsMap = new Map();
+    const itemSummaries = [];
+
+    activeItems.forEach(item => {
+      const price = parsePlanNum(item.unitPrice) || 0;
+      const mul = unit === 'amount' ? price : 1;
+      const cEntry = curRowsMap[item.code] || {};
+      const pEntry = prevRowsMap[item.code] || {};
+      const minStockRaw = item.minStock !== '' && item.minStock !== undefined ? parsePlanNum(item.minStock) : null;
+      const maxStockRaw = item.maxStock !== '' && item.maxStock !== undefined ? parsePlanNum(item.maxStock) : null;
+      const minStock = minStockRaw !== null ? minStockRaw * mul : null;
+      const maxStock = maxStockRaw !== null ? maxStockRaw * mul : null;
+
+      let rollingStock = parsePlanNum(getPlanCarryOverBaseStock(pd, targetYear, item)) * mul;
+      let hasRisk = false;
+
+      const byMonth = Array.from({ length: 12 }, () => ({ prod: 0, forecast: 0, actual: 0, compare: 0, diff: 0, stock: 0, prevProd: 0 }));
+      const byWeek = {};
+
+      curWeeks.forEach(w => {
+        const mIdx = (Number(w.month) || 1) - 1;
+        const wCell = (cEntry.weeks && cEntry.weeks[w.id]) || {};
+        const prod = parsePlanNum(wCell.prod) * mul;
+        const forecast = parsePlanNum(wCell.forecast) * mul;
+        const actual = parsePlanNum(wCell.actual) * mul;
+        const compare = parsePlanNum(wCell.compare) * mul;
+        const diff = prod - compare;
+        rollingStock = rollingStock + prod - actual;
+        if (minStock !== null && rollingStock < minStock) hasRisk = true;
+
+        byWeek[w.id] = { id: w.id, label: w.label || w.id, month: Number(w.month) || 1, prod, forecast, actual, compare, diff, stock: rollingStock };
+        if (mIdx >= 0 && mIdx < 12) {
+          byMonth[mIdx].prod += prod;
+          byMonth[mIdx].forecast += forecast;
+          byMonth[mIdx].actual += actual;
+          byMonth[mIdx].compare += compare;
+          byMonth[mIdx].diff += diff;
+          byMonth[mIdx].stock = rollingStock; // 월말 기말재고
+        }
+      });
+
+      prevWeeks.forEach(w => {
+        const mIdx = (Number(w.month) || 1) - 1;
+        const wCell = (pEntry.weeks && pEntry.weeks[w.id]) || {};
+        if (mIdx >= 0 && mIdx < 12) {
+          byMonth[mIdx].prevProd += parsePlanNum(wCell.prod) * mul;
+        }
+      });
+
+      const targetMonthWeekIds = new Set(curWeeks.filter(w => Number(w.month) === targetMonth).map(w => w.id));
+      const changeCounts = { yellow: 0, pink: 0, green: 0, blue: 0 };
+      if (cEntry.colors) {
+        Object.entries(cEntry.colors).forEach(([colKey, colName]) => {
+          const wId = String(colKey).split('_')[0];
+          if (targetMonthWeekIds.has(wId) && changeCounts[colName] !== undefined) changeCounts[colName]++;
+        });
+      }
+
+      const monthProd = byMonth[targetMonth - 1]?.prod || 0;
+      const yearProd = byMonth.reduce((acc, m) => acc + m.prod, 0);
+      const stat = { item, byMonth, byWeek, minStock, maxStock, hasRisk, changeCounts, monthProd, yearProd };
+      itemStatsMap.set(item.code, stat);
+      itemSummaries.push(stat);
+    });
+
+    // 위험 품목 우선 + 당월 계획량 내림차순 정렬
+    itemSummaries.sort((a, b) => {
+      if (a.hasRisk !== b.hasRisk) return a.hasRisk ? -1 : 1;
+      if (b.monthProd !== a.monthProd) return b.monthProd - a.monthProd;
+      return b.yearProd - a.yearProd;
+    });
+
+    return { curWeeks, prevYear, mainLines, itemStatsMap, itemSummaries };
+  }
+
+  function getDashSelectedTargets(analytics, selectedCode) {
+    if (!selectedCode || selectedCode === 'ALL') {
+      return { kind: 'all', groupName: '', stat: null, targets: analytics.itemSummaries };
+    }
+    if (String(selectedCode).startsWith('GROUP:')) {
+      const groupName = String(selectedCode).slice(6);
+      const targets = analytics.itemSummaries.filter(st => ((st.item.itemGroup || '미분류').trim() || '미분류') === groupName);
+      if (targets.length > 0) return { kind: 'group', groupName, stat: null, targets };
+      return { kind: 'all', groupName: '', stat: null, targets: analytics.itemSummaries };
+    }
+    const stat = analytics.itemStatsMap.get(selectedCode) || null;
+    if (stat) return { kind: 'item', groupName: (stat.item.itemGroup || '미분류').trim() || '미분류', stat, targets: [stat] };
+    return { kind: 'all', groupName: '', stat: null, targets: analytics.itemSummaries };
+  }
+
+  function buildDashChartDataset(analytics, selectedCode, targetYear, targetMonth, unit, mode, period, seriesFlags) {
+    const isDark = document.documentElement.classList.contains('dark-mode');
+    const selInfo = getDashSelectedTargets(analytics, selectedCode);
+    const selectedStat = selInfo.stat;
+    const targets = selInfo.targets;
+
+    let labels = [];
+    let buckets = [];
+
+    if (period === 'week') {
+      const monthWeeks = analytics.curWeeks.filter(w => Number(w.month) === targetMonth);
+      labels = monthWeeks.map(w => w.label || w.id);
+      buckets = monthWeeks.map(w => {
+        const b = { prod: 0, forecast: 0, actual: 0, compare: 0, diff: 0, stock: 0, prevProd: 0 };
+        targets.forEach(st => {
+          const wk = st.byWeek[w.id];
+          if (!wk) return;
+          b.prod += wk.prod;
+          b.forecast += wk.forecast;
+          b.actual += wk.actual;
+          b.compare += wk.compare;
+          b.diff += wk.diff;
+          b.stock += wk.stock;
+        });
+        return b;
+      });
+    } else if (period === 'quarter') {
+      labels = ['1분기', '2분기', '3분기', '4분기'];
+      buckets = [0, 1, 2, 3].map(q => {
+        const b = { prod: 0, forecast: 0, actual: 0, compare: 0, diff: 0, stock: 0, prevProd: 0 };
+        for (let m = q * 3; m < q * 3 + 3; m++) {
+          targets.forEach(st => {
+            const bm = st.byMonth[m];
+            if (!bm) return;
+            b.prod += bm.prod;
+            b.forecast += bm.forecast;
+            b.actual += bm.actual;
+            b.compare += bm.compare;
+            b.diff += bm.diff;
+            b.prevProd += bm.prevProd;
+            if (m === q * 3 + 2) b.stock += bm.stock;
+          });
+        }
+        return b;
+      });
+    } else {
+      labels = Array.from({ length: 12 }, (_, i) => `${i + 1}월`);
+      buckets = Array.from({ length: 12 }, (_, m) => {
+        const b = { prod: 0, forecast: 0, actual: 0, compare: 0, diff: 0, stock: 0, prevProd: 0 };
+        targets.forEach(st => {
+          const bm = st.byMonth[m];
+          if (!bm) return;
+          b.prod += bm.prod;
+          b.forecast += bm.forecast;
+          b.actual += bm.actual;
+          b.compare += bm.compare;
+          b.diff += bm.diff;
+          b.stock += bm.stock;
+          b.prevProd += bm.prevProd;
+        });
+        return b;
+      });
+    }
+
+    const datasets = [];
+    if (mode === 'stock') {
+      datasets.push({
+        type: 'line',
+        label: '예상 기말재고',
+        data: buckets.map(b => Math.round(b.stock)),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245, 158, 11, 0.16)',
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.35,
+        pointRadius: 4,
+        pointHoverRadius: 6
+      });
+      if (selectedStat && selectedStat.minStock !== null) {
+        datasets.push({
+          type: 'line',
+          label: '최소재고 (안전선)',
+          data: labels.map(() => Math.round(selectedStat.minStock)),
+          borderColor: '#dc2626',
+          borderDash: [6, 4],
+          borderWidth: 1.8,
+          pointRadius: 0,
+          fill: false
+        });
+      }
+      if (selectedStat && selectedStat.maxStock !== null) {
+        datasets.push({
+          type: 'line',
+          label: '최대재고 (상한선)',
+          data: labels.map(() => Math.round(selectedStat.maxStock)),
+          borderColor: '#10b981',
+          borderDash: [6, 4],
+          borderWidth: 1.8,
+          pointRadius: 0,
+          fill: false
+        });
+      }
+      datasets.push({
+        type: 'bar',
+        label: '생산계획',
+        data: buckets.map(b => Math.round(b.prod)),
+        backgroundColor: 'rgba(37, 99, 235, 0.22)',
+        borderColor: '#2563eb',
+        borderWidth: 1,
+        borderRadius: 5,
+        maxBarThickness: 28
+      });
+    } else if (mode === 'compare') {
+      datasets.push({
+        type: 'bar',
+        label: '생산계획',
+        data: buckets.map(b => Math.round(b.prod)),
+        backgroundColor: 'rgba(37, 99, 235, 0.78)',
+        borderRadius: 5,
+        maxBarThickness: 26
+      });
+      datasets.push({
+        type: 'bar',
+        label: '입고비교',
+        data: buckets.map(b => Math.round(b.compare)),
+        backgroundColor: 'rgba(124, 58, 237, 0.68)',
+        borderRadius: 5,
+        maxBarThickness: 26
+      });
+      datasets.push({
+        type: 'line',
+        label: '차이수량 (생산-입고)',
+        data: buckets.map(b => Math.round(b.diff)),
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.14)',
+        borderWidth: 2.2,
+        tension: 0.3,
+        pointRadius: 3.5,
+        pointHoverRadius: 6
+      });
+    } else {
+      if (seriesFlags.prod) {
+        datasets.push({
+          type: 'bar',
+          label: '생산계획',
+          data: buckets.map(b => Math.round(b.prod)),
+          backgroundColor: 'rgba(37, 99, 235, 0.82)',
+          hoverBackgroundColor: '#1d4ed8',
+          borderRadius: 6,
+          maxBarThickness: 28
+        });
+      }
+      if (seriesFlags.forecast) {
+        datasets.push({
+          type: 'bar',
+          label: '출고예정',
+          data: buckets.map(b => Math.round(b.forecast)),
+          backgroundColor: 'rgba(124, 58, 237, 0.68)',
+          hoverBackgroundColor: '#6d28d9',
+          borderRadius: 6,
+          maxBarThickness: 28
+        });
+      }
+      if (seriesFlags.actual) {
+        datasets.push({
+          type: 'line',
+          label: '실출고',
+          data: buckets.map(b => Math.round(b.actual)),
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.14)',
+          borderWidth: 2.5,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 3.8,
+          pointHoverRadius: 6
+        });
+      }
+      if (seriesFlags.stock) {
+        datasets.push({
+          type: 'line',
+          label: '기말재고',
+          data: buckets.map(b => Math.round(b.stock)),
+          borderColor: '#f59e0b',
+          borderDash: [4, 3],
+          borderWidth: 2.2,
+          tension: 0.35,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          fill: false
+        });
+      }
+    }
+
+    const fmtTick = (val) => {
+      if (unit === 'amount') {
+        if (Math.abs(val) >= 100000000) return `${(val / 100000000).toFixed(1)}억`;
+        if (Math.abs(val) >= 10000) return `${Math.round(val / 10000)}만`;
+        return formatNumberDisplay(val);
+      }
+      if (Math.abs(val) >= 10000) return `${(val / 1000).toFixed(0)}k`;
+      return formatNumberDisplay(val);
+    };
+
+    const tickColor = isDark ? '#94a3b8' : '#64748b';
+    const gridColor = isDark ? 'rgba(148, 163, 184, 0.12)' : 'rgba(148, 163, 184, 0.22)';
+
+    const options = {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 520, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'end',
+          labels: { color: tickColor, boxWidth: 10, boxHeight: 10, usePointStyle: true, font: { family: 'Pretendard, sans-serif', size: 11.5, weight: '600' } }
+        },
+        tooltip: {
+          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(15, 23, 42, 0.9)',
+          titleColor: '#f8fafc',
+          bodyColor: '#e2e8f0',
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            label: (ctx) => {
+              const v = ctx.parsed.y;
+              const formatted = unit === 'amount' ? formatDashAmount(v) : `${formatNumberDisplay(v)}개`;
+              return ` ${ctx.dataset.label}: ${formatted}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: tickColor, font: { family: 'Pretendard, sans-serif', size: 11.5, weight: '600' } }
+        },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: tickColor, font: { family: 'Pretendard, sans-serif', size: 11 }, callback: fmtTick }
+        }
+      }
+    };
+
+    return { labels, datasets, options, buckets };
+  }
+
+  function renderDashboardKpi(preserveShell = false) {
+    const host = document.getElementById('dash-view-kpi');
+    if (!host) return;
+    populateDashKpiFilters();
+
+    const pd = state.planData || getDefaultPlanData();
+    const targetYear = String(state.dashboardKpiYear || pd.year || new Date().getFullYear());
+    const targetMonth = Math.min(12, Math.max(1, parseInt(state.dashboardKpiMonth, 10) || (new Date().getMonth() + 1)));
+    const unit = state.dashboardKpiUnit === 'amount' ? 'amount' : 'qty';
+    const lineFilter = state.dashboardKpiLine || 'ALL';
+    const mode = state.dashboardKpiChartMode || 'prod';
+    const period = state.dashboardKpiPeriod || 'month';
+    const seriesFlags = state.dashboardKpiSeries || { prod: true, forecast: true, actual: true, stock: false };
+
+    const analytics = computeDashPlanAnalytics(pd, targetYear, targetMonth, unit, lineFilter);
+    const selInfo = getDashSelectedTargets(analytics, state.dashboardKpiItemCode || 'ALL');
+    if (selInfo.kind === 'all' && state.dashboardKpiItemCode !== 'ALL') {
+      state.dashboardKpiItemCode = 'ALL';
+    }
+    const selectedCode = state.dashboardKpiItemCode || 'ALL';
+    const selectedStat = selInfo.stat;
+    const targets = selInfo.targets;
+
+    const fmtVal = (v) => unit === 'amount' ? formatDashAmount(v) : `${formatNumberDisplay(Math.round(v))}개`;
+
+    // 선택 대상 집계
+    let curProd = 0; let prevMProd = 0; let curForecast = 0; let curActual = 0; let curStock = 0;
+    let yearProd = 0; let yearPrevProd = 0;
+    const changeSum = { yellow: 0, pink: 0, green: 0, blue: 0 };
+
+    targets.forEach(st => {
+      const cm = st.byMonth[targetMonth - 1];
+      const pm = targetMonth > 1 ? st.byMonth[targetMonth - 2] : null;
+      if (cm) {
+        curProd += cm.prod;
+        curForecast += cm.forecast;
+        curActual += cm.actual;
+        curStock += cm.stock;
+      }
+      if (pm) prevMProd += pm.prod;
+      st.byMonth.forEach(m => { yearProd += m.prod; yearPrevProd += m.prevProd; });
+      changeSum.yellow += st.changeCounts.yellow;
+      changeSum.pink += st.changeCounts.pink;
+      changeSum.green += st.changeCounts.green;
+      changeSum.blue += st.changeCounts.blue;
+    });
+
+    const outRate = curForecast > 0 ? Math.min(999, (curActual / curForecast) * 100) : 0;
+    const prodVsForecast = curProd - curForecast;
+
+    let stockStatusBadge = selInfo.kind === 'group'
+      ? `<span class="dash-badge is-purple">그룹 합산 (${targets.length}개)</span>`
+      : '<span class="dash-badge is-blue">전체 합산</span>';
+    if (selectedStat) {
+      if (selectedStat.minStock !== null && curStock < selectedStat.minStock) {
+        stockStatusBadge = `<span class="dash-badge is-red">최소재고 미달 (${fmtVal(selectedStat.minStock)})</span>`;
+      } else if (selectedStat.maxStock !== null && curStock > selectedStat.maxStock) {
+        stockStatusBadge = `<span class="dash-badge is-amber">최대재고 초과 (${fmtVal(selectedStat.maxStock)})</span>`;
+      } else {
+        stockStatusBadge = '<span class="dash-badge is-green">안전재고 정상</span>';
+      }
+    }
+
+    const searchQ = (state.dashboardKpiItemSearch || '').trim().toLowerCase();
+    const filteredItems = analytics.itemSummaries.filter(st => {
+      if (!searchQ) return true;
+      const it = st.item;
+      return (it.name || '').toLowerCase().includes(searchQ)
+        || (it.code || '').toLowerCase().includes(searchQ)
+        || (it.itemGroup || '').toLowerCase().includes(searchQ)
+        || (it.modelName || '').toLowerCase().includes(searchQ);
+    });
+
+    // 품목그룹별 묶음 생성
+    const groupMap = new Map();
+    filteredItems.forEach(st => {
+      const gName = (st.item.itemGroup || '미분류').trim() || '미분류';
+      if (!groupMap.has(gName)) {
+        groupMap.set(gName, { name: gName, items: [], monthProd: 0, yearProd: 0, hasRisk: false });
+      }
+      const g = groupMap.get(gName);
+      g.items.push(st);
+      g.monthProd += st.monthProd;
+      g.yearProd += st.yearProd;
+      if (st.hasRisk) g.hasRisk = true;
+    });
+    const groupedList = [...groupMap.values()].sort((a, b) => {
+      if (a.hasRisk !== b.hasRisk) return a.hasRisk ? -1 : 1;
+      if (b.monthProd !== a.monthProd) return b.monthProd - a.monthProd;
+      return b.yearProd - a.yearProd;
+    });
+
+    const expandedSet = state.dashboardKpiExpandedGroups instanceof Set ? state.dashboardKpiExpandedGroups : new Set();
+
+    const targetBadgeText = selInfo.kind === 'item'
+      ? '개별 품목 분석'
+      : (selInfo.kind === 'group' ? '품목그룹 분석' : '전체 품목 합계');
+    const targetTitleText = selInfo.kind === 'item'
+      ? `${escapeHtmlPlan(selectedStat.item.name)} (${escapeHtmlPlan(selectedStat.item.code)})`
+      : (selInfo.kind === 'group'
+        ? `${escapeHtmlPlan(selInfo.groupName)} · ${targets.length}개 품목`
+        : `${lineFilter === 'ALL' ? '전체 작업반' : lineFilter} · ${analytics.itemSummaries.length}개 품목`);
+
+    const targetBannerHtml = `
+      <div class="dash-target-info">
+        <span class="dash-badge ${selInfo.kind === 'all' ? 'is-blue' : 'is-purple'}">${targetBadgeText}</span>
+        <b>${targetTitleText}</b>
+        ${selectedStat ? `<span style="color:var(--text-sub);font-size:11.5px;">${escapeHtmlPlan(selectedStat.item.group || '')} · ${escapeHtmlPlan(selectedStat.item.itemGroup || '미분류')}</span>` : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${selInfo.kind !== 'all' ? '<button type="button" class="btn btn-xs btn-outline" data-dash-select-item="ALL">전체 합계로 돌아가기</button>' : ''}
+        <button type="button" class="btn btn-xs btn-outline" data-dash-goto="tab-plan">생산계획 그리드 →</button>
+      </div>
+    `;
+
+    const kpiCardsHtml = `
+      <div class="dash-kpi-card tone-blue">
+        <div class="dash-kpi-top"><span class="dash-kpi-label">${targetMonth}월 생산계획</span><span class="dash-kpi-link">연간 ${fmtVal(yearProd)}</span></div>
+        <div class="dash-kpi-value">${fmtVal(curProd)}</div>
+        <div class="dash-kpi-sub">${formatDashDeltaBadge(curProd, prevMProd)} <span style="color:var(--text-muted);">(전월비)</span></div>
+      </div>
+
+      <div class="dash-kpi-card tone-purple">
+        <div class="dash-kpi-top"><span class="dash-kpi-label">${targetMonth}월 출고예정</span><span class="dash-kpi-link">생산 대비</span></div>
+        <div class="dash-kpi-value">${fmtVal(curForecast)}</div>
+        <div class="dash-kpi-sub">${prodVsForecast >= 0 ? `<span class="dash-delta-up">생산 여유 +${fmtVal(prodVsForecast)}</span>` : `<span class="dash-delta-down">생산 부족 ${fmtVal(prodVsForecast)}</span>`}</div>
+      </div>
+
+      <div class="dash-kpi-card tone-emerald">
+        <div class="dash-kpi-top"><span class="dash-kpi-label">${targetMonth}월 실출고</span><span class="dash-kpi-link">예정 대비 ${outRate.toFixed(1)}%</span></div>
+        <div class="dash-kpi-value">${fmtVal(curActual)}</div>
+        <div class="dash-progress-track"><div class="dash-progress-fill is-green" style="width:${Math.min(100, outRate).toFixed(1)}%;"></div></div>
+      </div>
+
+      <div class="dash-kpi-card tone-amber">
+        <div class="dash-kpi-top"><span class="dash-kpi-label">${targetMonth}월 예상 기말재고</span>${stockStatusBadge}</div>
+        <div class="dash-kpi-value">${fmtVal(curStock)}</div>
+        <div class="dash-kpi-sub">
+          <span class="dash-badge is-amber">증가 ${changeSum.yellow}</span>
+          <span class="dash-badge is-red">감소 ${changeSum.pink}</span>
+          <span class="dash-badge is-green">이동 ${changeSum.green}</span>
+        </div>
+      </div>
+    `;
+
+    const itemListHtml = `
+      <button type="button" class="dash-item-row ${selectedCode === 'ALL' ? 'active' : ''}" data-dash-select-item="ALL">
+        <div class="dash-item-main">
+          <div class="dash-item-name">전체 합계 (${analytics.itemSummaries.length}개)</div>
+          <div class="dash-item-sub">${lineFilter === 'ALL' ? '모든 작업반 통합' : lineFilter}</div>
+        </div>
+        <div class="dash-item-val">${fmtVal(analytics.itemSummaries.reduce((a, s) => a + s.monthProd, 0))}</div>
+      </button>
+      ${groupedList.map(grp => {
+        const gKey = `GROUP:${grp.name}`;
+        const isGroupActive = selectedCode === gKey;
+        const isOpen = !!searchQ || expandedSet.has(grp.name) || (selInfo.kind === 'item' && selInfo.groupName === grp.name);
+        const childrenHtml = isOpen ? `
+          <div class="dash-group-children">
+            ${grp.items.map(st => {
+              const it = st.item;
+              const isActive = selectedCode === it.code;
+              return `
+                <button type="button" class="dash-item-row dash-item-child-row ${isActive ? 'active' : ''}" data-dash-select-item="${escapeHtmlPlan(it.code)}">
+                  <div class="dash-item-main">
+                    <div class="dash-item-name">
+                      ${st.hasRisk ? '<span class="dash-risk-dot" title="최소재고 미만 구간 있음"></span>' : ''}
+                      <span>${escapeHtmlPlan(it.name || it.code)}</span>
+                    </div>
+                    <div class="dash-item-sub">${escapeHtmlPlan(it.group || '-')} · ${escapeHtmlPlan(it.code)}</div>
+                  </div>
+                  <div class="dash-item-val">${fmtVal(st.monthProd)}</div>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        ` : '';
+        return `
+          <div class="dash-group-wrap">
+            <div class="dash-group-row ${isGroupActive ? 'active' : ''}" data-dash-select-group="${escapeHtmlPlan(grp.name)}">
+              <button type="button" class="dash-group-chevron ${isOpen ? 'is-open' : ''}" data-dash-toggle-group="${escapeHtmlPlan(grp.name)}" title="${isOpen ? '접기' : '펼치기'}">▸</button>
+              <div class="dash-item-main">
+                <div class="dash-item-name">
+                  ${grp.hasRisk ? '<span class="dash-risk-dot" title="그룹 내 최소재고 미만 품목 있음"></span>' : ''}
+                  <span>${escapeHtmlPlan(grp.name)}</span>
+                </div>
+                <div class="dash-item-sub">${grp.items.length}개 품목</div>
+              </div>
+              <div class="dash-item-val">${fmtVal(grp.monthProd)}</div>
+            </div>
+            ${childrenHtml}
+          </div>
+        `;
+      }).join('')}
+      ${groupedList.length === 0 ? '<div class="dash-empty">검색 조건에 맞는 품목그룹이 없습니다.</div>' : ''}
+    `;
+
+    const seriesChipsHtml = mode === 'prod' ? `
+      <div class="dash-series-chips" id="dash-kpi-series-chips">
+        <button type="button" class="dash-series-chip ${seriesFlags.prod ? 'is-on' : ''}" data-dash-series="prod"><span class="dash-legend-swatch" style="background:#2563eb;"></span>생산계획</button>
+        <button type="button" class="dash-series-chip ${seriesFlags.forecast ? 'is-on' : ''}" data-dash-series="forecast"><span class="dash-legend-swatch" style="background:#7c3aed;"></span>출고예정</button>
+        <button type="button" class="dash-series-chip ${seriesFlags.actual ? 'is-on' : ''}" data-dash-series="actual"><span class="dash-legend-swatch" style="background:#10b981;"></span>실출고</button>
+        <button type="button" class="dash-series-chip ${seriesFlags.stock ? 'is-on' : ''}" data-dash-series="stock"><span class="dash-legend-swatch" style="background:#f59e0b;"></span>기말재고</button>
+      </div>
+    ` : `<div style="font-size:11.5px;color:var(--text-sub);">${mode === 'stock' ? (selectedStat ? '개별 품목의 최소/최대 안전재고 기준선이 함께 표시됩니다.' : '좌측에서 개별 품목을 선택하면 최소·최대재고 기준선이 표시됩니다.') : '생산계획과 입고비교 및 차이수량(생산-입고)을 비교합니다.'}</div>`;
+
+    const insightHtml = `
+      <span>연간 누적 계획: <b>${fmtVal(yearProd)}</b> (${formatDashDeltaBadge(yearProd, yearPrevProd)} vs ${escapeHtmlPlan(analytics.prevYear)}년)</span>
+      <span>재고 부족 주의 품목: <b style="color:var(--danger);">${analytics.itemSummaries.filter(s => s.hasRisk).length}개</b></span>
+      <span>조회 단위: <b>${period === 'month' ? '월별 (1~12월)' : (period === 'quarter' ? '분기별 (1~4Q)' : `${targetMonth}월 주차별`)}</b></span>
+    `;
+
+    const hasShell = preserveShell && !!document.getElementById('dash-kpi-canvas');
+    if (!hasShell) {
+      if (dashKpiChartInstance) {
+        dashKpiChartInstance.destroy();
+        dashKpiChartInstance = null;
+      }
+      host.innerHTML = `
+        <div class="dash-target-banner" id="dash-kpi-target-banner">${targetBannerHtml}</div>
+        <div class="dash-kpi-grid cols-4" id="dash-kpi-top-cards">${kpiCardsHtml}</div>
+        <div class="dash-kpi-workspace">
+          <aside class="dash-item-sidebar">
+            <div class="dash-card-head" style="padding-bottom:6px;">
+              <div class="dash-card-title"><span>품목그룹 탐색</span><span class="dash-count-pill">${groupedList.length}그룹</span></div>
+              <div style="display:flex;gap:4px;">
+                <button type="button" class="btn btn-xs btn-ghost" data-dash-expand-all="1" style="font-size:11px;padding:1px 5px;">펼침</button>
+                <button type="button" class="btn btn-xs btn-ghost" data-dash-collapse-all="1" style="font-size:11px;padding:1px 5px;">접기</button>
+              </div>
+            </div>
+            <div class="dash-item-search-wrap">
+              <input type="text" id="dash-kpi-item-search" class="form-input form-input-sm" placeholder="품명 / 코드 / 그룹 검색" value="${escapeHtmlPlan(state.dashboardKpiItemSearch || '')}" style="width:100%;">
+            </div>
+            <div class="dash-item-list" id="dash-kpi-item-list">${itemListHtml}</div>
+          </aside>
+
+          <div class="dash-card">
+            <div class="dash-chart-toolbar">
+              <div class="dash-mode-tabs" id="dash-kpi-mode-tabs">
+                <button type="button" class="dash-mode-tab ${mode === 'prod' ? 'active' : ''}" data-dash-mode="prod">생산 · 출고 추이</button>
+                <button type="button" class="dash-mode-tab ${mode === 'stock' ? 'active' : ''}" data-dash-mode="stock">재고 · 안전재고</button>
+                <button type="button" class="dash-mode-tab ${mode === 'compare' ? 'active' : ''}" data-dash-mode="compare">입고비교 · 차이</button>
+              </div>
+              <div class="dash-seg-group" id="dash-kpi-period-tabs">
+                <button type="button" class="dash-seg-btn ${period === 'month' ? 'active' : ''}" data-dash-period="month">월별</button>
+                <button type="button" class="dash-seg-btn ${period === 'quarter' ? 'active' : ''}" data-dash-period="quarter">분기별</button>
+                <button type="button" class="dash-seg-btn ${period === 'week' ? 'active' : ''}" data-dash-period="week">주차별</button>
+              </div>
+            </div>
+            <div id="dash-kpi-series-bar">${seriesChipsHtml}</div>
+            <div class="dash-canvas-box">
+              <canvas id="dash-kpi-canvas"></canvas>
+            </div>
+            <div class="dash-insight-strip" id="dash-kpi-insight-strip">${insightHtml}</div>
+          </div>
+        </div>
+      `;
+    } else {
+      const bannerEl = document.getElementById('dash-kpi-target-banner');
+      const cardsEl = document.getElementById('dash-kpi-top-cards');
+      const listEl = document.getElementById('dash-kpi-item-list');
+      const seriesEl = document.getElementById('dash-kpi-series-bar');
+      const insightEl = document.getElementById('dash-kpi-insight-strip');
+      if (bannerEl) bannerEl.innerHTML = targetBannerHtml;
+      if (cardsEl) cardsEl.innerHTML = kpiCardsHtml;
+      if (listEl) listEl.innerHTML = itemListHtml;
+      if (seriesEl) seriesEl.innerHTML = seriesChipsHtml;
+      if (insightEl) insightEl.innerHTML = insightHtml;
+      document.querySelectorAll('#dash-kpi-mode-tabs .dash-mode-tab').forEach(b => b.classList.toggle('active', b.dataset.dashMode === mode));
+      document.querySelectorAll('#dash-kpi-period-tabs .dash-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dashPeriod === period));
+    }
+
+    // Chart.js 렌더링 / 부드러운 업데이트
+    const canvas = document.getElementById('dash-kpi-canvas');
+    if (canvas && typeof window.Chart === 'function') {
+      const chartCfg = buildDashChartDataset(analytics, selectedCode, targetYear, targetMonth, unit, mode, period, seriesFlags);
+      if (dashKpiChartInstance && dashKpiChartInstance.canvas === canvas) {
+        dashKpiChartInstance.data.labels = chartCfg.labels;
+        dashKpiChartInstance.data.datasets = chartCfg.datasets;
+        dashKpiChartInstance.options = chartCfg.options;
+        dashKpiChartInstance.update();
+      } else {
+        if (dashKpiChartInstance) dashKpiChartInstance.destroy();
+        dashKpiChartInstance = new window.Chart(canvas.getContext('2d'), {
+          type: 'bar',
+          data: { labels: chartCfg.labels, datasets: chartCfg.datasets },
+          options: chartCfg.options
+        });
+      }
+    } else if (canvas) {
+      const box = canvas.parentElement;
+      if (box) box.innerHTML = '<div class="dash-empty">차트 라이브러리(Chart.js)를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.</div>';
+    }
+  }
+
+  function triggerDashPaneAnim(paneEl) {
+    if (!paneEl) return;
+    paneEl.classList.remove('is-animating');
+    void paneEl.offsetWidth;
+    paneEl.classList.add('is-animating');
+  }
+
+  function renderDashboardModule(animate = false) {
+    syncDashboardHeaderControls();
+    if (state.dashboardView === 'kpi') {
+      if (animate) triggerDashPaneAnim(document.getElementById('dash-view-kpi'));
+      renderDashboardKpi(false);
+    } else {
+      if (animate) triggerDashPaneAnim(document.getElementById('dash-view-issues'));
+      renderDashboardIssues();
+    }
+  }
+
+  function initDashboardModule() {
+    const logoBtn = document.getElementById('btn-logo-dashboard');
+    if (logoBtn) {
+      const goDash = () => {
+        state.dashboardView = 'issues';
+        activateTab('tab-dashboard');
+      };
+      logoBtn.addEventListener('click', goDash);
+      logoBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          goDash();
+        }
+      });
+    }
+
+    document.getElementById('dash-view-switcher')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-dash-view]');
+      if (!btn) return;
+      const nextView = btn.dataset.dashView === 'kpi' ? 'kpi' : 'issues';
+      if (state.dashboardView === nextView) return;
+      state.dashboardView = nextView;
+      renderDashboardModule(true);
+    });
+
+    document.getElementById('dash-issue-line-filters')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-line]');
+      if (!btn) return;
+      state.dashboardIssueLine = btn.dataset.line || 'ALL';
+      renderDashboardModule(false);
+    });
+
+    document.getElementById('dash-kpi-year')?.addEventListener('change', (e) => {
+      state.dashboardKpiYear = e.target.value;
+      syncDashboardHeaderControls();
+      renderDashboardKpi(true);
+    });
+    document.getElementById('dash-kpi-month')?.addEventListener('change', (e) => {
+      state.dashboardKpiMonth = parseInt(e.target.value, 10) || 1;
+      syncDashboardHeaderControls();
+      renderDashboardKpi(true);
+    });
+    document.getElementById('dash-kpi-unit-switcher')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-unit]');
+      if (!btn) return;
+      state.dashboardKpiUnit = btn.dataset.unit === 'amount' ? 'amount' : 'qty';
+      syncDashboardHeaderControls();
+      renderDashboardKpi(true);
+    });
+    document.getElementById('dash-kpi-line-filters')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-line]');
+      if (!btn) return;
+      state.dashboardKpiLine = btn.dataset.line || 'ALL';
+      state.dashboardKpiItemCode = 'ALL';
+      syncDashboardHeaderControls();
+      renderDashboardKpi(true);
+    });
+
+    document.getElementById('btn-dash-refresh')?.addEventListener('click', () => {
+      renderDashboardModule(true);
+      showToast('대시보드를 새로고침했습니다.');
+    });
+
+    document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
+      if (state.currentTab === 'tab-dashboard' && state.dashboardView === 'kpi') {
+        setTimeout(() => renderDashboardKpi(true), 40);
+      }
+    });
+
+    const dashTabEl = document.getElementById('tab-dashboard');
+    dashTabEl?.addEventListener('click', (e) => {
+      const toggleGrpBtn = e.target.closest('[data-dash-toggle-group]');
+      if (toggleGrpBtn) {
+        e.stopPropagation();
+        const gName = toggleGrpBtn.dataset.dashToggleGroup;
+        if (!(state.dashboardKpiExpandedGroups instanceof Set)) state.dashboardKpiExpandedGroups = new Set();
+        if (state.dashboardKpiExpandedGroups.has(gName)) state.dashboardKpiExpandedGroups.delete(gName);
+        else state.dashboardKpiExpandedGroups.add(gName);
+        renderDashboardKpi(true);
+        return;
+      }
+
+      if (e.target.closest('[data-dash-expand-all]')) {
+        if (!(state.dashboardKpiExpandedGroups instanceof Set)) state.dashboardKpiExpandedGroups = new Set();
+        (state.certMasterItems || []).forEach(it => {
+          if (it && (it.useYn || '사용') === '사용') {
+            state.dashboardKpiExpandedGroups.add((it.itemGroup || '미분류').trim() || '미분류');
+          }
+        });
+        renderDashboardKpi(true);
+        return;
+      }
+
+      if (e.target.closest('[data-dash-collapse-all]')) {
+        state.dashboardKpiExpandedGroups = new Set();
+        renderDashboardKpi(true);
+        return;
+      }
+
+      const selectGrpBtn = e.target.closest('[data-dash-select-group]');
+      if (selectGrpBtn) {
+        const gName = selectGrpBtn.dataset.dashSelectGroup;
+        state.dashboardKpiItemCode = `GROUP:${gName}`;
+        if (!(state.dashboardKpiExpandedGroups instanceof Set)) state.dashboardKpiExpandedGroups = new Set();
+        state.dashboardKpiExpandedGroups.add(gName);
+        renderDashboardKpi(true);
+        return;
+      }
+
+      const selectItemBtn = e.target.closest('[data-dash-select-item]');
+      if (selectItemBtn) {
+        state.dashboardKpiItemCode = selectItemBtn.dataset.dashSelectItem || 'ALL';
+        renderDashboardKpi(true);
+        return;
+      }
+
+      const modeBtn = e.target.closest('[data-dash-mode]');
+      if (modeBtn) {
+        state.dashboardKpiChartMode = modeBtn.dataset.dashMode || 'prod';
+        renderDashboardKpi(true);
+        return;
+      }
+
+      const periodBtn = e.target.closest('[data-dash-period]');
+      if (periodBtn) {
+        state.dashboardKpiPeriod = periodBtn.dataset.dashPeriod || 'month';
+        renderDashboardKpi(true);
+        return;
+      }
+
+      const seriesBtn = e.target.closest('[data-dash-series]');
+      if (seriesBtn) {
+        const key = seriesBtn.dataset.dashSeries;
+        if (key && state.dashboardKpiSeries && key in state.dashboardKpiSeries) {
+          const next = { ...state.dashboardKpiSeries, [key]: !state.dashboardKpiSeries[key] };
+          // 최소 1개 시리즈는 켜두기
+          if (Object.values(next).some(Boolean)) {
+            state.dashboardKpiSeries = next;
+            renderDashboardKpi(true);
+          }
+        }
+        return;
+      }
+
+      const target = e.target.closest('[data-dash-goto]');
+      if (!target) return;
+      const tabId = target.dataset.dashGoto;
+      const subMode = target.dataset.dashSub || '';
+      navigateFromDashboard(tabId, subMode);
+    });
+
+    dashTabEl?.addEventListener('input', (e) => {
+      if (e.target && e.target.id === 'dash-kpi-item-search') {
+        state.dashboardKpiItemSearch = e.target.value || '';
+        renderDashboardKpi(true);
+      }
+    });
+  }
+
   function initBottomStatusBar() {
     document.getElementById('btn-scroll-top')?.addEventListener('click', () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -22999,6 +24292,10 @@
     const syncFooterTab = () => {
       const el = document.getElementById('footer-current-tab');
       if (!el) return;
+      if (state.currentTab === 'tab-dashboard') {
+        el.textContent = state.dashboardView === 'kpi' ? '대시보드 · 생산계획 KPI' : '대시보드 · 현장 이슈';
+        return;
+      }
       const activeTab = document.querySelector('.nav-tab.active');
       if (!activeTab) return;
       const tId = activeTab.dataset.tab;
@@ -23105,11 +24402,14 @@
     initAuthModule();
     initReportTemplateModule();
     initAdminDataManagement();
+    initDashboardModule();
     initBottomStatusBar();
     initGlobalCustomDropdowns();
     startClock();
     if (savedTabToRestore) {
       activateTab(savedTabToRestore);
+    } else {
+      activateTab('tab-dashboard');
     }
     initFirebase();
 
