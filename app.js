@@ -471,6 +471,27 @@
     }, 1600);
   }
 
+  /**
+   * 비동기 저장/등록 버튼 실행 중 스피너·문구 표시 및 중복 클릭 방지
+   */
+  async function withButtonLoading(btnOrId, loadingLabel, fn) {
+    const btn = typeof btnOrId === 'string' ? document.getElementById(btnOrId) : btnOrId;
+    if (!btn) return await fn();
+    if (btn.dataset.loading === '1') return;
+    const origHtml = btn.innerHTML;
+    const origDisabled = btn.disabled;
+    btn.dataset.loading = '1';
+    btn.disabled = true;
+    btn.innerHTML = `<span class="btn-inline-spinner" aria-hidden="true"></span><span>${loadingLabel || '처리 중...'}</span>`;
+    try {
+      return await fn();
+    } finally {
+      btn.disabled = origDisabled;
+      delete btn.dataset.loading;
+      btn.innerHTML = origHtml;
+    }
+  }
+
   function updateDbStatus(isConnected, message = 'DB 연결됨') {
     const badge = document.getElementById('db-status-badge');
     const dot = document.getElementById('db-status-dot');
@@ -593,6 +614,230 @@
   // =========================================================================
   // 4. Firebase Cloud Firestore 초기화 및 수동 연동 (비용 99% 절감 모드)
   // =========================================================================
+  // =========================================================================
+  // 4-1. Firestore 일일 전체 읽기/쓰기 사용량 추정 트래커
+  // =========================================================================
+  const firestoreUsageTracker = {
+    rawDb: null,
+    dateStr: getTodayDateString(),
+    sessionReads: 0,
+    sessionWrites: 0,
+    pendingReads: 0,
+    pendingWrites: 0,
+    globalReads: 0,
+    globalWrites: 0,
+    lastFetchedAt: 0,
+    flushing: false,
+    flushTimer: null
+  };
+
+  function getUsageLocalKey(dateStr) {
+    return `pms_fs_usage_local_${dateStr || getTodayDateString()}`;
+  }
+
+  function recordFirestoreOp(kind, count = 1) {
+    const n = Math.max(0, Number(count) || 0);
+    if (!n) return;
+    const today = getTodayDateString();
+    if (firestoreUsageTracker.dateStr !== today) {
+      firestoreUsageTracker.dateStr = today;
+      firestoreUsageTracker.sessionReads = 0;
+      firestoreUsageTracker.sessionWrites = 0;
+      firestoreUsageTracker.pendingReads = 0;
+      firestoreUsageTracker.pendingWrites = 0;
+      firestoreUsageTracker.globalReads = 0;
+      firestoreUsageTracker.globalWrites = 0;
+      firestoreUsageTracker.lastFetchedAt = 0;
+    }
+    if (kind === 'read') {
+      firestoreUsageTracker.sessionReads += n;
+      firestoreUsageTracker.pendingReads += n;
+    } else if (kind === 'write') {
+      firestoreUsageTracker.sessionWrites += n;
+      firestoreUsageTracker.pendingWrites += n;
+    }
+    try {
+      const key = getUsageLocalKey(today);
+      const prev = JSON.parse(localStorage.getItem(key) || '{"reads":0,"writes":0}');
+      if (kind === 'read') prev.reads = (Number(prev.reads) || 0) + n;
+      if (kind === 'write') prev.writes = (Number(prev.writes) || 0) + n;
+      localStorage.setItem(key, JSON.stringify(prev));
+    } catch (e) { /* ignore */ }
+  }
+
+  function wrapFirestoreQuery(q, isInternal) {
+    if (!q || isInternal || q.__pmsWrapped) return q;
+    const origGet = q.get.bind(q);
+    q.get = (...args) => origGet(...args).then(snap => {
+      const cnt = snap && typeof snap.size === 'number' ? Math.max(1, snap.size) : 1;
+      recordFirestoreOp('read', cnt);
+      return snap;
+    });
+    ['where', 'orderBy', 'limit', 'limitToLast', 'startAt', 'startAfter', 'endAt', 'endBefore'].forEach(fn => {
+      if (typeof q[fn] === 'function') {
+        const orig = q[fn].bind(q);
+        q[fn] = (...args) => wrapFirestoreQuery(orig(...args), isInternal);
+      }
+    });
+    q.__pmsWrapped = true;
+    return q;
+  }
+
+  function wrapFirestoreDoc(docRef, isInternal) {
+    if (!docRef || isInternal || docRef.__pmsWrapped) return docRef;
+    if (typeof docRef.get === 'function') {
+      const origGet = docRef.get.bind(docRef);
+      docRef.get = (...args) => origGet(...args).then(snap => {
+        recordFirestoreOp('read', 1);
+        return snap;
+      });
+    }
+    ['set', 'update', 'delete'].forEach(fn => {
+      if (typeof docRef[fn] === 'function') {
+        const orig = docRef[fn].bind(docRef);
+        docRef[fn] = (...args) => orig(...args).then(res => {
+          recordFirestoreOp('write', 1);
+          return res;
+        });
+      }
+    });
+    docRef.__pmsWrapped = true;
+    return docRef;
+  }
+
+  function instrumentFirestoreUsage(fsDb) {
+    if (!fsDb || fsDb.__pmsInstrumented) return fsDb;
+    firestoreUsageTracker.rawDb = fsDb;
+    const origCollection = fsDb.collection.bind(fsDb);
+    const origBatch = typeof fsDb.batch === 'function' ? fsDb.batch.bind(fsDb) : null;
+
+    fsDb.collection = (colPath) => {
+      const colRef = origCollection(colPath);
+      const isUsageCol = colPath === 'pms_usage_daily';
+      if (isUsageCol || !colRef) return colRef;
+
+      const origDoc = colRef.doc.bind(colRef);
+      colRef.doc = (docPath) => {
+        const docRef = origDoc(docPath);
+        const isInternal = colPath === 'pms_metadata' && String(docPath || '').startsWith('usage_daily_');
+        return wrapFirestoreDoc(docRef, isInternal);
+      };
+      if (typeof colRef.add === 'function') {
+        const origAdd = colRef.add.bind(colRef);
+        colRef.add = (...args) => origAdd(...args).then(res => {
+          recordFirestoreOp('write', 1);
+          return res;
+        });
+      }
+      return wrapFirestoreQuery(colRef, false);
+    };
+
+    if (origBatch) {
+      fsDb.batch = () => {
+        const batch = origBatch();
+        let batchWrites = 0;
+        ['set', 'update', 'delete'].forEach(fn => {
+          if (typeof batch[fn] === 'function') {
+            const orig = batch[fn].bind(batch);
+            batch[fn] = (...args) => {
+              batchWrites += 1;
+              return orig(...args);
+            };
+          }
+        });
+        const origCommit = batch.commit.bind(batch);
+        batch.commit = (...args) => origCommit(...args).then(res => {
+          if (batchWrites > 0) recordFirestoreOp('write', batchWrites);
+          return res;
+        });
+        return batch;
+      };
+    }
+
+    fsDb.__pmsInstrumented = true;
+    if (!firestoreUsageTracker.flushTimer) {
+      firestoreUsageTracker.flushTimer = setInterval(() => {
+        flushFirestoreUsageDelta(false);
+      }, 60000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushFirestoreUsageDelta(false);
+      });
+    }
+    return fsDb;
+  }
+
+  async function flushFirestoreUsageDelta(fetchAfter = false) {
+    if (!isFirestoreActive || !firestoreUsageTracker.rawDb || typeof firebase === 'undefined') return;
+    const today = getTodayDateString();
+    const dR = firestoreUsageTracker.pendingReads;
+    const dW = firestoreUsageTracker.pendingWrites;
+    const docId = `usage_daily_${today}`;
+    const rawMetaRef = firestoreUsageTracker.rawDb.collection('pms_metadata').doc(docId);
+
+    if ((dR > 0 || dW > 0) && !firestoreUsageTracker.flushing) {
+      firestoreUsageTracker.flushing = true;
+      firestoreUsageTracker.pendingReads = 0;
+      firestoreUsageTracker.pendingWrites = 0;
+      try {
+        await rawMetaRef.set({
+          date: today,
+          reads: firebase.firestore.FieldValue.increment(dR),
+          writes: firebase.firestore.FieldValue.increment(dW + 1),
+          updatedAt: Date.now()
+        }, { merge: true });
+      } catch (e) {
+        firestoreUsageTracker.pendingReads += dR;
+        firestoreUsageTracker.pendingWrites += dW;
+      } finally {
+        firestoreUsageTracker.flushing = false;
+      }
+    }
+
+    if (fetchAfter || (Date.now() - firestoreUsageTracker.lastFetchedAt > 30000)) {
+      try {
+        const snap = await rawMetaRef.get();
+        if (snap && snap.exists) {
+          const data = snap.data() || {};
+          firestoreUsageTracker.globalReads = Number(data.reads) || 0;
+          firestoreUsageTracker.globalWrites = Number(data.writes) || 0;
+        }
+        firestoreUsageTracker.lastFetchedAt = Date.now();
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function getEstimatedDailyFirestoreUsage() {
+    const today = getTodayDateString();
+    let localReads = firestoreUsageTracker.sessionReads;
+    let localWrites = firestoreUsageTracker.sessionWrites;
+    try {
+      const saved = JSON.parse(localStorage.getItem(getUsageLocalKey(today)) || '{}');
+      localReads = Math.max(localReads, Number(saved.reads) || 0);
+      localWrites = Math.max(localWrites, Number(saved.writes) || 0);
+    } catch (e) { /* ignore */ }
+
+    const totalReads = Math.max(firestoreUsageTracker.globalReads + firestoreUsageTracker.pendingReads, localReads);
+    const totalWrites = Math.max(firestoreUsageTracker.globalWrites + firestoreUsageTracker.pendingWrites, localWrites);
+
+    // 현재 시각 기준 하루(24시간) 추정치 계산 (최소 1시간 경과로 보정해 초반 과대추정 방지)
+    const now = new Date();
+    const elapsedHours = Math.max(1, now.getHours() + now.getMinutes() / 60);
+    const estReads = Math.round((totalReads / elapsedHours) * 24);
+    const estWrites = Math.round((totalWrites / elapsedHours) * 24);
+
+    return {
+      isGlobal: isFirestoreActive && firestoreUsageTracker.lastFetchedAt > 0,
+      totalReads,
+      totalWrites,
+      sessionReads: firestoreUsageTracker.sessionReads,
+      sessionWrites: firestoreUsageTracker.sessionWrites,
+      estReads,
+      estWrites,
+      readLimit: 50000,
+      writeLimit: 20000
+    };
+  }
+
   async function initFirebase() {
     loadLocalMasterData();
     loadLocalInspectionSchedules();
@@ -606,7 +851,7 @@
         if (!firebase.apps.length) {
           firebase.initializeApp(firebaseConfig);
         }
-        db = firebase.firestore();
+        db = instrumentFirestoreUsage(firebase.firestore());
         isFirestoreActive = true;
 
         // Firestore에서 최신 마스터 데이터 및 일정 인덱스를 1회 get()으로 로드
@@ -620,6 +865,7 @@
         if (typeof syncAllInspectionV2FromDb === 'function') await syncAllInspectionV2FromDb();
         await loadPlanDataFromDb();
         await loadReceiverPlanDataFromDb();
+        await flushFirestoreUsageDelta(true);
       } catch (err) {
         console.warn('Firebase 연결 실패, 로컬 모드로 작동합니다:', err);
         fallbackToLocal();
@@ -3286,7 +3532,7 @@
     const btnSaveMaster = document.getElementById('btn-save-master');
     if (btnSaveMaster) {
       btnSaveMaster.addEventListener('click', () => {
-        saveMasterToDb();
+        withButtonLoading(btnSaveMaster, '저장 중...', () => saveMasterToDb());
       });
     }
 
@@ -4515,8 +4761,16 @@
       const wd = String(row.weekDate || '').trim();
       if (!wd) return;
       if (!weekMap.has(wd)) {
-        weekMap.set(wd, formatCertWeekOptionLabel(wd, row.sourceWeekId));
+        weekMap.set(wd, {
+          label: formatCertWeekOptionLabel(wd, row.sourceWeekId),
+          unapplied: 0,
+          incomplete: 0
+        });
       }
+      const entry = weekMap.get(wd);
+      const st = String(row.status || '등록완료').trim();
+      if (st === '등록완료') entry.unapplied += 1;
+      if (st !== '일정완료') entry.incomplete += 1;
     });
 
     const sortedWeeks = Array.from(weekMap.keys()).sort((a, b) => b.localeCompare(a));
@@ -4524,9 +4778,17 @@
 
     weekSel.innerHTML = '<option value="ALL">생산주차</option>';
     sortedWeeks.forEach(wd => {
+      const info = weekMap.get(wd);
       const opt = document.createElement('option');
       opt.value = wd;
-      opt.textContent = weekMap.get(wd);
+      opt.textContent = info.label;
+      if (info.unapplied === 0 && info.incomplete === 0) {
+        opt.dataset.meta = '완료';
+        opt.dataset.metaTone = 'done';
+      } else {
+        opt.dataset.meta = `미신청 ${info.unapplied} · 미완료 ${info.incomplete}`;
+        opt.dataset.metaTone = info.unapplied > 0 ? 'pending' : 'muted';
+      }
       weekSel.appendChild(opt);
     });
 
@@ -4626,6 +4888,23 @@
       tr.dataset.id = row.id;
       tr.dataset.rowIndex = idx;
 
+      const isAutoMode = (state.certMode || 'auto') === 'auto';
+      const nameCellHtml = isAutoMode
+        ? `<td class="col-cert-name cell-readonly">
+            <input type="text" tabindex="-1" readonly class="cell-input cert-input-name" data-id="${row.id}" value="${getDisplayNameByCode(row.code, row.name || '')}">
+          </td>`
+        : `<td class="col-cert-name">
+            <div class="cert-name-cell-wrap">
+              <input type="text" class="cell-input cert-input-name" data-id="${row.id}" value="${getDisplayNameByCode(row.code, row.name || '')}">
+              <button type="button" tabindex="-1" class="btn-search-item btn-open-cert-modal" data-id="${row.id}" title="품목 검색 팝업 (F2)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
+                </svg>
+              </button>
+            </div>
+          </td>`;
+
       tr.innerHTML = `
         <td class="col-cert-check" style="text-align: center;">
           <input type="checkbox" tabindex="-1" class="cert-draft-row-check" data-id="${row.id}" ${row.checked ? 'checked' : ''}>
@@ -4634,17 +4913,7 @@
         <td class="col-cert-code cell-readonly">
           <input type="text" tabindex="-1" class="cell-input" readonly value="${row.code || ''}">
         </td>
-        <td class="col-cert-name">
-          <div class="cert-name-cell-wrap">
-            <input type="text" class="cell-input cert-input-name" data-id="${row.id}" value="${getDisplayNameByCode(row.code, row.name || '')}">
-            <button type="button" tabindex="-1" class="btn-search-item btn-open-cert-modal" data-id="${row.id}" title="품목 검색 팝업 (F2)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"></circle>
-                <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
-              </svg>
-            </button>
-          </div>
-        </td>
+        ${nameCellHtml}
         <td class="col-cert-spec cell-readonly">
           <input type="text" tabindex="-1" class="cell-input" readonly value="${row.spec || ''}" title="${row.spec || ''}">
         </td>
@@ -4816,6 +5085,7 @@
     if (sumSavedQtyEl) sumSavedQtyEl.textContent = formatNumberDisplay(totalSavedQty);
 
     updateCertBadgeCounts();
+    renderCertSavedFilterWeeks();
   }
 
   // (8-B) [품질검사] 그리드 렌더링 (검정현황 품검요청 연동)
@@ -5308,6 +5578,7 @@
 
   // (12) F2 품목 검색 모달 제어
   function openCertItemModal(draftRowId) {
+    if ((state.certMode || 'auto') === 'auto') return;
     state.activeModalDraftRowId = draftRowId;
     const modal = document.getElementById('modal-cert-item-search');
     const searchInput = document.getElementById('cert-modal-search-input');
@@ -5421,7 +5692,20 @@
         const item = document.createElement('button');
         item.type = 'button';
         item.className = `ui-custom-select-option ${opt.value === sel.value ? 'is-selected' : ''}`;
-        item.textContent = opt.textContent;
+        if (opt.dataset.meta) {
+          item.classList.add('has-meta');
+          const labelSpan = document.createElement('span');
+          labelSpan.className = 'ui-custom-select-option-label';
+          labelSpan.textContent = opt.textContent;
+          const metaSpan = document.createElement('span');
+          const tone = opt.dataset.metaTone ? ` is-${opt.dataset.metaTone}` : '';
+          metaSpan.className = `ui-custom-select-option-meta${tone}`;
+          metaSpan.textContent = opt.dataset.meta;
+          item.appendChild(labelSpan);
+          item.appendChild(metaSpan);
+        } else {
+          item.textContent = opt.textContent;
+        }
         item.addEventListener('click', (e) => {
           e.stopPropagation();
           wrap.classList.remove('is-open');
@@ -6104,16 +6388,73 @@
     }
 
     // 3. [등록] 버튼 클릭 (체크된 행 우선, 미체크 시 전체 유효 행 등록)
+    const draftTbodyEl = document.getElementById('cert-draft-tbody');
+    if (draftTbodyEl) {
+      draftTbodyEl.addEventListener('input', (e) => {
+        const inp = e.target;
+        if (inp && inp.classList && inp.classList.contains('is-missing-field') && String(inp.value || '').trim()) {
+          inp.classList.remove('is-missing-field');
+        }
+      });
+    }
+
     const btnCertSave = document.getElementById('btn-cert-save');
     if (btnCertSave) {
       btnCertSave.addEventListener('click', async () => {
+        const isAutoMode = (state.certMode || 'auto') === 'auto';
         const draftRows = state.certDraftRows || [];
-        const checkedRows = draftRows.filter(r => r.checked && ((r.name && r.name.trim()) || parseSafeInt(r.qty) > 0));
-        const allValidRows = draftRows.filter(r => (r.name && r.name.trim()) || parseSafeInt(r.qty) > 0);
-        const validRows = checkedRows.length > 0 ? checkedRows : allValidRows;
+        const hasAnyContent = (r) => Boolean(
+          String(r.name || '').trim() ||
+          parseSafeInt(r.qty) > 0 ||
+          String(r.lotNo || '').trim() ||
+          String(r.from || '').trim()
+        );
+        const checkedAnyRows = draftRows.filter(r => r.checked);
+        const checkedRows = draftRows.filter(r => r.checked && hasAnyContent(r));
+        const allValidRows = draftRows.filter(r => hasAnyContent(r));
+        const validRows = checkedAnyRows.length > 0
+          ? (isAutoMode ? checkedRows : checkedAnyRows)
+          : (allValidRows.length > 0 ? allValidRows : (!isAutoMode && draftRows.length > 0 ? [draftRows[0]] : []));
 
         if (validRows.length === 0) {
-          alert('등록할 검정 신청 데이터가 없습니다. 품명과 수량을 입력해주세요.');
+          alert('등록할 검정 신청 데이터가 없습니다.');
+          return;
+        }
+
+        // 기존 미입력 표시 초기화
+        document.querySelectorAll('#cert-draft-tbody .cell-input.is-missing-field').forEach(el => {
+          el.classList.remove('is-missing-field');
+        });
+
+        // 필수 입력 검증 (자동: 로트번호·제조번호·수량 / 수동: 품명·작성일자·수검일자·생산주차·신청수량·로트번호·제조번호)
+        const missingLabels = new Set();
+        let firstMissingInput = null;
+        const markMissing = (rowId, selector, label) => {
+          missingLabels.add(label);
+          const inp = document.querySelector(`#cert-draft-tbody ${selector}[data-id="${rowId}"]`);
+          if (inp) {
+            inp.classList.add('is-missing-field');
+            if (!firstMissingInput) firstMissingInput = inp;
+          }
+        };
+
+        validRows.forEach(row => {
+          if (!isAutoMode) {
+            if (!String(row.name || '').trim()) markMissing(row.id, '.cert-input-name', '품명');
+            if (!String(row.writeDate || '').trim()) markMissing(row.id, '[data-field="writeDate"]', '작성일자');
+            if (!String(row.inspectDate || '').trim()) markMissing(row.id, '[data-field="inspectDate"]', '수검일자');
+            if (!String(row.weekDate || '').trim()) markMissing(row.id, '[data-field="weekDate"]', '생산주차');
+          }
+          if (parseSafeInt(row.qty) <= 0) markMissing(row.id, '[data-field="qty"]', '신청수량');
+          if (!String(row.lotNo || '').trim()) markMissing(row.id, '.cert-input-lot', '로트번호');
+          if (!String(row.from || '').trim() || parseSafeInt(row.from) <= 0) markMissing(row.id, '[data-field="from"]', '제조번호');
+        });
+
+        if (missingLabels.size > 0) {
+          if (firstMissingInput) {
+            firstMissingInput.focus();
+            firstMissingInput.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          }
           return;
         }
 
@@ -6141,22 +6482,27 @@
 
         const registeredIds = new Set(validRows.map(r => r.id));
         const nowIso = new Date().toISOString();
-        validRows.forEach(r => {
-          r.savedAt = nowIso;
-          r.checked = false;
-          r.status = '등록완료';
+        let savedOk = false;
+        await withButtonLoading(btnCertSave, '등록 중...', async () => {
+          validRows.forEach(r => {
+            r.savedAt = nowIso;
+            r.checked = false;
+            r.status = '등록완료';
+          });
+
+          state.certSavedRows.unshift(...validRows);
+
+          // 등록된 행만 작성 그리드에서 제거
+          state.certDraftRows = draftRows.filter(r => !registeredIds.has(r.id));
+          if (state.certDraftRows.length === 0 && (state.certMode || 'auto') === 'manual') {
+            state.certDraftRows = [createNewDraftRow()];
+          }
+
+          saveLocalCertData();
+          await saveCertDataToDb(true);
+          savedOk = true;
         });
-
-        state.certSavedRows.unshift(...validRows);
-
-        // 등록된 행만 작성 그리드에서 제거
-        state.certDraftRows = draftRows.filter(r => !registeredIds.has(r.id));
-        if (state.certDraftRows.length === 0 && (state.certMode || 'auto') === 'manual') {
-          state.certDraftRows = [createNewDraftRow()];
-        }
-
-        saveLocalCertData();
-        await saveCertDataToDb(true);
+        if (!savedOk) return;
 
         btnCertSave.classList.add('is-saved');
         const originalHtml = btnCertSave.innerHTML;
@@ -6202,48 +6548,120 @@
         const qualityTargetRows = selectedRows.filter(r => (r.type || '').trim() === '품질');
         const productionTargetRows = selectedRows.filter(r => (r.type || '').trim() !== '품질');
 
-        qualityTargetRows.forEach(row => {
-          const nextReqCount = (row.status === '부적합' || (row.failCount || 0) > 0)
-            ? ((row.failCount || 0) + 1)
-            : (row.requestCount || 1);
-          row.status = '검정신청';
-          row.requestCount = nextReqCount;
-          const existingIdx = (state.qualityRows || []).findIndex(q => (q.certRowId === row.id || q.id === row.id));
-          const qItem = {
-            ...row,
-            certRowId: row.id,
-            status: '검정신청',
-            requestCount: nextReqCount,
-            requestedAt: Date.now()
-          };
-          if (existingIdx >= 0) {
-            state.qualityRows[existingIdx] = qItem;
-          } else {
-            if (!state.qualityRows) state.qualityRows = [];
-            state.qualityRows.push(qItem);
+        await withButtonLoading(btnApplyInspection, '신청 중...', async () => {
+          qualityTargetRows.forEach(row => {
+            const nextReqCount = (row.status === '부적합' || (row.failCount || 0) > 0)
+              ? ((row.failCount || 0) + 1)
+              : (row.requestCount || 1);
+            row.status = '검정신청';
+            row.requestCount = nextReqCount;
+            const existingIdx = (state.qualityRows || []).findIndex(q => (q.certRowId === row.id || q.id === row.id));
+            const qItem = {
+              ...row,
+              certRowId: row.id,
+              status: '검정신청',
+              requestCount: nextReqCount,
+              requestedAt: Date.now()
+            };
+            if (existingIdx >= 0) {
+              state.qualityRows[existingIdx] = qItem;
+            } else {
+              if (!state.qualityRows) state.qualityRows = [];
+              state.qualityRows.push(qItem);
+            }
+          });
+
+          productionTargetRows.forEach(row => {
+            row.status = '검정신청';
+          });
+
+          const saveTasks = [saveCertDataToDb(true)];
+          if (qualityTargetRows.length > 0) {
+            saveTasks.push(saveQualityRowsToDb());
           }
-        });
+          await Promise.all(saveTasks);
 
-        productionTargetRows.forEach(row => {
-          row.status = '검정신청';
-        });
+          const total = selectedRows.length;
+          const qualCount = qualityTargetRows.length;
+          const prodCount = productionTargetRows.length;
+          const msg = prodCount > 0
+            ? `총 ${total}건 검정신청 완료 (품질검사 이관 ${qualCount}건, 생산 ${prodCount}건)`
+            : `총 ${qualCount}건 검정신청 및 품질검사 이관 완료`;
+          showToast(msg);
 
-        await saveCertDataToDb(true);
-        if (qualityTargetRows.length > 0) {
-          await saveQualityRowsToDb();
+          renderCertSavedTable();
+          renderQualityTable();
+          if (checkAllCertSaved) checkAllCertSaved.checked = false;
+        });
+      });
+    }
+
+    // 3-C2. [신청취소] 버튼 (검정신청 상태인 항목을 등록완료로 복원, 품질검사 대기건도 함께 회수)
+    const btnCancelInspection = document.getElementById('btn-cert-cancel-inspection');
+    if (btnCancelInspection) {
+      btnCancelInspection.addEventListener('click', async () => {
+        if (btnCancelInspection.dataset.loading === '1') return;
+        if (typeof isGuestReadOnly === 'function' && isGuestReadOnly(true)) return;
+        const checkedBoxes = Array.from(document.querySelectorAll('#cert-saved-tbody .check-cert-saved-row:checked'));
+        if (checkedBoxes.length === 0) {
+          alert('신청취소할 일정을 1건 이상 선택해 주세요.');
+          return;
         }
 
-        const total = selectedRows.length;
-        const qualCount = qualityTargetRows.length;
-        const prodCount = productionTargetRows.length;
-        const msg = prodCount > 0
-          ? `총 ${total}건 검정신청 완료 (품질검사 이관 ${qualCount}건, 생산 ${prodCount}건)`
-          : `총 ${qualCount}건 검정신청 및 품질검사 이관 완료`;
-        showToast(msg);
+        const checkedIds = checkedBoxes.map(cb => cb.dataset.id);
+        const targetRows = state.certSavedRows.filter(r => checkedIds.includes(r.id));
 
-        renderCertSavedTable();
-        renderQualityTable();
-        if (checkAllCertSaved) checkAllCertSaved.checked = false;
+        const nonPendingRows = targetRows.filter(r => (r.status || '등록완료').trim() !== '검정신청');
+        if (nonPendingRows.length > 0) {
+          alert(`선택한 항목 중 ${nonPendingRows.length}건은 [검정신청] 상태가 아니므로 신청취소할 수 없습니다.\n('검정신청' 상태인 건만 신청취소 가능합니다.)`);
+          return;
+        }
+
+        const inProgressQualityRows = targetRows.filter(r => {
+          if ((r.type || '').trim() !== '품질') return false;
+          const qRow = (state.qualityRows || []).find(q => (q.certRowId === r.id || q.id === r.id));
+          return qRow && (qRow.status || '검정신청').trim() !== '검정신청';
+        });
+        if (inProgressQualityRows.length > 0) {
+          alert(`선택한 항목 중 ${inProgressQualityRows.length}건은 이미 품질검사가 진행 중이므로 신청취소할 수 없습니다.`);
+          return;
+        }
+
+        const hasQuality = targetRows.some(r => (r.type || '').trim() === '품질');
+        const confirmMsg = hasQuality
+          ? `선택한 ${targetRows.length}건의 검정신청을 취소하시겠습니까?\n([등록완료] 상태로 복원되며, 품질검사 대기 목록에서도 함께 회수됩니다.)`
+          : `선택한 ${targetRows.length}건의 검정신청을 취소하시겠습니까?\n([등록완료] 상태로 복원됩니다.)`;
+        if (!confirm(confirmMsg)) {
+          return;
+        }
+
+        await withButtonLoading(btnCancelInspection, '취소 중...', async () => {
+          const cancelIds = targetRows.map(r => r.id);
+          targetRows.forEach(row => {
+            row.status = '등록완료';
+            if (!(row.failCount > 0)) {
+              delete row.requestCount;
+            }
+          });
+
+          if (hasQuality) {
+            state.qualityRows = (state.qualityRows || []).filter(q => !cancelIds.includes(q.certRowId || q.id));
+          }
+
+          const saveTasks = [saveCertDataToDb(true)];
+          if (hasQuality) {
+            saveTasks.push(saveQualityRowsToDb());
+          }
+          if (typeof appendAdminAuditLog === 'function') {
+            saveTasks.push(appendAdminAuditLog('신청취소', '검정현황', `${targetRows.length}건 검정신청 취소 (등록완료 복원)`));
+          }
+          await Promise.all(saveTasks);
+
+          showToast(`총 ${targetRows.length}건의 검정신청이 취소되어 [등록완료] 상태로 복원되었습니다.`);
+          renderCertSavedTable();
+          renderQualityTable();
+          if (checkAllCertSaved) checkAllCertSaved.checked = false;
+        });
       });
     }
 
@@ -6274,15 +6692,17 @@
         }
         if (!confirm(confirmMsg)) return;
 
-        prodTargetRows.forEach(row => {
-          row.status = '일정완료';
-          row.completedAt = Date.now();
-        });
+        await withButtonLoading(btnCompleteProduction, '처리 중...', async () => {
+          prodTargetRows.forEach(row => {
+            row.status = '일정완료';
+            row.completedAt = Date.now();
+          });
 
-        await saveCertDataToDb(true);
-        renderCertSavedTable();
-        showToast(`생산 ${prodTargetRows.length}건이 완료(일정완료) 처리되었습니다.${excludedCount > 0 ? ` (제외 ${excludedCount}건)` : ''}`);
-        if (checkAllCertSaved) checkAllCertSaved.checked = false;
+          await saveCertDataToDb(true);
+          renderCertSavedTable();
+          showToast(`생산 ${prodTargetRows.length}건이 완료(일정완료) 처리되었습니다.${excludedCount > 0 ? ` (제외 ${excludedCount}건)` : ''}`);
+          if (checkAllCertSaved) checkAllCertSaved.checked = false;
+        });
       });
     }
 
@@ -6363,12 +6783,15 @@
         row.dept = document.getElementById('cert-edit-dept').value.trim();
         row.site = document.getElementById('cert-edit-site').value.trim();
 
-        saveLocalCertData();
-        await saveCertDataToDb(true);
-        renderCertSavedTable();
-        if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
-        closeCertEditModal();
-        showToast('검정 등록 내역이 수정되었습니다.');
+        const submitBtn = formCertEdit.querySelector('button[type="submit"]');
+        await withButtonLoading(submitBtn, '저장 중...', async () => {
+          saveLocalCertData();
+          await saveCertDataToDb(true);
+          renderCertSavedTable();
+          if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+          closeCertEditModal();
+          showToast('검정 등록 내역이 수정되었습니다.');
+        });
       });
     }
 
@@ -6436,18 +6859,19 @@
         }
         if (!confirm(confirmMsg)) return;
 
-        const validIds = validRows.map(r => r.id);
-        state.certSavedRows = state.certSavedRows.filter(r => !validIds.includes(r.id));
-        state.qualityRows = (state.qualityRows || []).filter(q => !validIds.includes(q.certRowId || q.id));
+        await withButtonLoading(btnDelSavedSelected, '삭제 중...', async () => {
+          const validIds = validRows.map(r => r.id);
+          state.certSavedRows = state.certSavedRows.filter(r => !validIds.includes(r.id));
+          state.qualityRows = (state.qualityRows || []).filter(q => !validIds.includes(q.certRowId || q.id));
 
-        saveLocalCertData();
-        await saveCertDataToDb(true);
-        await saveQualityRowsToDb();
-        renderCertSavedTable();
-        renderQualityTable();
-        if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
-        showToast(`${validRows.length}건이 삭제되었습니다.`);
-        if (checkAllCertSaved) checkAllCertSaved.checked = false;
+          saveLocalCertData();
+          await Promise.all([saveCertDataToDb(true), saveQualityRowsToDb()]);
+          renderCertSavedTable();
+          renderQualityTable();
+          if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
+          showToast(`${validRows.length}건이 삭제되었습니다.`);
+          if (checkAllCertSaved) checkAllCertSaved.checked = false;
+        });
       });
     }
 
@@ -6497,25 +6921,26 @@
           return;
         }
 
-        // 1) 검정현황 상태 -> '일정완료'
-        state.certSavedRows.forEach(row => {
-          if (certIds.includes(row.id)) {
-            row.status = '일정완료';
-            row.completedAt = Date.now();
-          }
+        await withButtonLoading(btnQualityPass, '처리 중...', async () => {
+          // 1) 검정현황 상태 -> '일정완료'
+          state.certSavedRows.forEach(row => {
+            if (certIds.includes(row.id)) {
+              row.status = '일정완료';
+              row.completedAt = Date.now();
+            }
+          });
+
+          // 2) 품질검사 그리드에서 삭제 (완료)
+          state.qualityRows = (state.qualityRows || []).filter(q => !qualityIds.includes(q.id) && !certIds.includes(q.certRowId));
+
+          await Promise.all([saveCertDataToDb(true), saveQualityRowsToDb()]);
+
+          renderQualityTable();
+          renderCertSavedTable();
+
+          showToast(`선택한 ${checkedBoxes.length}건이 [합격] 처리되어 검정현황의 일정이 완료되었습니다`);
+          if (checkAllQuality) checkAllQuality.checked = false;
         });
-
-        // 2) 품질검사 그리드에서 삭제 (완료)
-        state.qualityRows = (state.qualityRows || []).filter(q => !qualityIds.includes(q.id) && !certIds.includes(q.certRowId));
-
-        await saveCertDataToDb(true);
-        await saveQualityRowsToDb();
-
-        renderQualityTable();
-        renderCertSavedTable();
-
-        showToast(`선택한 ${checkedBoxes.length}건이 [합격] 처리되어 검정현황의 일정이 완료되었습니다`);
-        if (checkAllQuality) checkAllQuality.checked = false;
       });
     }
 
@@ -6711,6 +7136,7 @@
 
       // (C) 품명 인라인 검색 자동완성
       if (target.classList.contains('cert-input-name')) {
+        if ((state.certMode || 'auto') === 'auto') return;
         const id = target.dataset.id;
         const row = (state.certDraftRows || []).find(r => r.id === id);
         if (row) {
@@ -7111,9 +7537,10 @@
     document.addEventListener('keydown', (e) => {
       const target = e.target;
 
-      // F2 키를 누르면 품목 팝업 오픈
+      // F2 키를 누르면 품목 팝업 오픈 (수동 모드에서만 허용)
       if (e.key === 'F2') {
         if (target && target.classList.contains('cert-input-name')) {
+          if ((state.certMode || 'auto') === 'auto') return;
           e.preventDefault();
           openCertItemModal(target.dataset.id);
           return;
@@ -11588,7 +12015,7 @@
     });
 
     document.getElementById('btn-plan-export-xls')?.addEventListener('click', exportPlanToExcel);
-    document.getElementById('btn-plan-save')?.addEventListener('click', () => savePlanToDb(false));
+    document.getElementById('btn-plan-save')?.addEventListener('click', () => withButtonLoading('btn-plan-save', '저장 중...', () => savePlanToDb(false)));
 
     function canEditPlan() {
       const u = state.currentUser;
@@ -12883,7 +13310,7 @@
       }
     });
 
-    document.getElementById('btn-insp-save')?.addEventListener('click', saveInspectionV2ToDb);
+    document.getElementById('btn-insp-save')?.addEventListener('click', () => withButtonLoading('btn-insp-save', '저장 중...', saveInspectionV2ToDb));
 
     document.querySelectorAll('#insp-line-filter-group .plan-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -14819,7 +15246,7 @@
       renderProductionV2();
     });
 
-    document.getElementById('btn-prod-save')?.addEventListener('click', saveDailyV2ToDb);
+    document.getElementById('btn-prod-save')?.addEventListener('click', () => withButtonLoading('btn-prod-save', '저장 중...', saveDailyV2ToDb));
 
     async function exportDailyReportsYearExcel() {
       if (!window.XLSXEngine || typeof window.XLSXEngine.exportMultiSheetWorkbook !== 'function') {
@@ -15095,15 +15522,17 @@
     });
     document.getElementById('btn-wh-save-target-eff')?.addEventListener('click', async () => {
       if (isGuestReadOnly(true)) return;
-      const inp = document.getElementById('wh-target-eff');
-      const v = Math.max(10, Math.min(300, parseFloat(inp ? inp.value : state.whTargetEff) || 100));
-      state.whTargetEff = v;
-      if (inp) inp.value = String(v);
-      if (!state.stConfig) state.stConfig = getDefaultStConfig();
-      state.stConfig.targetEff = v;
-      await saveStConfigToDb(true);
-      renderWorkhoursView();
-      showToast(`목표효율(${v}%)이 저장되었습니다.`);
+      await withButtonLoading('btn-wh-save-target-eff', '저장 중...', async () => {
+        const inp = document.getElementById('wh-target-eff');
+        const v = Math.max(10, Math.min(300, parseFloat(inp ? inp.value : state.whTargetEff) || 100));
+        state.whTargetEff = v;
+        if (inp) inp.value = String(v);
+        if (!state.stConfig) state.stConfig = getDefaultStConfig();
+        state.stConfig.targetEff = v;
+        await saveStConfigToDb(true);
+        renderWorkhoursView();
+        showToast(`목표효율(${v}%)이 저장되었습니다.`);
+      });
     });
     document.getElementById('btn-wh-st-mode')?.addEventListener('click', () => {
       const curMode = state.whAggDisplayMode || 'qty';
@@ -15344,10 +15773,12 @@
     });
     document.getElementById('btn-save-st-config')?.addEventListener('click', async () => {
       if (!stModalState.draft) return;
-      state.stConfig = normalizeStConfig(stModalState.draft);
-      await saveStConfigToDb(false);
-      closeStModal();
-      renderWorkhoursView();
+      await withButtonLoading('btn-save-st-config', '저장 중...', async () => {
+        state.stConfig = normalizeStConfig(stModalState.draft);
+        await saveStConfigToDb(false);
+        closeStModal();
+        renderWorkhoursView();
+      });
     });
 
     document.getElementById('st-cfg-list')?.addEventListener('click', (e) => {
@@ -19473,62 +19904,64 @@
         }
       }
 
-      // 선택된 미신청 행들을 위→아래 순서대로 최종 로트·제조번호로 확정 후 검정현황으로 전송
-      recommendReceiverLotAndSerial(toSend, true);
+      await withButtonLoading('btn-rp-send-cert', '등록 중...', async () => {
+        // 선택된 미신청 행들을 위→아래 순서대로 최종 로트·제조번호로 확정 후 검정현황으로 전송
+        recommendReceiverLotAndSerial(toSend, true);
 
-      const todayStr = getTodayDateString();
-      const newSaved = [];
-      toSend.forEach(r => {
-        const mItem = (state.certMasterItems || []).find(i =>
-          String(i.code || '').trim().toLowerCase() === String(r.code || '').trim().toLowerCase()
-        );
-        const siteNote = r.remark ? `${r.siteName} (${r.remark})` : (r.siteName || '');
-        const fromVal = String(r.serialFrom || '').trim();
-        const toVal = String(r.serialTo || fromVal || '').trim();
+        const todayStr = getTodayDateString();
+        const newSaved = [];
+        toSend.forEach(r => {
+          const mItem = (state.certMasterItems || []).find(i =>
+            String(i.code || '').trim().toLowerCase() === String(r.code || '').trim().toLowerCase()
+          );
+          const siteNote = r.remark ? `${r.siteName} (${r.remark})` : (r.siteName || '');
+          const fromVal = String(r.serialFrom || '').trim();
+          const toVal = String(r.serialTo || fromVal || '').trim();
 
-        newSaved.push({
-          id: 'csaved_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-          status: '등록완료',
-          code: r.code || (mItem?.code || ''),
-          name: r.name || (mItem ? getDisplayItemName(mItem) : ''),
-          spec: mItem?.spec || '',
-          formatNo: r.formatNo || (mItem?.formatNo && mItem.formatNo !== '-' ? mItem.formatNo : ''),
-          type: mItem?.inspectType || '품질',
-          group: mItem?.group || '수신기반',
-          writeDate: todayStr,
-          inspectDate: r.inspectDate || r.weekDate || todayStr,
-          weekDate: r.weekDate || r.inspectDate || todayStr,
-          qty: 1,
-          lotNo: r.lotNo || '',
-          from: fromVal,
-          to: toVal,
-          passNo: String(r.passNo || '').trim(),
-          kfiNo: '',
-          site: siteNote,
-          color: r.colorInfo || '',
-          dept: r.client || '',
-          sensor: mItem?.sensor || '',
-          ctrl: mItem?.ctrl || '',
-          gas: mItem?.gas || '',
-          sourceRpId: r.id,
-          sourceReqNo: r.reqNo || ''
+          newSaved.push({
+            id: 'csaved_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+            status: '등록완료',
+            code: r.code || (mItem?.code || ''),
+            name: r.name || (mItem ? getDisplayItemName(mItem) : ''),
+            spec: mItem?.spec || '',
+            formatNo: r.formatNo || (mItem?.formatNo && mItem.formatNo !== '-' ? mItem.formatNo : ''),
+            type: mItem?.inspectType || '품질',
+            group: mItem?.group || '수신기반',
+            writeDate: todayStr,
+            inspectDate: r.inspectDate || r.weekDate || todayStr,
+            weekDate: r.weekDate || r.inspectDate || todayStr,
+            qty: 1,
+            lotNo: r.lotNo || '',
+            from: fromVal,
+            to: toVal,
+            passNo: String(r.passNo || '').trim(),
+            kfiNo: '',
+            site: siteNote,
+            color: r.colorInfo || '',
+            dept: r.client || '',
+            sensor: mItem?.sensor || '',
+            ctrl: mItem?.ctrl || '',
+            gas: mItem?.gas || '',
+            sourceRpId: r.id,
+            sourceReqNo: r.reqNo || ''
+          });
         });
-      });
 
-      state.certSavedRows = [...newSaved, ...(state.certSavedRows || [])];
-      saveLocalCertData();
-      await saveCertDataToDb(true);
-      recalculatePendingReceiverLotsAndSerials();
-      saveLocalReceiverPlanData();
-      await saveReceiverPlanToDb(true);
-      state.rpSelectedIds.clear();
-      renderReceiverPlanModule();
-      if (typeof renderCertificationModule === 'function') renderCertificationModule();
-      showToast(`${newSaved.length}건이 검정현황 등록 내역(등록완료)으로 검정등록되었습니다.`);
+        state.certSavedRows = [...newSaved, ...(state.certSavedRows || [])];
+        saveLocalCertData();
+        await saveCertDataToDb(true);
+        recalculatePendingReceiverLotsAndSerials();
+        saveLocalReceiverPlanData();
+        await saveReceiverPlanToDb(true);
+        state.rpSelectedIds.clear();
+        renderReceiverPlanModule();
+        if (typeof renderCertificationModule === 'function') renderCertificationModule();
+        showToast(`${newSaved.length}건이 검정현황 등록 내역(등록완료)으로 검정등록되었습니다.`);
+      });
     });
 
     // 저장 & 되돌리기
-    document.getElementById('btn-rp-save')?.addEventListener('click', () => saveReceiverPlanToDb(false));
+    document.getElementById('btn-rp-save')?.addEventListener('click', () => withButtonLoading('btn-rp-save', '저장 중...', () => saveReceiverPlanToDb(false)));
     document.getElementById('btn-rp-undo')?.addEventListener('click', undoReceiverPlan);
 
     // Ctrl+Z 단축키
@@ -20752,8 +21185,10 @@
     });
 
     document.getElementById('btn-auth-save-users')?.addEventListener('click', async () => {
-      await saveAuthUsersToDb(false);
-      applyAuthPermissions();
+      await withButtonLoading('btn-auth-save-users', '저장 중...', async () => {
+        await saveAuthUsersToDb(false);
+        applyAuthPermissions();
+      });
     });
 
     // 2번 칸: 소속 목록 추가 · 수정 · 삭제
@@ -21580,16 +22015,18 @@
           t.itemCodes = t.itemCodes.filter(c => !addNorms.has(String(c || '').trim().toLowerCase()));
         }
       });
-      pendingRptItemCodes.forEach(code => {
-        const norm = String(code || '').trim().toLowerCase();
-        if (!curTpl.itemCodes.some(c => String(c || '').trim().toLowerCase() === norm)) {
-          curTpl.itemCodes.push(code);
-        }
+      await withButtonLoading('btn-rpt-apply-items', '연결 중...', async () => {
+        pendingRptItemCodes.forEach(code => {
+          const norm = String(code || '').trim().toLowerCase();
+          if (!curTpl.itemCodes.some(c => String(c || '').trim().toLowerCase() === norm)) {
+            curTpl.itemCodes.push(code);
+          }
+        });
+        pendingRptItemCodes = [];
+        await saveReportTemplateToDb(curTpl);
+        renderReportTemplatesPane();
+        showToast('선택한 품목이 연결되었습니다.');
       });
-      pendingRptItemCodes = [];
-      await saveReportTemplateToDb(curTpl);
-      renderReportTemplatesPane();
-      showToast('선택한 품목이 연결되었습니다.');
     });
 
     document.getElementById('rpt-font-size')?.addEventListener('change', async (e) => {
@@ -21605,12 +22042,14 @@
     document.getElementById('btn-rpt-tpl-save')?.addEventListener('click', async () => {
       const curTpl = (state.reportTemplates || []).find(t => t.id === state.activeReportTemplateId);
       if (!curTpl) return;
-      curTpl.fontSize = Number(document.getElementById('rpt-font-size')?.value || 11);
-      curTpl.updatedAt = new Date().toISOString();
+      await withButtonLoading('btn-rpt-tpl-save', '저장 중...', async () => {
+        curTpl.fontSize = Number(document.getElementById('rpt-font-size')?.value || 11);
+        curTpl.updatedAt = new Date().toISOString();
 
-      await saveReportTemplateToDb(curTpl);
-      renderReportTemplatesPane();
-      showToast('양식 설정이 저장되었습니다.');
+        await saveReportTemplateToDb(curTpl);
+        renderReportTemplatesPane();
+        showToast('양식 설정이 저장되었습니다.');
+      });
     });
 
     // PDF 출력 위치 지정 모달 (셀 범위 드래그 → 정가운데 정렬)
@@ -21737,32 +22176,36 @@
     document.getElementById('btn-rpt-save-pos')?.addEventListener('click', async () => {
       const curTpl = (state.reportTemplates || []).find(t => t.id === state.activeReportTemplateId);
       if (!curTpl) return;
-      const savedPos = normalizeReportPositions(draftPositions);
-      curTpl.positions = savedPos;
-      curTpl.fontSize = Number(document.getElementById('rpt-font-size')?.value || curTpl.fontSize || 10);
-      curTpl.updatedAt = new Date().toISOString();
-      saveDefaultReportPositions(savedPos);
-      await saveReportTemplateToDb(curTpl);
-      closePosModal();
-      renderReportTemplatesPane();
-      showToast('이 양식에 출력 위치가 저장되었습니다. (신규 양식에도 기본 적용)');
+      await withButtonLoading('btn-rpt-save-pos', '저장 중...', async () => {
+        const savedPos = normalizeReportPositions(draftPositions);
+        curTpl.positions = savedPos;
+        curTpl.fontSize = Number(document.getElementById('rpt-font-size')?.value || curTpl.fontSize || 10);
+        curTpl.updatedAt = new Date().toISOString();
+        saveDefaultReportPositions(savedPos);
+        await saveReportTemplateToDb(curTpl);
+        closePosModal();
+        renderReportTemplatesPane();
+        showToast('이 양식에 출력 위치가 저장되었습니다. (신규 양식에도 기본 적용)');
+      });
     });
 
     document.getElementById('btn-rpt-apply-pos-all')?.addEventListener('click', async () => {
       const allTpls = state.reportTemplates || [];
       if (allTpls.length === 0) return;
-      const savedPos = normalizeReportPositions(draftPositions);
-      saveDefaultReportPositions(savedPos);
-      const fontSize = Number(document.getElementById('rpt-font-size')?.value || 10);
-      for (const t of allTpls) {
-        t.positions = normalizeReportPositions(savedPos);
-        t.fontSize = fontSize;
-        t.updatedAt = new Date().toISOString();
-        await saveReportTemplateToDb(t);
-      }
-      closePosModal();
-      renderReportTemplatesPane();
-      showToast(`등록된 모든 양식(${allTpls.length}개)에 동일 위치가 적용되었습니다.`);
+      await withButtonLoading('btn-rpt-apply-pos-all', '적용 중...', async () => {
+        const savedPos = normalizeReportPositions(draftPositions);
+        saveDefaultReportPositions(savedPos);
+        const fontSize = Number(document.getElementById('rpt-font-size')?.value || 10);
+        for (const t of allTpls) {
+          t.positions = normalizeReportPositions(savedPos);
+          t.fontSize = fontSize;
+          t.updatedAt = new Date().toISOString();
+          await saveReportTemplateToDb(t);
+        }
+        closePosModal();
+        renderReportTemplatesPane();
+        showToast(`등록된 모든 양식(${allTpls.length}개)에 동일 위치가 적용되었습니다.`);
+      });
     });
 
     document.getElementById('btn-rpt-tpl-delete')?.addEventListener('click', async () => {
@@ -23144,6 +23587,156 @@
     };
   }
 
+  function computeDashUnregisteredPlanCert(lineFilter = 'ALL') {
+    const pd = state.planData || getDefaultPlanData();
+    const today = new Date();
+    const curYear = String(today.getFullYear());
+    const curMonth = today.getMonth() + 1;
+    const rowsMap = String(pd.year) === curYear ? (pd.rowsByCode || {}) : ((pd.rowsByYear && pd.rowsByYear[curYear]) || {});
+    const weeks = String(pd.year) === curYear && Array.isArray(pd.weeks) ? pd.weeks : generateYearWeeks(curYear);
+    const monthWeekIds = new Set(weeks.filter(w => Number(w.month) === curMonth).map(w => w.id));
+
+    const certSet = new Set();
+    (state.certSavedRows || []).forEach(r => {
+      if (!r || !r.code) return;
+      const rYear = String(r.year || (r.writeDate || '').slice(0, 4) || curYear);
+      if (rYear !== curYear) return;
+      if (r.sourceWeekId) certSet.add(`${r.code}__${r.sourceWeekId}`);
+      else certSet.add(`${r.code}__ANY`);
+    });
+
+    let unregCount = 0;
+    let unregQty = 0;
+    (state.certMasterItems || []).forEach(it => {
+      if (!it || (it.useYn || '사용') !== '사용') return;
+      if (lineFilter !== 'ALL' && it.group !== lineFilter) return;
+      const entry = rowsMap[it.code];
+      if (!entry || !entry.weeks) return;
+      monthWeekIds.forEach(wId => {
+        const qty = parsePlanNum(entry.weeks[wId]?.prod);
+        if (qty > 0 && !certSet.has(`${it.code}__${wId}`) && !certSet.has(`${it.code}__ANY`)) {
+          unregCount++;
+          unregQty += qty;
+        }
+      });
+    });
+    return { unregCount, unregQty, curMonth };
+  }
+
+  function buildDashWorkhoursCardHtml(monthStr, lineFilter = 'ALL') {
+    const wh = typeof computeMonthWorkhours === 'function'
+      ? computeMonthWorkhours(monthStr, lineFilter, false)
+      : { totalStdH: 0, totalActH: 0, totalWorkLossH: 0, stEff: null, lossWork: [] };
+    const effText = wh.stEff !== null && Number.isFinite(wh.stEff) ? `${wh.stEff.toFixed(1)}%` : '-';
+    const effBarW = wh.stEff !== null && Number.isFinite(wh.stEff) ? Math.min(100, Math.max(0, wh.stEff)) : 0;
+    const topLoss = (wh.lossWork || []).slice(0, 3);
+    const maxLoss = topLoss[0] ? Math.max(0.1, topLoss[0].totalH) : 1;
+
+    return `
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">
+            <span>당월 공수 효율 &amp; 유실 Top 3</span>
+            <span class="dash-count-pill is-blue">${escapeHtmlPlan(monthStr)}</span>
+          </div>
+          <button type="button" class="dash-head-action" data-dash-goto="tab-production" data-dash-sub="workhours">공수집계 →</button>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
+          <div>
+            <span style="font-size:20px;font-weight:800;color:var(--text-main);">${effText}</span>
+            <span style="font-size:11.5px;color:var(--text-sub);margin-left:6px;">표준 ${wh.totalStdH.toFixed(1)}H / 실동 ${wh.totalActH.toFixed(1)}H</span>
+          </div>
+          <span class="dash-badge is-amber">유실 ${wh.totalWorkLossH.toFixed(1)}H</span>
+        </div>
+        <div class="dash-progress-track"><div class="dash-progress-fill is-green" style="width:${effBarW.toFixed(1)}%;"></div></div>
+        <div class="dash-list" style="margin-top:2px;">
+          ${topLoss.length > 0 ? topLoss.map(l => `
+            <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;">
+              <span style="width:96px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-main);font-weight:600;">${escapeHtmlPlan(l.label)}</span>
+              <div class="dash-progress-track" style="flex:1;"><div class="dash-progress-fill is-amber" style="width:${((l.totalH / maxLoss) * 100).toFixed(1)}%;"></div></div>
+              <span style="width:46px;text-align:right;font-weight:700;color:var(--text-sub);">${l.totalH.toFixed(1)}H</span>
+            </div>
+          `).join('') : '<div class="dash-empty" style="padding:10px;">집계된 유실공수 내역이 없습니다.</div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildDashCertFeeCardHtml(yearStr, monthNum) {
+    const ym = `${yearStr}-${String(monthNum).padStart(2, '0')}`;
+    const prevM = monthNum > 1 ? monthNum - 1 : 12;
+    const prevY = monthNum > 1 ? Number(yearStr) : Number(yearStr) - 1;
+    const prevYm = `${prevY}-${String(prevM).padStart(2, '0')}`;
+
+    const built = typeof buildCertSettlementEntries === 'function' ? buildCertSettlementEntries() : { entries: [] };
+    const entries = built.entries || [];
+    let curFee = 0; let curCnt = 0; let prevFee = 0;
+    entries.forEach(e => {
+      const ds = String(e.receiptDate || e.applyDate || e.inspectDate || '');
+      if (ds.startsWith(ym)) {
+        curFee += Number(e.totalFee) || 0;
+        curCnt++;
+      } else if (ds.startsWith(prevYm)) {
+        prevFee += Number(e.totalFee) || 0;
+      }
+    });
+
+    return `
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">
+            <span>당월 검정 수수료 누적</span>
+            <span class="dash-count-pill is-purple">${curCnt}건</span>
+          </div>
+          <button type="button" class="dash-head-action" data-dash-goto="tab-cert-settlement">검정정산 →</button>
+        </div>
+        <div style="font-size:21px;font-weight:800;color:var(--text-main);font-variant-numeric:tabular-nums;">₩ ${formatNumberDisplay(Math.round(curFee))}</div>
+        <div class="dash-kpi-sub">${formatDashDeltaBadge(Math.round(curFee), Math.round(prevFee), '원')} <span style="color:var(--text-muted);">(전월 대비)</span></div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:auto;">기준월: ${escapeHtmlPlan(ym)} · KFI 정산 연동 기준</div>
+      </div>
+    `;
+  }
+
+  function buildDashFirestoreUsageCardHtml() {
+    const u = getEstimatedDailyFirestoreUsage();
+    const readPct = Math.min(100, (u.totalReads / u.readLimit) * 100);
+    const writePct = Math.min(100, (u.totalWrites / u.writeLimit) * 100);
+    const estReadPct = Math.min(999, (u.estReads / u.readLimit) * 100);
+    const estWritePct = Math.min(999, (u.estWrites / u.writeLimit) * 100);
+
+    return `
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">
+            <span>일일 DB 읽기/쓰기 사용량 (전체 추정)</span>
+            <span class="dash-count-pill ${u.isGlobal ? 'is-green' : 'is-amber'}">${u.isGlobal ? '전체 합산' : '로컬 기준'}</span>
+          </div>
+          <span style="font-size:10.5px;color:var(--text-muted);">Spark 무료 한도 기준</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;">
+              <span><b>읽기(Read)</b> ${formatNumberDisplay(u.totalReads)} / 50,000 (${readPct.toFixed(1)}%)</span>
+              <span style="color:${estReadPct >= 80 ? 'var(--danger)' : 'var(--text-sub)'};font-weight:700;">하루 추정 ${formatNumberDisplay(u.estReads)}</span>
+            </div>
+            <div class="dash-progress-track"><div class="dash-progress-fill ${readPct >= 80 ? 'is-amber' : ''}" style="width:${readPct.toFixed(1)}%;"></div></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;">
+              <span><b>쓰기(Write)</b> ${formatNumberDisplay(u.totalWrites)} / 20,000 (${writePct.toFixed(1)}%)</span>
+              <span style="color:${estWritePct >= 80 ? 'var(--danger)' : 'var(--text-sub)'};font-weight:700;">하루 추정 ${formatNumberDisplay(u.estWrites)}</span>
+            </div>
+            <div class="dash-progress-track"><div class="dash-progress-fill is-purple" style="width:${writePct.toFixed(1)}%;"></div></div>
+          </div>
+          <div style="font-size:10.5px;color:var(--text-muted);display:flex;justify-content:space-between;">
+            <span>내 세션: 읽기 ${formatNumberDisplay(u.sessionReads)} · 쓰기 ${formatNumberDisplay(u.sessionWrites)}</span>
+            <span>경과시간 비례 24H 환산</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderDashboardIssues() {
     const host = document.getElementById('dash-view-issues');
     if (!host) return;
@@ -23423,6 +24016,12 @@
             <div class="dash-pipe-step"><span class="dash-pipe-label">품검요청</span><span class="dash-pipe-val" style="color:#d97706;">${pipeCounts.품검요청}</span></div>
             <div class="dash-pipe-step"><span class="dash-pipe-label">일정완료</span><span class="dash-pipe-val" style="color:var(--success);">${pipeCounts.일정완료}</span></div>
           </div>
+          ${(() => {
+            const unreg = computeDashUnregisteredPlanCert(lineFilter);
+            return unreg.unregCount > 0
+              ? `<div class="dash-alert-strip"><span>${unreg.curMonth}월 계획 대비 검정 미등록 <b>${unreg.unregCount}건</b> (${formatNumberDisplay(unreg.unregQty)}개)</span><button type="button" class="btn btn-xs btn-outline" data-dash-goto="tab-certification">등록하기</button></div>`
+              : `<div style="font-size:11.5px;color:var(--success);font-weight:700;padding-top:4px;">✓ ${unreg.curMonth}월 생산계획 항목 검정 등록 완료</div>`;
+          })()}
         </div>
 
         <div class="dash-card">
@@ -23448,6 +24047,12 @@
             </div>
           ` : ''}
         </div>
+      </div>
+
+      <div class="dash-grid-3">
+        ${perms.workhours !== 'none' ? buildDashWorkhoursCardHtml(todayStr.slice(0, 7), lineFilter) : ''}
+        ${perms.cert !== 'none' ? buildDashCertFeeCardHtml(todayStr.slice(0, 4), parseInt(todayStr.slice(5, 7), 10) || 1) : ''}
+        ${buildDashFirestoreUsageCardHtml()}
       </div>
     `;
   }
@@ -23487,11 +24092,12 @@
 
       let rollingStock = parsePlanNum(getPlanCarryOverBaseStock(pd, targetYear, item)) * mul;
       let hasRisk = false;
+      let firstRiskWeek = null;
 
       const byMonth = Array.from({ length: 12 }, () => ({ prod: 0, forecast: 0, actual: 0, compare: 0, diff: 0, stock: 0, prevProd: 0 }));
       const byWeek = {};
 
-      curWeeks.forEach(w => {
+      curWeeks.forEach((w, wIdx) => {
         const mIdx = (Number(w.month) || 1) - 1;
         const wCell = (cEntry.weeks && cEntry.weeks[w.id]) || {};
         const prod = parsePlanNum(wCell.prod) * mul;
@@ -23500,7 +24106,12 @@
         const compare = parsePlanNum(wCell.compare) * mul;
         const diff = prod - compare;
         rollingStock = rollingStock + prod - actual;
-        if (minStock !== null && rollingStock < minStock) hasRisk = true;
+        if (minStock !== null && rollingStock < minStock) {
+          hasRisk = true;
+          if (!firstRiskWeek) {
+            firstRiskWeek = { id: w.id, label: w.label || w.id, month: Number(w.month) || 1, order: wIdx, stock: rollingStock, shortage: minStock - rollingStock };
+          }
+        }
 
         byWeek[w.id] = { id: w.id, label: w.label || w.id, month: Number(w.month) || 1, prod, forecast, actual, compare, diff, stock: rollingStock };
         if (mIdx >= 0 && mIdx < 12) {
@@ -23532,7 +24143,7 @@
 
       const monthProd = byMonth[targetMonth - 1]?.prod || 0;
       const yearProd = byMonth.reduce((acc, m) => acc + m.prod, 0);
-      const stat = { item, byMonth, byWeek, minStock, maxStock, hasRisk, changeCounts, monthProd, yearProd };
+      const stat = { item, byMonth, byWeek, minStock, maxStock, hasRisk, firstRiskWeek, changeCounts, monthProd, yearProd };
       itemStatsMap.set(item.code, stat);
       itemSummaries.push(stat);
     });
@@ -24022,6 +24633,48 @@
       <span>조회 단위: <b>${period === 'month' ? '월별 (1~12월)' : (period === 'quarter' ? '분기별 (1~4Q)' : `${targetMonth}월 주차별`)}</b></span>
     `;
 
+    const riskTop5 = analytics.itemSummaries
+      .filter(s => s.hasRisk && s.firstRiskWeek)
+      .sort((a, b) => (a.firstRiskWeek.order - b.firstRiskWeek.order) || (b.firstRiskWeek.shortage - a.firstRiskWeek.shortage))
+      .slice(0, 5);
+
+    const riskTop5Html = `
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">
+            <span>재고 부족 예상 품목 Top 5</span>
+            <span class="dash-count-pill ${riskTop5.length > 0 ? 'is-danger' : 'is-green'}">${riskTop5.length}건</span>
+          </div>
+          <span style="font-size:11px;color:var(--text-muted);">클릭 시 안전재고 차트 이동</span>
+        </div>
+        <div class="dash-list">
+          ${riskTop5.length > 0 ? riskTop5.map(st => {
+            const rw = st.firstRiskWeek;
+            return `
+              <div class="dash-list-row" style="cursor:pointer;" data-dash-jump-stock="${escapeHtmlPlan(st.item.code)}">
+                <div class="dash-list-main">
+                  <span class="dash-badge is-red">${escapeHtmlPlan(rw.id)} (${rw.month}월)</span>
+                  <span class="dash-list-text">${escapeHtmlPlan(st.item.name || st.item.code)}</span>
+                </div>
+                <span class="dash-list-meta">예상 ${fmtVal(rw.stock)} / 최소 ${fmtVal(st.minStock)}</span>
+                <span class="dash-badge is-amber">-${fmtVal(rw.shortage)}</span>
+              </div>
+            `;
+          }).join('') : '<div class="dash-empty">현재 최소재고 미만으로 예상되는 품목이 없습니다.</div>'}
+        </div>
+      </div>
+    `;
+
+    const kpiBottomRowHtml = `
+      <div class="dash-grid-2" id="dash-kpi-bottom-row">
+        ${riskTop5Html}
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          ${buildDashWorkhoursCardHtml(`${targetYear}-${String(targetMonth).padStart(2, '0')}`, lineFilter)}
+          ${buildDashFirestoreUsageCardHtml()}
+        </div>
+      </div>
+    `;
+
     const hasShell = preserveShell && !!document.getElementById('dash-kpi-canvas');
     if (!hasShell) {
       if (dashKpiChartInstance) {
@@ -24066,6 +24719,7 @@
             <div class="dash-insight-strip" id="dash-kpi-insight-strip">${insightHtml}</div>
           </div>
         </div>
+        ${kpiBottomRowHtml}
       `;
     } else {
       const bannerEl = document.getElementById('dash-kpi-target-banner');
@@ -24073,11 +24727,13 @@
       const listEl = document.getElementById('dash-kpi-item-list');
       const seriesEl = document.getElementById('dash-kpi-series-bar');
       const insightEl = document.getElementById('dash-kpi-insight-strip');
+      const bottomEl = document.getElementById('dash-kpi-bottom-row');
       if (bannerEl) bannerEl.innerHTML = targetBannerHtml;
       if (cardsEl) cardsEl.innerHTML = kpiCardsHtml;
       if (listEl) listEl.innerHTML = itemListHtml;
       if (seriesEl) seriesEl.innerHTML = seriesChipsHtml;
       if (insightEl) insightEl.innerHTML = insightHtml;
+      if (bottomEl) bottomEl.outerHTML = kpiBottomRowHtml;
       document.querySelectorAll('#dash-kpi-mode-tabs .dash-mode-tab').forEach(b => b.classList.toggle('active', b.dataset.dashMode === mode));
       document.querySelectorAll('#dash-kpi-period-tabs .dash-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dashPeriod === period));
     }
@@ -24181,7 +24837,8 @@
       renderDashboardKpi(true);
     });
 
-    document.getElementById('btn-dash-refresh')?.addEventListener('click', () => {
+    document.getElementById('btn-dash-refresh')?.addEventListener('click', async () => {
+      await flushFirestoreUsageDelta(true);
       renderDashboardModule(true);
       showToast('대시보드를 새로고침했습니다.');
     });
@@ -24229,6 +24886,18 @@
         if (!(state.dashboardKpiExpandedGroups instanceof Set)) state.dashboardKpiExpandedGroups = new Set();
         state.dashboardKpiExpandedGroups.add(gName);
         renderDashboardKpi(true);
+        return;
+      }
+
+      const jumpStockBtn = e.target.closest('[data-dash-jump-stock]');
+      if (jumpStockBtn) {
+        const code = jumpStockBtn.dataset.dashJumpStock;
+        if (code) {
+          state.dashboardKpiItemCode = code;
+          state.dashboardKpiChartMode = 'stock';
+          renderDashboardKpi(true);
+          document.getElementById('dash-kpi-canvas')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
         return;
       }
 

@@ -244,13 +244,29 @@
               <h2 class="dash-title" id="dash-main-title">현장 이슈 대시보드</h2>
               <span class="dash-subtitle" id="dash-main-subtitle">오늘 확인 및 처리가 필요한 항목</span>
             </div>
-            <div class="dash-header-right">
+            <div class="dash-header-center">
               <!-- 뷰 전환 세그먼트 -->
-              <div class="dash-seg-group" id="dash-view-switcher" role="group" aria-label="대시보드 화면 전환">
-                <button type="button" class="dash-seg-btn active" data-dash-view="issues">현장 이슈</button>
-                <button type="button" class="dash-seg-btn" data-dash-view="kpi">생산계획 KPI</button>
+              <div class="dash-view-switcher" id="dash-view-switcher" role="group" aria-label="대시보드 화면 전환">
+                <button type="button" class="dash-seg-btn active" data-dash-view="issues">
+                  <svg class="dash-view-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M8 2.2 1.8 13h12.4L8 2.2Z"/>
+                    <path d="M8 6.3v3.2"/>
+                    <circle cx="8" cy="11.3" r="0.6" fill="currentColor" stroke="none"/>
+                  </svg>
+                  <span>현장 이슈</span>
+                </button>
+                <button type="button" class="dash-seg-btn" data-dash-view="kpi">
+                  <svg class="dash-view-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2.5 13.5h11"/>
+                    <path d="M4.5 11V7.5"/>
+                    <path d="M8 11V4.5"/>
+                    <path d="M11.5 11V6"/>
+                  </svg>
+                  <span>생산계획 KPI</span>
+                </button>
               </div>
-
+            </div>
+            <div class="dash-header-right">
               <!-- 현장 이슈 필터 -->
               <div class="dash-ctrl-group" id="dash-issues-controls">
                 <div class="dash-pill-group" id="dash-issue-line-filters">
@@ -1334,11 +1350,15 @@
                   </div>
                 </div>
                 <div class="section-actions-wrap" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                  <!-- 검정신청 / 생산완료 / 수정 / 삭제 버튼군 -->
+                  <!-- 검정신청 / 신청취소 / 생산완료 / 수정 / 삭제 버튼군 -->
                   <div class="cert-btn-group" style="display:inline-flex; gap:6px;">
                     <button type="button" class="btn btn-sm" id="btn-cert-apply-inspection" style="background-color:#f59e0b; color:#fff; font-weight:700;" title="선택된 일정의 상태를 [검정신청]으로 변경 (구분이 [품질]인 항목은 품질검사 메뉴로 이관)">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
                       검정신청
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline" id="btn-cert-cancel-inspection" style="color:#b45309; border-color:#f59e0b;" title="검정신청 상태인 선택 항목을 [등록완료] 상태로 되돌립니다 (품질검사 대기건도 함께 회수)">
+                      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"></path></svg>
+                      신청취소
                     </button>
                     <button type="button" class="btn btn-sm btn-save-success" id="btn-cert-complete-production" title="선택된 일정 중 구분이 [생산]인 항목을 완료(일정완료) 처리">
                       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
