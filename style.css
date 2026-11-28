@@ -7934,6 +7934,7 @@ html.dark-mode .rp-summary-chip.is-urgent {
   position: sticky;
   z-index: 10;
   background-color: var(--bg-card);
+  opacity: 1 !important;
 }
 
 .rp-excel-table thead .rp-fixed-col {
@@ -7953,16 +7954,16 @@ html.dark-mode .rp-summary-chip.is-urgent {
 .rp-col-group { width: 95px; min-width: 95px; max-width: 95px; text-align: center; }
 
 /* 품목그룹별 행 전체 글자 색상 (10색 고대비 팔레트, 볼드 없음) */
-tr.ig-color-0 td, tr.ig-color-0 td:not(:has(.badge)) { color: #2563eb !important; }
-tr.ig-color-1 td, tr.ig-color-1 td:not(:has(.badge)) { color: #b45309 !important; }
-tr.ig-color-2 td, tr.ig-color-2 td:not(:has(.badge)) { color: #047857 !important; }
-tr.ig-color-3 td, tr.ig-color-3 td:not(:has(.badge)) { color: #7c3aed !important; }
-tr.ig-color-4 td, tr.ig-color-4 td:not(:has(.badge)) { color: #dc2626 !important; }
-tr.ig-color-5 td, tr.ig-color-5 td:not(:has(.badge)) { color: #0e7490 !important; }
-tr.ig-color-6 td, tr.ig-color-6 td:not(:has(.badge)) { color: #ea580c !important; }
-tr.ig-color-7 td, tr.ig-color-7 td:not(:has(.badge)) { color: #4338ca !important; }
-tr.ig-color-8 td, tr.ig-color-8 td:not(:has(.badge)) { color: #0f766e !important; }
-tr.ig-color-9 td, tr.ig-color-9 td:not(:has(.badge)) { color: #9333ea !important; }
+tr.ig-color-0 td { color: #2563eb !important; }
+tr.ig-color-1 td { color: #b45309 !important; }
+tr.ig-color-2 td { color: #047857 !important; }
+tr.ig-color-3 td { color: #7c3aed !important; }
+tr.ig-color-4 td { color: #dc2626 !important; }
+tr.ig-color-5 td { color: #0e7490 !important; }
+tr.ig-color-6 td { color: #ea580c !important; }
+tr.ig-color-7 td { color: #4338ca !important; }
+tr.ig-color-8 td { color: #0f766e !important; }
+tr.ig-color-9 td { color: #9333ea !important; }
 
 html.dark-mode tr.ig-color-0 td { color: #60a5fa !important; }
 html.dark-mode tr.ig-color-1 td { color: #fbbf24 !important; }
@@ -8050,7 +8051,7 @@ html.dark-mode tr.ig-color-9 td { color: #c084fc !important; }
 
 .rp-excel-table tbody tr.is-rp-row-completed td,
 .rp-excel-table tbody tr.is-rp-row-completed td.rp-fixed-col {
-  background-color: #f0fdf4;
+  background-color: #bbf7d0;
 }
 
 html.dark-mode .rp-excel-table tbody tr.is-rp-row-registered td,
@@ -8065,12 +8066,14 @@ html.dark-mode .rp-excel-table tbody tr.is-rp-row-applied td.rp-fixed-col {
 
 html.dark-mode .rp-excel-table tbody tr.is-rp-row-completed td,
 html.dark-mode .rp-excel-table tbody tr.is-rp-row-completed td.rp-fixed-col {
-  background-color: #102a20;
+  background-color: #16422c;
 }
 
-.rp-excel-table tbody tr.is-rp-row-locked td {
+.rp-excel-table tbody tr.is-rp-row-locked td:not(.rp-fixed-col) {
   opacity: 0.88;
 }
+
+.rp-col-passno { width: 110px; min-width: 110px; max-width: 110px; }
 
 .rp-excel-table tbody tr.is-rp-due-soon td.rp-col-date-due {
   color: #d97706;

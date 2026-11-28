@@ -3662,11 +3662,11 @@
       certBadge.title = `미등록 검정 건수: ${certUnregCount}건`;
     }
 
-    // 2) 일정계획: 로트별로 작성되지 않은 건수 (일정완료 제외)
+    // 2) 일정계획: 로트별로 작성되지 않은 건수 (일정완료·백업 숨김 제외)
     let inspUnplannedCount = 0;
     const inspCache = new Map();
     (state.certSavedRows || []).forEach(r => {
-      if (!r || r.status === '일정완료') return;
+      if (!r || r.status === '일정완료' || r.hideFromSchedule) return;
       const wk = r.weekDate || '';
       let itemsObj = null;
       if (wk && state.inspectionTargetDate === wk && state.inspV2Data && state.inspV2Data.items) {
@@ -4196,6 +4196,9 @@
 
   function hasUnregisteredCertPlanForWeek(weekId, rowsByCode, regMap, targetLine, yearStr) {
     if (!weekId || !rowsByCode) return false;
+    const cutoffW = parseSafeInt(state.planData?.backupCutoffWeekByYear?.[String(yearStr || state.planData?.year || '2026')]);
+    const wNum = parseSafeInt(String(weekId).replace(/\D+/g, ''));
+    if (cutoffW > 0 && wNum > 0 && wNum <= cutoffW) return false;
     return (state.certMasterItems || []).some(item => {
       if ((item.useYn || '사용') !== '사용') return false;
       if (getDefaultItemApplyType(item) === '수동') return false;
@@ -4320,7 +4323,9 @@
     if (!state.planData) loadLocalPlanData();
     const pd = state.planData || getDefaultPlanData();
     const { year: yr, weekId } = parseCertWeekKey(weekKeyOrId, pd.year);
-    if (!weekId) {
+    const cutoffW = parseSafeInt(pd.backupCutoffWeekByYear?.[String(yr || pd.year || '2026')]);
+    const wNum = parseSafeInt(String(weekId || '').replace(/\D+/g, ''));
+    if (!weekId || (cutoffW > 0 && wNum > 0 && wNum <= cutoffW)) {
       state.certDraftRows = [];
       saveLocalCertData();
       renderCertDraftTable();
@@ -4677,22 +4682,28 @@
     const tbody = document.getElementById('cert-saved-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = '';
     const allSaved = state.certSavedRows || [];
 
-    // 필터링 적용 (연도 / 작업반 / 상태 / 생산주차 / 통합검색)
+    // 필터링 적용 (연도 / 작업반 / 상태 / 생산주차 / 통합검색 / 완료 숨김)
     const filterYear = state.certFilterYear || 'ALL';
     const filterLine = state.certFilterLine || 'ALL';
     const filterWeek = state.certFilterWeek || 'ALL';
     const filterStatus = state.certFilterStatus || 'ALL';
     const filterSearch = (state.certFilterSearch || '').trim().toLowerCase();
+    const hideCompletedEl = document.getElementById('chk-cert-hide-completed');
+    const hideCompleted = hideCompletedEl ? hideCompletedEl.checked : true;
+    const rowLimitVal = document.getElementById('cert-row-limit')?.value || '100';
+    const rowLimit = rowLimitVal === 'ALL' ? 0 : (parseInt(rowLimitVal, 10) || 100);
 
     const filteredRows = allSaved.filter(row => {
+      const st = String(row.status || '등록완료').trim();
+      if (hideCompleted && filterStatus !== '일정완료' && (st === '일정완료' || st === '검정완료')) {
+        return false;
+      }
       if (filterYear !== 'ALL' && getCertRowYear(row) !== filterYear) return false;
       if (filterLine !== 'ALL' && (row.group || '').trim() !== filterLine) return false;
       if (filterWeek !== 'ALL' && String(row.weekDate || '').trim() !== filterWeek) return false;
       if (filterStatus !== 'ALL') {
-        const st = String(row.status || '등록완료').trim();
         if (filterStatus === '일정완료') {
           if (st !== '일정완료' && st !== '검정완료') return false;
         } else if (filterStatus === '검정신청') {
@@ -4704,7 +4715,7 @@
       if (filterSearch) {
         const hay = [
           row.code, row.name, row.spec, row.formatNo,
-          row.site, row.lotNo, row.kfiNo, row.dept
+          row.site, row.lotNo, row.kfiNo, row.passNo, row.dept
         ].map(v => String(v || '').toLowerCase()).join(' ');
         if (!hay.includes(filterSearch)) return false;
       }
@@ -4712,14 +4723,20 @@
     });
 
     let totalSavedQty = 0;
+    filteredRows.forEach(row => { totalSavedQty += parseSafeInt(row.qty); });
+    const displayRows = rowLimit > 0 ? filteredRows.slice(0, rowLimit) : filteredRows;
 
-    if (filteredRows.length === 0) {
+    if (displayRows.length === 0) {
       tbody.innerHTML = `<tr><td colspan="22" style="text-align: center; padding: 25px; color: #94a3b8;">조건에 맞는 등록 내역이 없습니다. (총 누적: ${allSaved.length}건)</td></tr>`;
     } else {
-      filteredRows.forEach((row, idx) => {
-        const qtyNum = parseSafeInt(row.qty);
-        totalSavedQty += qtyNum;
+      const masterNameMap = new Map();
+      (state.certMasterItems || []).forEach(it => {
+        const c = String(it?.code || '').trim();
+        if (c && !masterNameMap.has(c)) masterNameMap.set(c, getDisplayItemName(it));
+      });
 
+      tbody.innerHTML = displayRows.map((row, idx) => {
+        const qtyNum = parseSafeInt(row.qty);
         const status = row.status || '등록완료';
         const isCompleted = (status === '일정완료');
 
@@ -4741,17 +4758,14 @@
         }
 
         const checkCell = `<input type="checkbox" class="check-cert-saved-row" data-id="${row.id}" ${isCompleted ? 'disabled title="일정완료된 일정은 선택 불가"' : ''}>`;
+        const dispName = (row.code && masterNameMap.get(String(row.code).trim())) || row.name || '-';
 
-        const tr = document.createElement('tr');
-        tr.dataset.id = row.id;
-        tr.className = rowClass;
-
-        tr.innerHTML = `
+        return `<tr data-id="${row.id}" class="${rowClass}">
           <td class="col-cert-check" style="text-align: center;">${checkCell}</td>
           <td class="col-cert-no" style="text-align: center; color: #64748b; font-weight: 600;">${idx + 1}</td>
           <td class="col-cert-status" style="text-align: center;">${statusBadge}</td>
           <td class="col-cert-code text-center font-bold text-slate-700">${row.code || '-'}</td>
-          <td class="col-cert-name font-bold text-primary">${getDisplayNameByCode(row.code, row.name) || '-'}</td>
+          <td class="col-cert-name font-bold text-primary">${dispName}</td>
           <td class="col-cert-spec text-slate-600" title="${row.spec || ''}">${row.spec || '-'}</td>
           <td class="col-cert-format text-center">${row.formatNo || '-'}</td>
           <td class="col-cert-type text-center" style="text-align: center;">${row.type || '-'}</td>
@@ -4769,14 +4783,17 @@
           <td class="col-cert-sensor text-center">${row.sensor || '-'}</td>
           <td class="col-cert-ctrl text-center">${row.ctrl || '-'}</td>
           <td class="col-cert-gas text-center">${row.gas || '-'}</td>
-        `;
-        tbody.appendChild(tr);
-      });
+        </tr>`;
+      }).join('');
     }
 
     // 요약 표시
     const pillSavedCount = document.getElementById('pill-cert-saved-count');
-    if (pillSavedCount) pillSavedCount.textContent = `${filteredRows.length}건 (전체 ${allSaved.length}건)`;
+    if (pillSavedCount) {
+      pillSavedCount.textContent = displayRows.length < filteredRows.length
+        ? `${displayRows.length} / ${filteredRows.length}건 (전체 ${allSaved.length}건)`
+        : `${filteredRows.length}건 (전체 ${allSaved.length}건)`;
+    }
 
     const pillSavedQty = document.getElementById('pill-cert-saved-qty');
     if (pillSavedQty) pillSavedQty.textContent = formatNumberDisplay(totalSavedQty);
@@ -4825,7 +4842,7 @@
 
     const allQuality = viewMode === 'passed'
       ? (state.certSavedRows || [])
-          .filter(r => (r.type || '').trim() === '품질' && r.status === '일정완료' && isWithinLast30Days(r))
+          .filter(r => (r.type || '').trim() === '품질' && r.status === '일정완료' && !r.hideFromSchedule && isWithinLast30Days(r))
           .slice()
           .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
       : (state.qualityRows || []);
@@ -4835,13 +4852,30 @@
     const weekSel = document.getElementById('quality-filter-week');
     let filterWeek = state.qualityFilterWeek || 'ALL';
     if (weekSel) {
+      const formatQualityWeekLabel = (wd, sourceWeekId) => {
+        let weekNumText = '';
+        const srcM = String(sourceWeekId || '').trim().match(/(\d+)/);
+        if (srcM) {
+          weekNumText = `${srcM[1]}주차`;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(wd)) {
+          const dt = new Date(wd + 'T00:00:00');
+          if (!isNaN(dt.getTime())) {
+            const sun = new Date(dt);
+            sun.setDate(dt.getDate() - dt.getDay());
+            const sunStr = typeof formatDateYMD === 'function' ? formatDateYMD(sun) : `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+            const wLabel = typeof getPlanWeekLabelForSunday === 'function' ? getPlanWeekLabelForSunday(sunStr) : '';
+            const wM = String(wLabel || '').match(/(\d+)/);
+            if (wM) weekNumText = `${wM[1]}주차`;
+          }
+        }
+        return weekNumText ? `${weekNumText} (${wd})` : wd;
+      };
       const weekLabelMap = new Map();
       allQuality.forEach(r => {
         const wd = String(r.weekDate || '').trim();
         if (!wd) return;
         if (!weekLabelMap.has(wd)) {
-          const wId = String(r.sourceWeekId || '').trim();
-          weekLabelMap.set(wd, wId ? `${wId} (${wd})` : wd);
+          weekLabelMap.set(wd, formatQualityWeekLabel(wd, r.sourceWeekId));
         }
       });
       const sortedWeeks = Array.from(weekLabelMap.keys()).sort();
@@ -5043,6 +5077,9 @@
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
   }
 
+  let _itemGroupColorCacheKey = '';
+  let _itemGroupColorCacheMap = new Map();
+
   function getItemGroupColorClass(groupName) {
     const g = String(groupName || '').trim();
     if (!g || g === '-') return '';
@@ -5057,21 +5094,30 @@
     };
     if (fixedColorMap[g]) return fixedColorMap[g];
 
-    const fallbackIndices = [5, 7, 8, 9, 1];
-    const groupSet = new Set();
-    (state.certMasterItems || []).forEach(it => {
-      const ig = String(it?.itemGroup || '').trim();
-      if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
-    });
-    (state.receiverPlanRows || []).forEach(r => {
-      const ig = String(r?.itemGroup || '').trim();
-      if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
-    });
-    groupSet.add(g);
-    const sorted = Array.from(groupSet).sort((a, b) => a.localeCompare(b, 'ko'));
-    const idx = sorted.indexOf(g);
-    const paletteIdx = fallbackIndices[(idx >= 0 ? idx : 0) % fallbackIndices.length];
-    return `ig-color-${paletteIdx}`;
+    const masterLen = (state.certMasterItems || []).length;
+    const rpLen = (state.receiverPlanRows || []).length;
+    const cacheKey = `${masterLen}_${rpLen}`;
+    if (_itemGroupColorCacheKey !== cacheKey || !_itemGroupColorCacheMap.has(g)) {
+      const fallbackIndices = [5, 7, 8, 9, 1];
+      const groupSet = new Set();
+      (state.certMasterItems || []).forEach(it => {
+        const ig = String(it?.itemGroup || '').trim();
+        if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
+      });
+      (state.receiverPlanRows || []).forEach(r => {
+        const ig = String(r?.itemGroup || '').trim();
+        if (ig && ig !== '-' && !fixedColorMap[ig]) groupSet.add(ig);
+      });
+      groupSet.add(g);
+      const sorted = Array.from(groupSet).sort((a, b) => a.localeCompare(b, 'ko'));
+      const nextMap = new Map();
+      sorted.forEach((name, idx) => {
+        nextMap.set(name, `ig-color-${fallbackIndices[idx % fallbackIndices.length]}`);
+      });
+      _itemGroupColorCacheKey = cacheKey;
+      _itemGroupColorCacheMap = nextMap;
+    }
+    return _itemGroupColorCacheMap.get(g) || '';
   }
 
   // (9) 설정 탭: 품목정보 그리드 렌더링
@@ -5946,10 +5992,14 @@
       renderCertificationModule();
     });
 
+    let certSearchTimer = null;
     document.getElementById('cert-filter-search')?.addEventListener('input', (e) => {
       state.certFilterSearch = e.target.value || '';
-      renderCertSavedTable();
+      clearTimeout(certSearchTimer);
+      certSearchTimer = setTimeout(() => renderCertSavedTable(), 200);
     });
+    document.getElementById('chk-cert-hide-completed')?.addEventListener('change', () => renderCertSavedTable());
+    document.getElementById('cert-row-limit')?.addEventListener('change', () => renderCertSavedTable());
 
     document.getElementById('btn-cert-filter-reset')?.addEventListener('click', () => {
       state.certFilterYear = String(new Date().getFullYear());
@@ -8451,7 +8501,8 @@
       itemGroupOrder: [],
       weeks: generateYearWeeks('2026'),
       rowsByCode: {},
-      rowsByYear: { '2026': {} }
+      rowsByYear: { '2026': {} },
+      backupCutoffWeekByYear: {}
     };
   }
 
@@ -8515,7 +8566,10 @@
       itemGroupOrder: Array.isArray(raw.itemGroupOrder) ? raw.itemGroupOrder : [],
       weeks: baseWeeks,
       rowsByCode: rowsByYear[yr],
-      rowsByYear
+      rowsByYear,
+      backupCutoffWeekByYear: (raw.backupCutoffWeekByYear && typeof raw.backupCutoffWeekByYear === 'object')
+        ? { ...raw.backupCutoffWeekByYear }
+        : {}
     };
   }
 
@@ -8577,6 +8631,32 @@
     if (hadLocal && state.planData) {
       PLAN_DISPLAY_OPT_KEYS.forEach(k => { localOpts[k] = state.planData[k]; });
     }
+    const reassembleChunkedPlan = async (colName, rawDoc) => {
+      if (!rawDoc) return rawDoc;
+      if (rawDoc.chunkCount && rawDoc.chunkCount > 0) {
+        const colRef = db.collection(colName);
+        const chunkDocs = await Promise.all(
+          Array.from({ length: rawDoc.chunkCount }, (_, i) => colRef.doc(`production_plan_chunk_${i}`).get())
+        );
+        const mergedRowsByYear = {};
+        chunkDocs.forEach(cd => {
+          if (!cd.exists) return;
+          const d = cd.data() || {};
+          const chunkRows = typeof d.rowsByYearJson === 'string'
+            ? JSON.parse(d.rowsByYearJson || '{}')
+            : (d.rowsByYear || {});
+          Object.entries(chunkRows).forEach(([yr, yrObj]) => {
+            if (!mergedRowsByYear[yr]) mergedRowsByYear[yr] = {};
+            Object.assign(mergedRowsByYear[yr], yrObj || {});
+          });
+        });
+        return { ...rawDoc, rowsByYear: mergedRowsByYear };
+      }
+      if (typeof rawDoc.rowsByYearJson === 'string') {
+        return { ...rawDoc, rowsByYear: JSON.parse(rawDoc.rowsByYearJson || '{}') };
+      }
+      return rawDoc;
+    };
     const mergeCloudPlan = (rawDoc) => {
       const next = normalizePlanData(rawDoc);
       if (hadLocal) {
@@ -8591,14 +8671,16 @@
     try {
       const doc = await db.collection('pms_data').doc('production_plan').get();
       if (doc.exists) {
-        mergeCloudPlan(doc.data());
+        const fullDoc = await reassembleChunkedPlan('pms_data', doc.data());
+        mergeCloudPlan(fullDoc);
         return;
       }
     } catch (err) { /* fallback below */ }
     try {
       const fbDoc = await db.collection('pms_metadata').doc('production_plan').get();
       if (fbDoc.exists) {
-        mergeCloudPlan(fbDoc.data());
+        const fullDoc = await reassembleChunkedPlan('pms_metadata', fbDoc.data());
+        mergeCloudPlan(fullDoc);
       }
     } catch (err) {
       console.warn('생산계획 Firestore 로드 오류:', err);
@@ -8606,31 +8688,77 @@
   }
 
   async function savePlanToDb(silent = false) {
-    if (isGuestReadOnly(true)) return;
+    if (isGuestReadOnly(true)) return false;
     if (!state.planData) state.planData = getDefaultPlanData();
     saveLocalPlanData();
     let dbSaved = false;
+    window._lastPlanDbError = '';
     if (isFirestoreActive && db) {
-      const payload = {
-        ...state.planData,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      // Firestore 인덱스 엔트리 한도(40,000개) 초과 방지를 위해 rowsByYear를 JSON 문자열로 직렬화 저장
+      const cleanPlan = JSON.parse(JSON.stringify(state.planData));
+      const rowsByYearObj = cleanPlan.rowsByYear || {};
+      cleanPlan.rowsByCode = {};
+      cleanPlan.rowsByYear = {};
+      const rowsJson = JSON.stringify(rowsByYearObj);
+      const saveToCollection = async (colName) => {
+        const colRef = db.collection(colName);
+        const rawBytes = new TextEncoder().encode(rowsJson).length;
+        if (rawBytes <= 750000) {
+          await colRef.doc('production_plan').set({
+            ...cleanPlan,
+            rowsByYearJson: rowsJson,
+            chunkCount: 0,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          return;
+        }
+        // 750KB 초과 시 연도/품목 단위로 청크 분할 저장 (각 청크도 rowsByYearJson 문자열 사용)
+        const chunks = [];
+        let curChunk = {};
+        let curSize = 20;
+        Object.entries(rowsByYearObj).forEach(([yr, yrRows]) => {
+          Object.entries(yrRows || {}).forEach(([code, rowObj]) => {
+            const entryBytes = new TextEncoder().encode(JSON.stringify({ [code]: rowObj })).length + 16;
+            if (curSize + entryBytes > 650000 && Object.keys(curChunk).length > 0) {
+              chunks.push(curChunk);
+              curChunk = {};
+              curSize = 20;
+            }
+            if (!curChunk[yr]) curChunk[yr] = {};
+            curChunk[yr][code] = rowObj;
+            curSize += entryBytes;
+          });
+        });
+        if (Object.keys(curChunk).length > 0) chunks.push(curChunk);
+        await Promise.all(
+          chunks.map((cData, idx) =>
+            colRef.doc(`production_plan_chunk_${idx}`).set({ rowsByYearJson: JSON.stringify(cData) })
+          )
+        );
+        await colRef.doc('production_plan').set({
+          ...cleanPlan,
+          chunkCount: chunks.length,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
       };
       try {
-        await db.collection('pms_data').doc('production_plan').set(payload);
+        await saveToCollection('pms_data');
         dbSaved = true;
       } catch (err) {
         try {
-          await db.collection('pms_metadata').doc('production_plan').set(payload);
+          await saveToCollection('pms_metadata');
           dbSaved = true;
         } catch (fbErr) {
+          window._lastPlanDbError = fbErr?.message || String(fbErr);
           console.warn('생산계획 DB 저장 실패:', fbErr);
         }
       }
     }
     markAsDirty(false);
     if (!silent) {
-      showToast(dbSaved ? '생산계획이 DB에 저장되었습니다.' : '생산계획이 로컬에 저장되었습니다.');
+      showToast(dbSaved ? '생산계획이 DB에 저장되었습니다.' : '생산계획 DB 저장 실패 (로컬에만 저장됨)');
     }
+    return dbSaved;
   }
 
   // 실행 취소 (Ctrl+Z) 히스토리 및 그리드 상태
@@ -8832,7 +8960,16 @@
     const fixedAlpha = isDark ? 0.34 : 0.15;
     const borderAlpha = isDark ? 0.50 : 0.28;
     const childAlpha = isDark ? 0.15 : 0.06;
-    return `--plan-grp-color:${hexColor};--plan-grp-bg:rgba(${r},${g},${b},${bgAlpha});--plan-grp-fixed-bg:rgba(${r},${g},${b},${fixedAlpha});--plan-grp-border:rgba(${r},${g},${b},${borderAlpha});--plan-grp-child-bg:rgba(${r},${g},${b},${childAlpha});`;
+    const baseR = isDark ? 30 : 255;
+    const baseG = isDark ? 41 : 255;
+    const baseB = isDark ? 59 : 255;
+    const blendOpaque = (alpha) => {
+      const mr = Math.round(r * alpha + baseR * (1 - alpha));
+      const mg = Math.round(g * alpha + baseG * (1 - alpha));
+      const mb = Math.round(b * alpha + baseB * (1 - alpha));
+      return `rgb(${mr},${mg},${mb})`;
+    };
+    return `--plan-grp-color:${hexColor};--plan-grp-bg:${blendOpaque(bgAlpha)};--plan-grp-fixed-bg:${blendOpaque(fixedAlpha)};--plan-grp-border:rgba(${r},${g},${b},${borderAlpha});--plan-grp-child-bg:${blendOpaque(childAlpha)};`;
   }
 
   function getPlanCarryOverBaseStock(pd, targetYear, item, visitedYears = new Set()) {
@@ -9801,6 +9938,13 @@
               .map(([s, q]) => `${s === '일정완료' ? '생산완료' : (s === '품검요청' ? '검정신청' : s)} ${q.toLocaleString()}`);
             const detailStr = statusParts.length > 1 ? ` [${statusParts.join(' · ')}]` : '';
             titleText = `${stageMeta.label} (${stInfo.totalQty.toLocaleString()} / ${pQty.toLocaleString()})${detailStr}`;
+          } else if (pQty > 0) {
+            const cutoffW = parseSafeInt(pd.backupCutoffWeekByYear?.[String(pd.year || '2026')]);
+            const wNum = parseSafeInt(String(col.weekId).replace(/\D+/g, ''));
+            if (cutoffW > 0 && wNum > 0 && wNum <= cutoffW) {
+              certCls = ' plan-cert-done';
+              titleText = `백업 완료 처리 (W${cutoffW} 이하)`;
+            }
           }
         }
 
@@ -12291,6 +12435,7 @@
 
     const weekMap = new Map(); // weekDate -> { weekDate, counts: { 감지기반, 유도등반, 수신기반 } }
     (state.certSavedRows || []).forEach(r => {
+      if (r.hideFromSchedule) return;
       const wd = String(r.weekDate || '').trim();
       if (!wd) return;
       if (!weekMap.has(wd)) weekMap.set(wd, { weekDate: wd, counts: { '감지기반': 0, '유도등반': 0, '수신기반': 0 } });
@@ -12453,7 +12598,7 @@
     const completedMap = aggregateCompletedByCertRow();
     const dailyActualMap = aggregateDailyActualsByCertRow();
     const todayStr = getTodayDateString();
-    const certRowsForWeek = (state.certSavedRows || []).filter(r => r.weekDate === targetDate);
+    const certRowsForWeek = (state.certSavedRows || []).filter(r => r.weekDate === targetDate && !r.hideFromSchedule);
 
     const dayCount = state.inspV2Data.dayCount || 10;
     const baseDate = state.inspV2Data.startDate || getMondayOfWeek(targetDate);
@@ -13077,7 +13222,7 @@
     const scanInspObj = (itemsObj) => {
       Object.keys(itemsObj || {}).forEach(certRowId => {
         const cRow = certMap.get(certRowId);
-        if (!cRow) return;
+        if (!cRow || cRow.hideFromSchedule) return;
         const planOnDay = itemsObj[certRowId]?.dailyPlans?.[dateStr];
         if (!planOnDay) return;
 
@@ -15470,7 +15615,7 @@
     allWeekPlans.forEach((itemsObj, weekDate) => {
       Object.entries(itemsObj).forEach(([certRowId, itemState]) => {
         const cRow = certMap.get(certRowId);
-        if (!cRow || !itemState || !itemState.dailyPlans) return;
+        if (!cRow || cRow.hideFromSchedule || !itemState || !itemState.dailyPlans) return;
 
         const excl = itemState.excludedProcs || {};
         const mItem = masterMap.get(cRow.code) || {};
@@ -17040,6 +17185,7 @@
       mfgYm: '',
       serialFrom: '',
       serialTo: '',
+      passNo: '',
       ...overrides
     };
   }
@@ -17199,7 +17345,45 @@
     if (undoBtn) undoBtn.disabled = !state.rpUndoStack || state.rpUndoStack.length === 0;
   }
 
-  function getReceiverPlanCertMatch(row) {
+  function formatRpSinglePassNo(rawPassNo) {
+    const s = String(rawPassNo || '').trim();
+    if (!s) return '';
+    const m = s.match(/^(.+?)\s+(?:-|~)\s+.+$/);
+    if (m) return m[1].trim();
+    const tildeIdx = s.indexOf('~');
+    if (tildeIdx > 0) return s.slice(0, tildeIdx).trim();
+    return s;
+  }
+
+  function buildRpCertIndex() {
+    const byRpId = new Map();
+    const byReqNo = new Map();
+    const byKey = new Map();
+    (state.certSavedRows || []).forEach(s => {
+      if (s.sourceRpId && !byRpId.has(s.sourceRpId)) byRpId.set(s.sourceRpId, s);
+      if (s.sourceReqNo && !byReqNo.has(s.sourceReqNo)) byReqNo.set(s.sourceReqNo, s);
+      const fmt = String(s.formatNo || '').trim();
+      const lot = String(s.lotNo || '').trim();
+      const frm = String(s.from || '').trim();
+      if (fmt && lot && frm) {
+        const k = `${fmt}__${lot}__${frm}`;
+        if (!byKey.has(k)) byKey.set(k, s);
+      }
+    });
+    return { byRpId, byReqNo, byKey };
+  }
+
+  function getReceiverPlanCertMatch(row, certIdx = null) {
+    if (certIdx) {
+      if (row.id && certIdx.byRpId.has(row.id)) return certIdx.byRpId.get(row.id);
+      const req = row.reqNo && row.reqNo.trim();
+      if (req && certIdx.byReqNo.has(req)) return certIdx.byReqNo.get(req);
+      if (row.formatNo && row.lotNo && row.serialFrom) {
+        const k = `${row.formatNo.trim()}__${row.lotNo.trim()}__${String(row.serialFrom).trim()}`;
+        if (certIdx.byKey.has(k)) return certIdx.byKey.get(k);
+      }
+      return null;
+    }
     const saved = state.certSavedRows || [];
     let found = saved.find(s => s.sourceRpId && s.sourceRpId === row.id);
     if (found) return found;
@@ -17218,9 +17402,14 @@
     return null;
   }
 
-  function getReceiverPlanCertStatus(row) {
-    const match = getReceiverPlanCertMatch(row);
-    if (!match) return { label: '미신청', normStatus: '미신청', cls: 'is-none', dotCls: 'rp-dot-none', rowCls: '', isSent: false, isEditableInCert: false, isLocked: false };
+  function getReceiverPlanCertStatus(row, certIdx = null) {
+    const match = getReceiverPlanCertMatch(row, certIdx);
+    if (!match) {
+      if (row && row.backupCompleted) {
+        return { label: '일정완료', normStatus: '일정완료', cls: 'is-applied', dotCls: 'rp-dot-done', rowCls: 'is-rp-row-completed is-rp-row-locked', isSent: true, isEditableInCert: false, isLocked: true };
+      }
+      return { label: '미신청', normStatus: '미신청', cls: 'is-none', dotCls: 'rp-dot-none', rowCls: '', isSent: false, isEditableInCert: false, isLocked: false };
+    }
     const raw = String(match.status || '').trim();
     const st = raw === '검정완료' ? '일정완료' : (typeof normalizeCalSchedStatus === 'function' ? normalizeCalSchedStatus(raw) : (raw || '등록완료'));
     if (st === '일정완료') {
@@ -17442,7 +17631,7 @@
     fillSelect('rp-filter-item', '품목그룹', yearFilteredRows.map(r => getEffectiveRpItemGroup(r)));
   }
 
-  function getFilteredReceiverPlanRows() {
+  function getFilteredReceiverPlanRows(certIdx = null) {
     const rows = state.receiverPlanRows || [];
     const currentYear = String(new Date().getFullYear());
     const fYear = state.rpFilterYear || 'ALL';
@@ -17450,8 +17639,14 @@
     const fWeek = document.getElementById('rp-filter-week')?.value || 'ALL';
     const fItem = document.getElementById('rp-filter-item')?.value || 'ALL';
     const fStatus = state.rpStatusFilter || 'ALL';
+    const hideCompletedEl = document.getElementById('chk-rp-hide-completed');
+    const hideCompleted = hideCompletedEl ? hideCompletedEl.checked : true;
 
     return rows.filter(row => {
+      if (hideCompleted && fStatus !== '일정완료') {
+        const stQuick = getReceiverPlanCertStatus(row, certIdx);
+        if (stQuick.normStatus === '일정완료') return false;
+      }
       if (fYear !== 'ALL') {
         const yr = getReceiverPlanRowYear(row);
         if (yr ? yr !== fYear : fYear !== currentYear) return false;
@@ -17464,7 +17659,7 @@
       if (fWeek !== 'ALL' && String(row.weekDate || '').trim() !== fWeek) return false;
       if (fItem !== 'ALL' && getEffectiveRpItemGroup(row) !== fItem) return false;
       if (fStatus !== 'ALL') {
-        const st = getReceiverPlanCertStatus(row);
+        const st = getReceiverPlanCertStatus(row, certIdx);
         if (fStatus === '미신청' && st.isSent) return false;
         if (fStatus === '신청완료' && !st.isSent) return false;
         if (['등록완료', '검정신청', '품검요청', '일정완료'].includes(fStatus) && st.normStatus !== fStatus) return false;
@@ -17553,7 +17748,8 @@
     { key: 'lotNo', field: 'lotNo', label: '로트번호', editable: true, cls: 'rp-col-lot is-mono text-center', width: 82 },
     { key: 'mfgYm', field: 'mfgYm', label: '제조년월', editable: true, cls: 'rp-col-ym is-mono text-center', width: 68 },
     { key: 'serialFrom', field: 'serialFrom', label: '제조번호 FROM', editable: true, cls: 'rp-col-serial is-mono text-center', width: 92 },
-    { key: 'serialTo', field: 'serialTo', label: '제조번호 TO', editable: true, cls: 'rp-col-serial is-mono text-center', width: 92 }
+    { key: 'serialTo', field: 'serialTo', label: '제조번호 TO', editable: true, cls: 'rp-col-serial is-mono text-center', width: 92 },
+    { key: 'passNo', field: 'passNo', label: '합격표시번호', editable: true, cls: 'rp-col-passno is-mono text-center', width: 110 }
   ];
 
   function recalcRpFixedCols(cols) {
@@ -17780,28 +17976,32 @@
     const tbody = document.getElementById('rp-excel-tbody');
     if (!tbody) return;
 
+    const certIdx = buildRpCertIndex();
     const allRows = state.receiverPlanRows || [];
-    const filtered = getFilteredReceiverPlanRows();
-    rpGridState.rows = filtered;
+    const filtered = getFilteredReceiverPlanRows(certIdx);
+    const rpLimitVal = document.getElementById('rp-row-limit')?.value || '100';
+    const rpLimit = rpLimitVal === 'ALL' ? 0 : (parseInt(rpLimitVal, 10) || 100);
+    const displayRows = rpLimit > 0 ? filtered.slice(0, rpLimit) : filtered;
+    rpGridState.rows = displayRows;
     rpGridState.editing = null;
 
-    // 요약 배지(동그라미 숫자) & 납기임박 칩 업데이트
+    // 요약 배지(동그라미 숫자) & 납기임박 칩 업데이트 (단일 순회)
     let allPendingCnt = 0;
-    allRows.forEach(r => {
-      const st = getReceiverPlanCertStatus(r);
-      if (!st.isSent) allPendingCnt++;
-    });
-
     let urgentCnt = 0;
     allRows.forEach(r => {
-      const st = getReceiverPlanCertStatus(r);
+      const st = getReceiverPlanCertStatus(r, certIdx);
+      if (!st.isSent) allPendingCnt++;
       if (getRpDueClass(r.dueDate, st.isSent)) urgentCnt++;
     });
 
     const elCountAll = document.getElementById('rp-count-all');
     const elCountPending = document.getElementById('rp-count-pending');
     const elUrgent = document.getElementById('rp-summary-urgent');
-    if (elCountAll) elCountAll.textContent = String(allRows.length);
+    if (elCountAll) {
+      elCountAll.textContent = displayRows.length < filtered.length
+        ? `${displayRows.length}/${allRows.length}`
+        : String(allRows.length);
+    }
     if (elCountPending) elCountPending.textContent = String(allPendingCnt);
     if (elUrgent) {
       elUrgent.textContent = `납기임박 ${urgentCnt}건`;
@@ -17811,10 +18011,10 @@
     const selSet = state.rpSelectedIds instanceof Set ? state.rpSelectedIds : new Set();
     const chkAll = document.getElementById('chk-rp-all');
     if (chkAll) {
-      chkAll.checked = filtered.length > 0 && filtered.every(r => selSet.has(r.id));
+      chkAll.checked = displayRows.length > 0 && displayRows.every(r => selSet.has(r.id));
     }
 
-    if (filtered.length === 0) {
+    if (displayRows.length === 0) {
       rpGridState.anchor = null;
       rpGridState.focus = null;
       tbody.innerHTML = `<tr><td colspan="${rpGridState.columns.length}" style="text-align:center; padding:32px; color:var(--text-muted);">표시할 수신기계획 데이터가 없습니다. [+ 행 추가] 또는 [엑셀 관리 ▾]에서 파일을 업로드하세요.</td></tr>`;
@@ -17822,17 +18022,17 @@
       return;
     }
 
-    if (rpGridState.anchor && rpGridState.anchor.r >= filtered.length) {
-      rpGridState.anchor = { r: filtered.length - 1, c: rpGridState.anchor.c };
+    if (rpGridState.anchor && rpGridState.anchor.r >= displayRows.length) {
+      rpGridState.anchor = { r: displayRows.length - 1, c: rpGridState.anchor.c };
     }
-    if (rpGridState.focus && rpGridState.focus.r >= filtered.length) {
-      rpGridState.focus = { r: filtered.length - 1, c: rpGridState.focus.c };
+    if (rpGridState.focus && rpGridState.focus.r >= displayRows.length) {
+      rpGridState.focus = { r: displayRows.length - 1, c: rpGridState.focus.c };
     }
 
     const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
-    tbody.innerHTML = filtered.map((row, rIdx) => {
-      const st = getReceiverPlanCertStatus(row);
+    tbody.innerHTML = displayRows.map((row, rIdx) => {
+      const st = getReceiverPlanCertStatus(row, certIdx);
       const isChecked = selSet.has(row.id);
       const dueCls = getRpDueClass(row.dueDate, st.isSent);
       const dateErrCls = (row.receiptDate && row.dueDate && row.dueDate < row.receiptDate) ? 'is-date-error' : '';
@@ -17853,6 +18053,8 @@
           val = getEffectiveRpItemGroup(row) || val;
         } else if (col.key === 'name' && row.code) {
           val = getDisplayNameByCode(row.code, val);
+        } else if (col.key === 'passNo') {
+          val = formatRpSinglePassNo(val || getReceiverPlanCertMatch(row, certIdx)?.passNo || '');
         }
         const escVal = esc(val);
         if (col.key === 'reqNo') {
@@ -18115,7 +18317,13 @@
     }
 
     // 검색/필터 이벤트
-    document.getElementById('rp-search-site')?.addEventListener('input', () => renderReceiverPlanModule());
+    let rpSearchTimer = null;
+    document.getElementById('rp-search-site')?.addEventListener('input', () => {
+      clearTimeout(rpSearchTimer);
+      rpSearchTimer = setTimeout(() => renderReceiverPlanModule(), 200);
+    });
+    document.getElementById('chk-rp-hide-completed')?.addEventListener('change', () => renderReceiverPlanModule());
+    document.getElementById('rp-row-limit')?.addEventListener('change', () => renderReceiverPlanModule());
     document.getElementById('rp-filter-year')?.addEventListener('change', (e) => {
       state.rpFilterYear = e.target.value || 'ALL';
       const weekSel = document.getElementById('rp-filter-week');
@@ -19057,7 +19265,8 @@
         '로트번호': r.lotNo || '',
         '제조년월': r.mfgYm || '',
         '제조번호 FROM': r.serialFrom || '',
-        '제조번호 TO': r.serialTo || ''
+        '제조번호 TO': r.serialTo || '',
+        '합격표시번호': formatRpSinglePassNo(r.passNo || getReceiverPlanCertMatch(r)?.passNo || '')
       }));
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
@@ -19295,6 +19504,7 @@
           lotNo: r.lotNo || '',
           from: fromVal,
           to: toVal,
+          passNo: String(r.passNo || '').trim(),
           kfiNo: '',
           site: siteNote,
           color: r.colorInfo || '',
@@ -22129,12 +22339,46 @@
 
     document.getElementById('btn-admin-full-backup')?.addEventListener('click', downloadAdminFullBackupJson);
 
+    // 백업 복원 공용 날짜 정규화 및 기준 주차 드롭다운 채우기
+    const normalizeBackupDateStr = (val) => {
+      const s = String(val || '').trim();
+      const m = s.match(/^(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/);
+      if (!m) return '';
+      return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+    };
+
+    const populateBackupCutoffWeekSelect = (sel, year, emptyLabel, useWeekNumValue = false) => {
+      if (!sel || typeof generateYearWeeks !== 'function') return;
+      const prevVal = sel.value;
+      sel.innerHTML = `<option value="">${emptyLabel}</option>`;
+      const wks = generateYearWeeks(String(year || '2026'));
+      wks.forEach(w => {
+        const dt = typeof getPlanWeekFridayDates === 'function' ? getPlanWeekFridayDates(String(year || '2026'), w.id) : null;
+        const wDate = dt?.weekDate || dt?.rawFridayStr || '';
+        if (!wDate) return;
+        const opt = document.createElement('option');
+        opt.value = useWeekNumValue ? String(w.weekNum) : wDate;
+        opt.textContent = `${w.id} 이하 (~${wDate}) 완료처리`;
+        sel.appendChild(opt);
+      });
+      if (prevVal && Array.from(sel.options).some(o => o.value === prevVal)) {
+        sel.value = prevVal;
+      }
+    };
+
     // 생산계획(W1~W53) 백업 파일(CSV/JSON) 일괄 복원 및 DB 저장
+    const planBackupYearSel = document.getElementById('admin-plan-backup-year');
+    const planBackupCutoffSel = document.getElementById('admin-plan-backup-cutoff-week');
     const planBackupFileInp = document.getElementById('input-admin-plan-backup-file');
     const planBackupBtn = document.getElementById('btn-admin-plan-backup-restore');
     const planBackupStatus = document.getElementById('admin-plan-backup-status');
 
-    const applyPlanBackupRecords = async (records, targetYear, mode, fileName) => {
+    populateBackupCutoffWeekSelect(planBackupCutoffSel, planBackupYearSel?.value || '2026', '완료 표기 안함', true);
+    planBackupYearSel?.addEventListener('change', () => {
+      populateBackupCutoffWeekSelect(planBackupCutoffSel, planBackupYearSel.value || '2026', '완료 표기 안함', true);
+    });
+
+    const applyPlanBackupRecords = async (records, targetYear, mode, cutoffWeekNum, fileName) => {
       if (!records || records.length === 0) {
         alert('복원할 품목 데이터가 없습니다.');
         return;
@@ -22173,32 +22417,54 @@
         }
 
         Object.entries(rec.weeks || {}).forEach(([wId, wObj]) => {
-          if (!row.weeks[wId]) row.weeks[wId] = {};
-          const dst = row.weeks[wId];
+          const dst = row.weeks[wId] || {};
           ['prod', 'forecast', 'actual'].forEach(f => {
             const val = wObj?.[f];
             if (val !== undefined && val !== null && String(val).trim() !== '') {
               dst[f] = String(val).trim();
               weekCellCount++;
             } else if (mode === 'overwrite') {
-              dst[f] = '';
+              delete dst[f];
             }
           });
+          if (dst.prod || dst.forecast || dst.actual) {
+            row.weeks[wId] = dst;
+          } else {
+            delete row.weeks[wId];
+          }
         });
         appliedCount++;
       });
 
+      if (!state.planData.backupCutoffWeekByYear || typeof state.planData.backupCutoffWeekByYear !== 'object') {
+        state.planData.backupCutoffWeekByYear = {};
+      }
+      if (cutoffWeekNum > 0) {
+        state.planData.backupCutoffWeekByYear[String(targetYear)] = cutoffWeekNum;
+      } else if (mode === 'overwrite') {
+        delete state.planData.backupCutoffWeekByYear[String(targetYear)];
+      }
       if (String(state.planData.year || '2026') === String(targetYear)) {
         state.planData.rowsByCode = yearRows;
       }
       saveLocalCertData();
       await saveCertDataToDb(true);
       saveLocalPlanData();
-      await savePlanToDb(false);
+      const dbSaved = await savePlanToDb(false);
       if (typeof renderPlanModule === 'function') renderPlanModule();
-      await appendAdminAuditLog('백업 복원', '생산계획', `${targetYear}년 ${appliedCount}개 품목 (${weekCellCount}개 셀, ${mode === 'overwrite' ? '덮어쓰기' : '병합'}) - ${fileName}`);
+      const cutoffLogText = cutoffWeekNum > 0 ? `, W${cutoffWeekNum} 이하 완료표기` : '';
+      await appendAdminAuditLog('백업 복원', '생산계획', `${targetYear}년 ${appliedCount}개 품목 (${weekCellCount}개 셀, ${mode === 'overwrite' ? '덮어쓰기' : '병합'}${cutoffLogText}${dbSaved ? '' : ', DB실패'}) - ${fileName}`);
       renderAdminDataStats();
       renderAdminAuditTable();
+      if (!dbSaved && isFirestoreActive && db) {
+        const errMsg = window._lastPlanDbError || 'Firestore 저장 실패';
+        if (planBackupStatus) {
+          planBackupStatus.textContent = `DB 저장 실패 (로컬만 저장): ${errMsg}`;
+          planBackupStatus.style.color = '#dc2626';
+        }
+        alert(`생산계획이 로컬에는 반영되었으나 Firestore DB 저장에 실패했습니다.\n원인: ${errMsg}`);
+        return;
+      }
       if (planBackupStatus) {
         planBackupStatus.textContent = `완료: ${targetYear}년 ${appliedCount}개 품목 (${weekCellCount.toLocaleString()}개 값) DB 저장됨`;
         planBackupStatus.style.color = '#15803d';
@@ -22218,7 +22484,9 @@
       if (!file) return;
       const targetYear = document.getElementById('admin-plan-backup-year')?.value || '2026';
       const mode = document.getElementById('admin-plan-backup-mode')?.value || 'overwrite';
-      if (!confirm(`[${file.name}] 파일을 ${targetYear}년 생산계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '병합'} 후 DB에 저장하시겠습니까?`)) {
+      const cutoffWeekNum = parseInt(planBackupCutoffSel?.value || '0', 10) || 0;
+      const cutoffLabel = cutoffWeekNum > 0 ? `, W${cutoffWeekNum} 이하 완료표기` : '';
+      if (!confirm(`[${file.name}] 파일을 ${targetYear}년 생산계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '병합'}${cutoffLabel} 후 DB에 저장하시겠습니까?`)) {
         e.target.value = '';
         return;
       }
@@ -22297,7 +22565,7 @@
             });
           }
         }
-        await applyPlanBackupRecords(records, targetYear, mode, file.name);
+        await applyPlanBackupRecords(records, targetYear, mode, cutoffWeekNum, file.name);
       } catch (err) {
         console.error('생산계획 백업 복원 오류:', err);
         if (planBackupStatus) {
@@ -22314,6 +22582,9 @@
     const rpBackupFileInp = document.getElementById('input-admin-rp-backup-file');
     const rpBackupBtn = document.getElementById('btn-admin-rp-backup-restore');
     const rpBackupStatus = document.getElementById('admin-rp-backup-status');
+    const rpBackupCutoffSel = document.getElementById('admin-rp-backup-cutoff-week');
+
+    populateBackupCutoffWeekSelect(rpBackupCutoffSel, '2026', '완료 처리 안함', false);
 
     rpBackupBtn?.addEventListener('click', () => {
       if (rpBackupFileInp) {
@@ -22326,7 +22597,9 @@
       const file = e.target.files?.[0];
       if (!file) return;
       const mode = document.getElementById('admin-rp-backup-mode')?.value || 'overwrite';
-      if (!confirm(`[${file.name}] 파일을 수신기계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '추가'} 후 DB에 저장하시겠습니까?`)) {
+      const cutoffDate = rpBackupCutoffSel?.value || '';
+      const cutoffLabel = cutoffDate ? `${rpBackupCutoffSel.options[rpBackupCutoffSel.selectedIndex]?.textContent}` : '완료 처리 안함';
+      if (!confirm(`[${file.name}] 파일을 수신기계획에 ${mode === 'overwrite' ? '전체 덮어쓰기' : '추가'} (${cutoffLabel}) 후 DB에 저장하시겠습니까?`)) {
         e.target.value = '';
         return;
       }
@@ -22371,7 +22644,8 @@
             lotNo: colIdx(['로트번호', 'Lot no.', 'lotNo']),
             mfgYm: colIdx(['제조년월', 'mfgYm']),
             serialFrom: colIdx(['제조번호 FROM', 'serialFrom']),
-            serialTo: colIdx(['제조번호 TO', 'serialTo'])
+            serialTo: colIdx(['제조번호 TO', 'serialTo']),
+            passNo: colIdx(['합격표시번호', 'passNo'])
           };
           for (let r = 1; r < rows.length; r++) {
             const row = rows[r];
@@ -22394,6 +22668,16 @@
           alert('복원할 수신기계획 데이터가 없습니다.');
           return;
         }
+        let rpCompletedCnt = 0;
+        importedRows.forEach(row => {
+          const refDate = normalizeBackupDateStr(row.weekDate || row.inspectDate || row.dueDate || row.receiptDate || '');
+          if (cutoffDate && refDate && refDate <= cutoffDate) {
+            row.backupCompleted = true;
+            rpCompletedCnt++;
+          } else if (cutoffDate) {
+            row.backupCompleted = false;
+          }
+        });
         if (mode === 'overwrite') {
           state.receiverPlanRows = importedRows;
         } else {
@@ -22401,11 +22685,11 @@
         }
         await saveReceiverPlanToDb(false);
         if (typeof renderReceiverPlanModule === 'function') renderReceiverPlanModule();
-        await appendAdminAuditLog('백업 복원', '수신기계획', `${importedRows.length}건 (${mode === 'overwrite' ? '덮어쓰기' : '추가'}) - ${file.name}`);
+        await appendAdminAuditLog('백업 복원', '수신기계획', `${importedRows.length}건 (완료 ${rpCompletedCnt}건, ${cutoffLabel}, ${mode === 'overwrite' ? '덮어쓰기' : '추가'}) - ${file.name}`);
         renderAdminDataStats();
         renderAdminAuditTable();
         if (rpBackupStatus) {
-          rpBackupStatus.textContent = `완료: ${importedRows.length.toLocaleString()}건 DB 저장됨`;
+          rpBackupStatus.textContent = `완료: ${importedRows.length.toLocaleString()}건 (완료 ${rpCompletedCnt.toLocaleString()}건) DB 저장됨`;
           rpBackupStatus.style.color = '#15803d';
         }
       } catch (err) {
@@ -22426,18 +22710,7 @@
     const certBackupStatus = document.getElementById('admin-cert-backup-status');
     const certBackupCutoffSel = document.getElementById('admin-cert-backup-cutoff-week');
 
-    if (certBackupCutoffSel && certBackupCutoffSel.options.length <= 1 && typeof generateYearWeeks === 'function') {
-      const wks2026 = generateYearWeeks('2026');
-      wks2026.forEach(w => {
-        const dt = typeof getPlanWeekFridayDates === 'function' ? getPlanWeekFridayDates('2026', w.id) : null;
-        const wDate = dt?.weekDate || dt?.rawFridayStr || '';
-        if (!wDate) return;
-        const opt = document.createElement('option');
-        opt.value = wDate;
-        opt.textContent = `${w.id} 이하 (~${wDate}) 완료처리`;
-        certBackupCutoffSel.appendChild(opt);
-      });
-    }
+    populateBackupCutoffWeekSelect(certBackupCutoffSel, '2026', '원본 상태 유지 (시트 기준)', false);
 
     certBackupBtn?.addEventListener('click', () => {
       if (certBackupFileInp) {
@@ -22481,6 +22754,7 @@
             status: colIdx(['상태', 'status']),
             sheetStatus: colIdx(['원본진행', '진행', 'sheetStatus']),
             type: colIdx(['구분', 'type']),
+            group: colIdx(['작업반', 'group']),
             writeDate: colIdx(['작성일자', 'writeDate']),
             inspectDate: colIdx(['KFI수검일자', 'KFI 수검일자 (생산주 +7)', 'inspectDate']),
             weekDate: colIdx(['생산주차', '생산주차 (매주 금)', 'weekDate']),
@@ -22522,18 +22796,27 @@
 
         const nowIso = new Date().toISOString();
         let completedCnt = 0;
+        const masterGroupByCode = new Map(
+          (state.certMasterItems || []).map(it => [String(it.code || '').trim().toLowerCase(), String(it.group || '').trim()])
+        );
         const importedRows = rawRecords.map(rec => {
+          const codeStr = String(rec.code || '').trim();
+          const normWrite = normalizeBackupDateStr(rec.writeDate) || String(rec.writeDate || '').trim();
+          const normInspect = normalizeBackupDateStr(rec.inspectDate) || String(rec.inspectDate || '').trim();
+          const normWeek = normalizeBackupDateStr(rec.weekDate) || String(rec.weekDate || '').trim();
+          const groupStr = String(rec.group || '').trim() || masterGroupByCode.get(codeStr.toLowerCase()) || '';
           const row = createNewDraftRow({
             id: rec.id || ('cert_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
             checked: false,
-            code: String(rec.code || '').trim(),
+            code: codeStr,
             name: String(rec.name || '').trim(),
             spec: String(rec.spec || '').trim(),
             formatNo: String(rec.formatNo || '').trim(),
             type: String(rec.type || '').trim(),
-            writeDate: String(rec.writeDate || '').trim(),
-            inspectDate: String(rec.inspectDate || '').trim(),
-            weekDate: String(rec.weekDate || '').trim(),
+            group: groupStr,
+            writeDate: normWrite,
+            inspectDate: normInspect,
+            weekDate: normWeek,
             qty: String(rec.qty || '').trim(),
             lotNo: String(rec.lotNo || '').trim(),
             from: String(rec.from || '').trim(),
@@ -22547,17 +22830,22 @@
             savedAt: rec.savedAt || nowIso
           });
 
-          const refDate = row.weekDate || row.inspectDate || row.writeDate || '';
+          const refDate = normalizeBackupDateStr(row.weekDate || row.inspectDate || row.writeDate || '');
           if (cutoffDate) {
             if (refDate && refDate <= cutoffDate) {
               row.status = '일정완료';
-            } else if (rec.sheetStatus === '신청완료' || rec.status === '검정신청') {
-              row.status = '검정신청';
+              row.hideFromSchedule = true;
             } else {
-              row.status = '등록완료';
+              row.hideFromSchedule = false;
+              if (rec.sheetStatus === '신청완료' || rec.status === '검정신청') {
+                row.status = '검정신청';
+              } else {
+                row.status = '등록완료';
+              }
             }
           } else {
             row.status = rec.status || (rec.sheetStatus === '검사완료' ? '일정완료' : (rec.sheetStatus === '신청완료' ? '검정신청' : '등록완료'));
+            row.hideFromSchedule = (row.status === '일정완료');
           }
           if (row.status === '일정완료') completedCnt++;
           return row;

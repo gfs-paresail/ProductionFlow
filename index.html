@@ -495,6 +495,15 @@
                   <option value="ALL">품목그룹</option>
                 </select>
                 <input type="text" id="rp-search-site" class="form-input form-input-sm" placeholder="통합검색" style="width: 175px;" title="품목코드, 품명, 현장명, 형식번호, 건설사, 거래선 통합검색">
+                <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;" title="일정완료·백업완료 건을 목록에서 숨깁니다">
+                  <input type="checkbox" id="chk-rp-hide-completed" checked>
+                  <span>완료 숨김</span>
+                </label>
+                <select id="rp-row-limit" class="form-select form-select-sm" title="표시 건수 제한" style="width:auto;">
+                  <option value="100" selected>100건씩</option>
+                  <option value="300">300건씩</option>
+                  <option value="ALL">전체</option>
+                </select>
               </div>
             </div>
 
@@ -1255,8 +1264,17 @@
                     <select id="cert-filter-week" class="form-select form-select-sm font-bold text-primary" title="등록된 생산주차 필터" style="min-width: 130px;">
                       <option value="ALL" selected>생산주차</option>
                     </select>
-                    <input type="text" id="cert-filter-search" class="form-input form-input-sm" placeholder="검색..." style="width: 125px;" title="품목코드, 품명, 규격, 형식번호, 현장명, 로트번호, 합격표시번호 검색">
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;" title="일정완료 건을 목록에서 숨깁니다">
+                      <input type="checkbox" id="chk-cert-hide-completed" checked>
+                      <span>완료 숨김</span>
+                    </label>
+                    <select id="cert-row-limit" class="form-select form-select-sm" title="표시 건수 제한" style="width:auto;">
+                      <option value="100" selected>100건씩</option>
+                      <option value="300">300건씩</option>
+                      <option value="ALL">전체</option>
+                    </select>
                     <button type="button" class="btn btn-xs btn-outline" id="btn-cert-filter-reset" title="모든 필터 초기화">초기화</button>
+                    <input type="text" id="cert-filter-search" class="form-input form-input-sm" placeholder="검색..." style="width: 250px;" title="품목코드, 품명, 규격, 형식번호, 현장명, 로트번호, 합격표시번호 검색">
                   </div>
                 </div>
                 <div class="section-actions-wrap" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -2512,6 +2530,9 @@
                         <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
                         <option value="merge">기존 데이터에 병합 (파일 값 갱신)</option>
                       </select>
+                      <select id="admin-plan-backup-cutoff-week" class="form-select" style="width:auto; min-width:185px;" title="선택한 주차 이하 생산 데이터를 완료로 표기">
+                        <option value="">완료 표기 안함</option>
+                      </select>
                       <input type="file" id="input-admin-plan-backup-file" accept=".csv,.json" style="display:none;">
                       <button type="button" class="btn btn-sm btn-primary" id="btn-admin-plan-backup-restore">백업 파일 선택 &amp; DB 저장</button>
                       <span id="admin-plan-backup-status" style="font-size:12px; color:var(--text-secondary);">CSV(주차별 백업) 또는 JSON 파일 지원</span>
@@ -2523,6 +2544,9 @@
                       <select id="admin-rp-backup-mode" class="form-select" style="width:auto; min-width:155px;" title="적용 방식">
                         <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
                         <option value="append">기존 목록 뒤에 추가</option>
+                      </select>
+                      <select id="admin-rp-backup-cutoff-week" class="form-select" style="width:auto; min-width:185px;" title="선택한 주차 이하 데이터를 완료 상태로 처리 (타 화면 미연동)">
+                        <option value="">완료 처리 안함</option>
                       </select>
                       <input type="file" id="input-admin-rp-backup-file" accept=".csv,.json" style="display:none;">
                       <button type="button" class="btn btn-sm btn-primary" id="btn-admin-rp-backup-restore">백업 파일 선택 &amp; DB 저장</button>
@@ -2536,7 +2560,7 @@
                         <option value="overwrite" selected>전체 덮어쓰기 (초기화 후 복원)</option>
                         <option value="append">기존 목록에 추가</option>
                       </select>
-                      <select id="admin-cert-backup-cutoff-week" class="form-select" style="width:auto; min-width:185px;" title="선택한 주차 이하 데이터를 일정완료 상태로 처리">
+                      <select id="admin-cert-backup-cutoff-week" class="form-select" style="width:auto; min-width:210px;" title="선택한 주차 이하 데이터를 일정완료 처리하고 일정계획 등 타 화면에서 미노출">
                         <option value="">원본 상태 유지 (시트 기준)</option>
                       </select>
                       <input type="file" id="input-admin-cert-backup-file" accept=".csv,.json" style="display:none;">
